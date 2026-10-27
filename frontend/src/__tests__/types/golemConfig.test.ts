@@ -5,6 +5,7 @@ import {
   GolemContractError,
   type CapabilityName,
   type ModelProjection,
+  type ModelType,
 } from '../../types/golem';
 import {
   ACTIVE_PROFILE_KEY,
@@ -17,6 +18,7 @@ import {
   effectiveRoutes,
   floorShortfalls,
   governedUseCasesOf,
+  TYPE_DERIVED_CAPABILITIES,
   isDraftDirty,
   KeyVault,
   meetsUseCaseFloor,
@@ -673,10 +675,17 @@ describe('projected draft normalization', () => {
     const projected = projectDraft(base, stage([routeChange({ useCase: 'chat' })]));
     expect(projected.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
     expect(selectorFields(projected.changes[0]).confirmUnknownUseCases).toEqual(['summarize']);
-    // An override sits on the selector the current role is on, so it governs
-    // summarize too; a fork onto a selector nobody is on governs chat alone and
-    // summarize is confirmation-only (the source role is left as it was).
-    expect(projected.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    // [#311] This override keeps the exposure and Think the selector holds, so
+    // it stages nothing and governs chat alone; one that changes either
+    // rewrites every role on the selector and governs summarize too. A fork
+    // onto a selector nobody is on governs chat alone and summarize is
+    // confirmation-only (the source role is left as it was).
+    expect(projected.governedUseCases.get('chat')).toEqual(['chat']);
+    const narrowed = projectDraft(
+      base,
+      stage([routeChange({ useCase: 'chat', exposedCaps: ['chat', 'stream', 'tool_call'] })])
+    );
+    expect(narrowed.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
     const forked = projectDraft(
       base,
       stage([
@@ -1037,6 +1046,116 @@ describe('active profile provenance', () => {
       getItem.mockRestore();
       setItem.mockRestore();
     }
+  });
+});
+
+describe('type-derived capabilities', () => {
+  const rows = JSON.parse(
+    fs.readFileSync(
+      path.resolve(__dirname, '../../../../internal/ai/testdata/settings_type_capabilities.json'),
+      'utf8'
+    )
+  ) as { type: ModelType; capabilities: CapabilityName[] }[];
+
+  it('mirrors what go-llm derives for a model type with no explicit list', () => {
+    // #311: the backend asserts a capability override only when the exposure
+    // differs from this set (on a selector no role owns); the reducer must
+    // widen the governed set under the same rule.
+    expect(Object.keys(TYPE_DERIVED_CAPABILITIES)).toHaveLength(rows.length);
+    for (const row of rows) {
+      expect(TYPE_DERIVED_CAPABILITIES[row.type]).toEqual(row.capabilities);
+    }
+  });
+});
+
+describe('governed set under the asserted-override rule (#311)', () => {
+  // The v0.14.0 smoke shape: agent runs on agent-role (an owner) and falls
+  // back to pro-role, which falls back to mimo-role; analysis runs on pro-role.
+  // pro-role and mimo-role derive their sets from their types.
+  const OWNED: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+  const DERIVED: CapabilityName[] = ['chat', 'generate', 'stream'];
+  const owner = modelRow({
+    role: 'agent-role',
+    modelName: 'agent-model',
+    effectiveCapabilities: OWNED,
+    capabilityFacts: { caps: OWNED, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: OWNED,
+    capabilityOverride: OWNED,
+    routedUseCases: ['agent'],
+    fallbacks: ['pro-role'],
+  });
+  const pro = modelRow({
+    role: 'pro-role',
+    modelName: 'deepseek',
+    effectiveCapabilities: DERIVED,
+    capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: DERIVED,
+    routedUseCases: ['agent', 'analysis'],
+    fallbacks: ['mimo-role'],
+  });
+  const mimo = modelRow({
+    role: 'mimo-role',
+    modelName: 'mimo',
+    type: 'moe',
+    effectiveCapabilities: DERIVED,
+    capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: DERIVED,
+    routedUseCases: ['agent'],
+  });
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'agent', role: 'agent-role' },
+      { useCase: 'analysis', role: 'pro-role' },
+    ],
+    models: [owner, pro, mimo],
+  };
+  const draft = cleanDraft(REVISION_A);
+
+  it('governs the edited use case alone when a join exposes what the type derives on an unowned selector', () => {
+    // The backend sends no override for this exposure, so upstream gates the
+    // new role alone; agent's chain through mimo-role is not in play. The
+    // confirmation set stays the wide one gateRolesFor asks for.
+    const probe = probeRouteChange('analysis', mimo);
+    expect(probe.exposedCaps).toEqual(DERIVED);
+    expect(governedUseCasesOf(base, draft, probe)).toEqual(['analysis']);
+    expect(affectedUseCases(base, draft, probe)).toEqual(['analysis', 'agent']);
+  });
+
+  it('widens to the selector once a join exposes something other than the derived set', () => {
+    const probe = {
+      ...probeRouteChange('analysis', mimo),
+      exposedCaps: ['chat', 'stream'] as CapabilityName[],
+    };
+    expect(governedUseCasesOf(base, draft, probe)).toEqual(['analysis', 'agent']);
+  });
+
+  it('widens to an owned selector even when the exposure equals the owner set', () => {
+    // A join onto an owner's selector always carries the explicit list (the
+    // backend never sends nil there), so upstream gates every role on it.
+    const probe = probeRouteChange('analysis', owner);
+    expect(probe.exposedCaps).toEqual(OWNED);
+    expect(governedUseCasesOf(base, draft, probe)).toEqual(['analysis', 'agent']);
+  });
+
+  it('governs the route alone for an override that keeps the exposure and Think it has', () => {
+    // Nothing would be staged (Done is never offered), so nothing is gated
+    // beyond the route's own floor — not the siblings a real override rewrites.
+    const probe = probeRouteChange('analysis', pro);
+    expect(governedUseCasesOf(base, draft, probe)).toEqual(['analysis']);
+  });
+
+  it('governs every route on the selector once an override changes the exposure or the Think', () => {
+    const held = probeRouteChange('analysis', pro);
+    expect(
+      governedUseCasesOf(base, draft, {
+        ...held,
+        exposedCaps: ['chat', 'stream'] as CapabilityName[],
+      })
+    ).toEqual(['analysis', 'agent']);
+    expect(governedUseCasesOf(base, draft, { ...held, thinkMode: 'auto' })).toEqual([
+      'analysis',
+      'agent',
+    ]);
   });
 });
 

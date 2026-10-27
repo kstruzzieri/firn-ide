@@ -279,6 +279,86 @@ func TestProjectionCapabilityOverride(t *testing.T) {
 	}
 }
 
+func TestProjectionFallbacks(t *testing.T) {
+	cfg := projectionConfig()
+	cfg.Models = map[string]config.ModelConfig{
+		"agent-m": {
+			Name: "agent-model", Provider: "hosted", Type: "dense",
+			Capabilities: []string{"chat", "stream", "tool_call"}, Fallbacks: []string{"pro-m", "mimo-m"},
+		},
+		"pro-m":  {Name: "pro-model", Provider: "hosted", Type: "dense"},
+		"mimo-m": {Name: "mimo-model", Provider: "hosted", Type: "moe"},
+	}
+	cfg.Defaults = map[string]string{"agent": "agent-m"}
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	agent, pro := projectedModel(t, p, "agent-m"), projectedModel(t, p, "pro-m")
+	// #311: the fallback chain itself, in authored order, so the editor can
+	// name HOW a use case reaches a model it never routes to directly.
+	if !reflect.DeepEqual(agent.Fallbacks, []string{"pro-m", "mimo-m"}) {
+		t.Fatalf("agent fallbacks = %v", agent.Fallbacks)
+	}
+	if pro.Fallbacks != nil {
+		t.Fatalf("pro fallbacks = %v, want none", pro.Fallbacks)
+	}
+	raw, err := json.Marshal(p.Models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range wire {
+		role := string(m["role"])
+		_, present := m["fallbacks"]
+		if want := role == `"agent-m"`; present != want {
+			t.Fatalf("role %s: fallbacks present=%v, want %v", role, present, want)
+		}
+	}
+	cloned := p.clone()
+	for i := range cloned.Models {
+		if cloned.Models[i].Role == "agent-m" {
+			cloned.Models[i].Fallbacks[0] = "x"
+		}
+	}
+	if got := projectedModel(t, p, "agent-m").Fallbacks; !reflect.DeepEqual(got, []string{"pro-m", "mimo-m"}) {
+		t.Fatalf("clone aliased fallbacks: %v", got)
+	}
+}
+
+// TestTypeDerivedCapabilitiesAreOneTable: the capabilities a model type
+// derives when no explicit list is authored are go-llm's
+// (ResolvedCapabilities with empty Capabilities); the shared fixture is what
+// the TypeScript mirror is tested against, so the frontend can tell a
+// redundant exposure from an asserted override the way assertedCapabilities
+// does.
+func TestTypeDerivedCapabilitiesAreOneTable(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "settings_type_capabilities.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []struct {
+		Type         string   `json:"type"`
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatal(err)
+	}
+	types := map[string]bool{"dense": true, "moe": true, "embedding": true}
+	if len(rows) != len(types) {
+		t.Fatalf("fixture has %d rows, want one per model type (%d)", len(rows), len(types))
+	}
+	for _, row := range rows {
+		if !types[row.Type] {
+			t.Fatalf("fixture type %q is not a model type", row.Type)
+		}
+		derived := canonicalizeCapabilities(config.ModelConfig{Type: row.Type}.ResolvedCapabilities())
+		if !reflect.DeepEqual(row.Capabilities, derived) {
+			t.Fatalf("type %s: fixture %v, go-llm derives %v", row.Type, row.Capabilities, derived)
+		}
+	}
+}
+
 func TestProjectionUnsafeIdentifierLimited(t *testing.T) {
 	cfg := projectionConfig()
 	m := cfg.Models["agent-m"]

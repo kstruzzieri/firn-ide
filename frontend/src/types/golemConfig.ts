@@ -1099,6 +1099,21 @@ export const USE_CASE_FLOORS: ReadonlyMap<string, readonly CapabilityName[]> = n
   ['planning', ['chat', 'stream', 'tool_call']],
 ]);
 
+/**
+ * What a model type derives when no explicit capability list is authored —
+ * go-llm's derivedCapabilitiesByType, mirrored from
+ * `internal/ai/testdata/settings_type_capabilities.json` (the Go test pins
+ * the fixture to go-llm). The backend asserts a capability override only when
+ * the exposure differs from this set on a selector no role owns
+ * (assertedCapabilities, #311); `selectorGroups` widens the governed set under
+ * the same rule.
+ */
+export const TYPE_DERIVED_CAPABILITIES: Record<ModelType, readonly CapabilityName[]> = {
+  dense: ['chat', 'generate', 'stream'],
+  moe: ['chat', 'generate', 'stream'],
+  embedding: ['embed'],
+};
+
 /** A use case outside the table has no floor to meet; it needs confirmation. */
 export const meetsUseCaseFloor = (useCase: string, caps: readonly CapabilityName[]): boolean =>
   (USE_CASE_FLOORS.get(useCase) ?? []).every((cap) => caps.includes(cap));
@@ -1617,14 +1632,22 @@ function selectorGroups(
     const current = role === undefined ? undefined : modelOf.get(role);
     // The current role feeds the confirmation set only.
     for (const useCase of current?.routedUseCases ?? []) group.affected.add(useCase);
-    // Every change the editor stages or the parsers accept carries a non-empty
-    // exposure [W5-1], so the roles already on the selector feed both sets for
-    // every real change; the guard stays for hand-built changes (probes, tests).
-    if (
-      (current !== undefined && sameModelFacts(current, change.modelFacts)) ||
-      change.exposedCaps.length > 0
-    ) {
-      // The roles already on the selector feed both.
+    const override = current !== undefined && sameModelFacts(current, change.modelFacts);
+    // [#311] Whether the selector's roles are GATED mirrors what the backend
+    // sends. An override that changes the exposure or the Think rewrites every
+    // role on the selector (SetRoleOverrides gates them all); one that keeps
+    // both stages nothing — Done is never offered — so it gates nothing beyond
+    // the route's own floor. A join widens upstream's gate to the selector's
+    // roles only when it asserts an explicit override (`assertsOverride`).
+    const gates = override
+      ? !sameCaps(change.exposedCaps, current.exposedCapabilities) ||
+        change.thinkMode !== current.thinkMode
+      : assertsOverride(base, change);
+    // The CONFIRMATION set stays the wide one the backend's gateRolesFor asks
+    // for: every change the editor stages carries a non-empty exposure [W5-1],
+    // so the roles already on the selector feed it for every real change; the
+    // guard stays for hand-built changes (probes, tests).
+    if (override || change.exposedCaps.length > 0) {
       for (const model of base.models) {
         if (selectorKey(model.provider, model.modelName) !== key) continue;
         const retarget = retargetOf(base, staged, model);
@@ -1633,13 +1656,31 @@ function selectorGroups(
           // A fork keeps the source role bound to every one of its use cases
           // until the binds phase; only a true retarget — a role routing
           // exactly this one use case — actually leaves.
-          if (retarget === undefined || retarget.useCase !== useCase) group.governed.add(useCase);
+          if (gates && (retarget === undefined || retarget.useCase !== useCase))
+            group.governed.add(useCase);
         }
       }
     }
   }
   return groups;
 }
+
+/**
+ * [#311] Whether a join's exposure becomes an explicit, selector-wide override
+ * in the request — the backend's `assertedCapabilities`, mirrored: yes when a
+ * role on the selector already owns one (the backend always sends the explicit
+ * list there, since nil would leave the new role resolving the type defaults
+ * under a folded override), or when the exposure is not what the model type
+ * derives. Only an asserted override widens upstream's eligibility gate to the
+ * selector's other roles.
+ */
+const assertsOverride = (base: DraftBaseProjection, change: RouteChange): boolean =>
+  base.models.some(
+    (model) =>
+      model.provider === change.modelFacts.provider &&
+      model.modelName === change.modelFacts.model &&
+      model.capabilityOverride !== undefined
+  ) || !sameCaps(change.exposedCaps, TYPE_DERIVED_CAPABILITIES[change.modelFacts.type]);
 
 /**
  * One staged change rebuilt from its selector's authority. Written out member
@@ -2133,7 +2174,75 @@ export const selectorAuthority = (
 export interface FloorShortfall {
   cap: CapabilityName;
   useCases: string[];
+  /**
+   * [#311] Per use case, the roles it passes through to reach the selector —
+   * its own role first, the role on the selector last — when it does not run
+   * on the selector directly. Attached by `withReach`; absent otherwise.
+   */
+  via?: ReadonlyMap<string, readonly string[]>;
 }
+
+/**
+ * [#311] How `useCase` reaches `selector`: the shortest fallback chain from
+ * the role it runs on to a role on the selector, both ends included, as the
+ * projection's `fallbacks` describe it. Empty when the use case is unrouted
+ * or nothing it falls back to is on the selector.
+ */
+export function reachOf(
+  base: DraftBaseProjection,
+  useCase: string,
+  selector: { readonly provider: string; readonly model: string }
+): string[] {
+  const start = base.routes.find((route) => route.useCase === useCase)?.role;
+  if (start === undefined) return [];
+  const byRole = new Map(base.models.map((model) => [model.role, model]));
+  const onSelector = (role: string): boolean => {
+    const model = byRole.get(role);
+    return (
+      model !== undefined &&
+      model.provider === selector.provider &&
+      model.modelName === selector.model
+    );
+  };
+  const parent = new Map<string, string | null>([[start, null]]);
+  const queue = [start];
+  while (queue.length > 0) {
+    const role = queue.shift() as string;
+    if (onSelector(role)) {
+      const path: string[] = [];
+      for (let at: string | null = role; at !== null; at = parent.get(at) ?? null) path.unshift(at);
+      return path;
+    }
+    for (const fallback of byRole.get(role)?.fallbacks ?? []) {
+      if (!parent.has(fallback)) {
+        parent.set(fallback, role);
+        queue.push(fallback);
+      }
+    }
+  }
+  return [];
+}
+
+/**
+ * [#311] The same shortfalls with each chain-reached use case's route to the
+ * selector attached, so every line that names the use case can also say how
+ * it gets there — the one code path for the editor's notice and refusal, the
+ * picker's blocked card, the Assign list's reason and a refusal the backend
+ * returns on that use case's row.
+ */
+export const withReach = (
+  short: readonly FloorShortfall[],
+  base: DraftBaseProjection,
+  selector: { readonly provider: string; readonly model: string }
+): FloorShortfall[] =>
+  short.map((entry) => {
+    const via = new Map<string, readonly string[]>();
+    for (const useCase of entry.useCases) {
+      const path = reachOf(base, useCase, selector);
+      if (path.length > 1) via.set(useCase, path);
+    }
+    return via.size === 0 ? entry : { ...entry, via };
+  });
 
 /**
  * What `caps` is missing against the floors of `useCases`, in canonical
@@ -2156,13 +2265,19 @@ export function floorShortfalls(
 /**
  * `agent needs tool_call` / `chat, agent need tool_call` — a shortfall as one
  * clause per missing capability: the picker's blocked-card line, the Assign
- * list's reason and the editor's refusal, so all three say the same thing.
+ * list's reason, the editor's refusal and a refusal on a row, so all of them
+ * say the same thing. A use case that reaches the model through a fallback
+ * chain carries it: `agent (via cloud-coder → cloud-pro) needs tool_call`.
  */
 export const shortfallLine = (short: readonly FloorShortfall[]): string =>
   short
-    .map(
-      ({ cap, useCases }) => `${useCases.join(', ')} need${useCases.length === 1 ? 's' : ''} ${cap}`
-    )
+    .map(({ cap, useCases, via }) => {
+      const named = useCases.map((useCase) => {
+        const path = via?.get(useCase);
+        return path === undefined ? useCase : `${useCase} (via ${path.join(' → ')})`;
+      });
+      return `${named.join(', ')} need${useCases.length === 1 ? 's' : ''} ${cap}`;
+    })
     .join('; ');
 
 /**

@@ -104,6 +104,15 @@ describe('parseSettingsProjection', () => {
     ]);
   });
 
+  it('reads a fallback chain back, and an absent one as none', () => {
+    // #311: the role's own authored chain, in order, so the editor can name how
+    // a use case reaches a model it never routes to directly.
+    expect(parseSettingsProjection(validProjection()).models[0].fallbacks).toBe(undefined);
+    const value = validProjection();
+    (value.models as Record<string, unknown>[])[0].fallbacks = ['pro-m', 'mimo-m'];
+    expect(parseSettingsProjection(value).models[0].fallbacks).toEqual(['pro-m', 'mimo-m']);
+  });
+
   it.each([
     [
       'unknown state',
@@ -285,6 +294,24 @@ describe('parseSettingsProjection', () => {
       'a null capability override',
       (v: Record<string, unknown>) => {
         (v.models as Record<string, unknown>[])[0].capabilityOverride = null;
+      },
+    ],
+    [
+      'a fallback that is not a safe identifier',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].fallbacks = ['pro\u202Em'];
+      },
+    ],
+    [
+      'an empty fallback list',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].fallbacks = [];
+      },
+    ],
+    [
+      'a null fallback list',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].fallbacks = null;
       },
     ],
     [

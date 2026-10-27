@@ -40,6 +40,7 @@ import {
   probeRouteChange,
   sameModelFacts,
   shortfallLine,
+  withReach,
   stagedRoutes,
   type Change,
   type Draft,
@@ -432,7 +433,11 @@ export function RoutingCard({
     routeUseCases(routes).map((useCase) => {
       if (open.has(useCase)) return { useCase, reason: 'editor open' };
       const probe = probeRouteChange(useCase, model, draft.changes);
-      const short = floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe));
+      const short = withReach(
+        floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe)),
+        base,
+        probe.modelFacts
+      );
       return { useCase, reason: shortfallLine(short) };
     });
 
@@ -458,6 +463,26 @@ export function RoutingCard({
     diagnostics.filter(
       (diagnostic) => diagnostic.subjectKind === 'use_case' && diagnostic.subjectName === useCase
     );
+  /**
+   * [#311][#338] The backend refuses an ineligible route on the USE CASE whose
+   * floor fails. On that row, say what fails and how the route reaches the
+   * staged model — the same clause the editor's pre-check and the picker's
+   * blocked card use — from the staged group that reaches this row.
+   */
+  const rowDiagnosticText = (useCase: string, diagnostic: SettingsDiagnostic): string => {
+    const { text } = formatSettingsDiagnostic(
+      diagnostic.code,
+      diagnostic.subjectKind,
+      diagnostic.subjectName
+    );
+    const reach = routeReach.get(useCase);
+    if (diagnostic.code !== 'eligibility_ineligible' || reach === undefined) return text;
+    const short = withReach(floorShortfalls(reach.group.staged.exposedCaps, [useCase]), base, {
+      provider: reach.group.provider,
+      model: reach.group.model,
+    });
+    return short.length === 0 ? text : `${text} ${shortfallLine(short)}.`;
+  };
 
   return (
     <section className={styles.card} aria-labelledby="golem-config-routing">
@@ -775,13 +800,7 @@ export function RoutingCard({
                       className={styles.rowDiagnostic}
                       data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
                     >
-                      {
-                        formatSettingsDiagnostic(
-                          diagnostic.code,
-                          diagnostic.subjectKind,
-                          diagnostic.subjectName
-                        ).text
-                      }
+                      {rowDiagnosticText(useCase, diagnostic)}
                     </p>
                   </div>
                 ))}

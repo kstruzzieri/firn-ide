@@ -635,6 +635,11 @@ export interface ModelProjection {
   capabilityOverride?: CapabilityName[];
   thinkMode: ThinkMode;
   routedUseCases: string[];
+  /**
+   * The role's own authored fallback chain, in order; absent when it has none
+   * (#311: how a use case reaches a model it never routes to directly).
+   */
+  fallbacks?: string[];
   /** Existence facts only — a retarget drops these, the values never cross. */
   hasThinkTags: boolean;
   hasSlots: boolean;
@@ -927,6 +932,7 @@ function readModel(value: unknown): ModelProjection | null {
       'capabilityOverride',
       'thinkMode',
       'routedUseCases',
+      'fallbacks',
       'hasThinkTags',
       'hasSlots',
       'removable',
@@ -1023,6 +1029,17 @@ function readModel(value: unknown): ModelProjection | null {
     capabilityOverride = override;
   }
 
+  let fallbacks: string[] | undefined;
+  if (hasPresentKey(value, 'fallbacks')) {
+    // Authored order, role names: the producer omits the key for an empty
+    // chain, so an empty list was not produced by it.
+    const chain = readCappedArray(value.fallbacks, MAX_PROJECTION_ENTRIES, (role) =>
+      isIdentifier(role) ? role : null
+    );
+    if (chain === null || chain.length === 0) return null;
+    fallbacks = chain;
+  }
+
   return {
     role,
     modelName,
@@ -1038,6 +1055,7 @@ function readModel(value: unknown): ModelProjection | null {
     ...(capabilityOverride === undefined ? {} : { capabilityOverride }),
     thinkMode,
     routedUseCases,
+    ...(fallbacks === undefined ? {} : { fallbacks }),
     hasThinkTags,
     hasSlots,
     removable,

@@ -59,6 +59,7 @@ import {
   stagedRoutes,
   unionFloor,
   USE_CASE_FLOORS,
+  withReach,
   type Change,
   type Draft,
   type DraftBaseProjection,
@@ -426,7 +427,18 @@ export function RouteEditor({
   const floor = unionFloor(governed);
   const floorOwners = governed.filter((other) => (USE_CASE_FLOORS.get(other) ?? []).length > 0);
   /** [W4-7] What the checked set lacks against that floor — named, never ticked for the user. */
-  const short = candidate === null ? [] : floorShortfalls(exposed, governed);
+  const short =
+    candidate === null
+      ? []
+      : withReach(floorShortfalls(exposed, governed), base, candidate.modelFacts);
+  /**
+   * [#311] A shortfall the model DECLARES is one the checklist took away — an
+   * override of the whole selector, said as what it removes and from whom;
+   * one it does not declare keeps the W4-7 copy (pick another, or assert it).
+   */
+  const declared = new Set(capabilityFacts?.caps ?? []);
+  const removed = short.filter(({ cap }) => declared.has(cap));
+  const undeclared = short.filter(({ cap }) => !declared.has(cap));
   const alsoGoverns = governed.filter((other) => other !== useCase);
   const unknownUseCases = affected.filter((other) => !USE_CASE_FLOORS.has(other));
 
@@ -649,7 +661,11 @@ export function RouteEditor({
       const cached = cache.get(model.role);
       if (cached !== undefined) return cached;
       const probe = probeRouteChange(useCase, model, draft.changes);
-      const verdict = floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe));
+      const verdict = withReach(
+        floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe)),
+        base,
+        probe.modelFacts
+      );
       cache.set(model.role, verdict);
       return verdict;
     };
@@ -1081,15 +1097,27 @@ export function RouteEditor({
       )}
 
       {/* [W4-7] A required cap the model lacks is named, never ticked for the
-          user: the tick is an assertion go-llm takes as truth. */}
+          user: the tick is an assertion go-llm takes as truth. [#311] One the
+          model declares was unticked here: that is a removal from every route
+          on the selector, named with the route it breaks and how that route
+          reaches the model. */}
       {facts !== null && short.length > 0 && (
         <div className={styles.disclosure} data-tone="blocking">
-          <p className={styles.disclosureText}>
-            <strong>{facts.model}</strong> does not declare{' '}
-            <strong>{short.map(({ cap }) => cap).join(', ')}</strong>: {shortfallLine(short)}. Pick
-            a model that does, or mark {short.length === 1 ? 'it' : 'them'} here to declare that it
-            can.
-          </p>
+          {removed.length > 0 && (
+            <p className={styles.disclosureText}>
+              Unticking <strong>{removed.map(({ cap }) => cap).join(', ')}</strong> takes{' '}
+              {removed.length === 1 ? 'it' : 'them'} from every route on{' '}
+              <strong>{facts.model}</strong>: {shortfallLine(removed)}.
+            </p>
+          )}
+          {undeclared.length > 0 && (
+            <p className={styles.disclosureText}>
+              <strong>{facts.model}</strong> does not declare{' '}
+              <strong>{undeclared.map(({ cap }) => cap).join(', ')}</strong>:{' '}
+              {shortfallLine(undeclared)}. Pick a model that does, or mark{' '}
+              {undeclared.length === 1 ? 'it' : 'them'} here to declare that it can.
+            </p>
+          )}
         </div>
       )}
 

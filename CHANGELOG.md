@@ -36,6 +36,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected the word under the pointer, which read as an editable name Firn
   does not have. Keyboard navigation, focus outlines and what a screen reader
   reads for each row are unchanged. (#462)
+- The route editor in Golem Configuration no longer refuses the model a route
+  already uses. Opening a route showed a red "does not declare tool_call"
+  notice and disabled the assigned model's card whenever another use case
+  reached that model through a fallback chain (the v0.14.0 release-candidate
+  smoke: editing `analysis` on `opencode/deepseek-v4-pro`, which `agent`
+  reaches through `cloud-coder`'s fallback to `cloud-pro`), because keeping
+  the model was checked as a change to every route on it. Keeping the model
+  with the capabilities and Think mode it has now changes nothing and is
+  checked as nothing: the editor opens clean, the assigned model can be picked
+  again and leaves nothing to apply, and an explicit capability list the
+  configuration already holds is kept. Unticking a capability the model
+  declares is still refused when a route reaching the model through a chain
+  needs it, and the notice now names that route and the chain ("agent (via
+  cloud-coder → cloud-pro) needs tool_call"). Moving a route onto another
+  model with the capabilities that model's type already implies no longer
+  sends a redundant capability override, which was what widened Golem's
+  eligibility check to the model's other routes; a different exposure is
+  still an explicit override and is checked as one. (#311)
+- A refusal from Golem's eligibility check now names the use case whose
+  requirement fails ("use case embedding"), on that use case's row, instead
+  of a role name no row carries (`embed-m`, or a generated `analysis-m`).
+  Firn checks the same roles and capabilities Golem does before each change
+  is applied, so the refusal arrives with the use case as its subject. (#338)
 - The route editor in Golem Configuration now refuses, before Apply, a route
   joining a model whose capabilities another route already fixes explicitly
   when the exposure ticked here differs from that set. Golem rejected such a

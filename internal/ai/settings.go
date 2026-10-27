@@ -199,7 +199,10 @@ type RouteProjection struct {
 // Validation makes every owner on a selector agree, so where present the
 // value is also the selector's.
 // RoutedUseCases lists every use case reaching this role (directly or through
-// a fallback chain); Removable is true when nothing references it.
+// a fallback chain); Fallbacks is the role's own authored chain, in order,
+// absent when it has none (#311: the editor names HOW a use case reaches a
+// model it never routes to directly); Removable is true when nothing
+// references it.
 //
 // HasThinkTags/HasSlots are EXISTENCE facts only: a real model retarget drops
 // these authored, model-specific members, so the editor has to disclose the
@@ -227,6 +230,7 @@ type ModelProjection struct {
 	CapabilityOverride []string `json:"capabilityOverride,omitempty"`
 	ThinkMode          string   `json:"thinkMode"`
 	RoutedUseCases     []string `json:"routedUseCases"`
+	Fallbacks          []string `json:"fallbacks,omitempty"`
 	HasThinkTags       bool     `json:"hasThinkTags"`
 	HasSlots           bool     `json:"hasSlots"`
 	Removable          bool     `json:"removable"`
@@ -248,6 +252,7 @@ func (p SettingsProjection) clone() SettingsProjection {
 		m.ExposedCapabilities = slices.Clone(m.ExposedCapabilities)
 		m.CapabilityOverride = slices.Clone(m.CapabilityOverride)
 		m.RoutedUseCases = slices.Clone(m.RoutedUseCases)
+		m.Fallbacks = slices.Clone(m.Fallbacks)
 		m.CapabilityFacts.Caps = slices.Clone(m.CapabilityFacts.Caps)
 		m.CapabilityFacts.KnownCaps = slices.Clone(m.CapabilityFacts.KnownCaps)
 	}
@@ -576,6 +581,10 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 		if len(m.Capabilities) > 0 {
 			owned = canonicalizeCapabilities(m.Capabilities)
 		}
+		var fallbacks []string
+		if len(m.Fallbacks) > 0 {
+			fallbacks = slices.Clone(m.Fallbacks)
+		}
 		p.Models = append(p.Models, ModelProjection{
 			Role: role, ModelName: m.Name, Provider: m.Provider, Type: m.Type,
 			Description: m.Description,
@@ -588,6 +597,7 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 			ExposedCapabilities: exposed, CapabilityOverride: owned,
 			ThinkMode:      m.ThinkMode,
 			RoutedUseCases: append([]string{}, routed[role]...),
+			Fallbacks:      fallbacks,
 			HasThinkTags:   m.ThinkTags != nil,
 			HasSlots:       m.Slots != 0,
 			Removable:      !referenced[role],
