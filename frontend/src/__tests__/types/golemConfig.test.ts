@@ -55,6 +55,7 @@ import {
   type DraftBaseProjection,
   type DraftEvent,
   type RouteChange,
+  reachGroupFor,
   reachOf,
   withReach,
 } from '../../types/golemConfig';
@@ -2527,5 +2528,115 @@ describe('reachOf (#311)', () => {
     expect(
       withReach([{ cap: 'tool_call', useCases: ['agent'] }], base, X, ['agent'])[0].via
     ).toBeUndefined();
+  });
+});
+
+describe('reach of a route edit, not its gate (#307)', () => {
+  // The #307 reproduction: agent, analysis, chat, completion and reasoning run
+  // on cloud-pro, which falls back to cloud-flash, which falls back to
+  // cloud-mimo, so every one of them reaches cloud-mimo. cloud-mimo holds the
+  // list its type derives, the one an older Firn wrote on every move.
+  // code-review and embedding run on models no chain reaches.
+  const DERIVED: CapabilityName[] = ['chat', 'generate', 'stream'];
+  const REACHED = ['agent', 'analysis', 'chat', 'completion', 'reasoning'];
+  const chainRow = (role: string, modelName: string, over: Partial<ModelProjection> = {}) =>
+    modelRow({
+      role,
+      modelName,
+      provider: 'opencode',
+      type: 'moe',
+      effectiveCapabilities: DERIVED,
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: DERIVED,
+      routedUseCases: REACHED,
+      ...over,
+    });
+  const pro = chainRow('cloud-pro', 'deepseek-v4-pro', { fallbacks: ['cloud-flash'] });
+  const flash = chainRow('cloud-flash', 'deepseek-v4-flash', { fallbacks: ['cloud-mimo'] });
+  const mimo = chainRow('cloud-mimo', 'mimo-v2.5', { capabilityOverride: DERIVED });
+  const base: DraftBaseProjection = {
+    routes: [
+      ...REACHED.map((useCase) => ({ useCase, role: 'cloud-pro' })),
+      { useCase: 'code-review', role: 'review-role' },
+      { useCase: 'embedding', role: 'embed-role' },
+    ],
+    models: [
+      pro,
+      flash,
+      mimo,
+      chainRow('review-role', 'glm-review', { routedUseCases: ['code-review'] }),
+      chainRow('embed-role', 'embed-model', {
+        type: 'embedding',
+        effectiveCapabilities: ['embed'],
+        capabilityFacts: { caps: ['embed'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: ['embed'],
+        routedUseCases: ['embedding'],
+      }),
+    ],
+  };
+  const marked = (projected: ProjectedDraft) =>
+    [...projected.routeRows]
+      .filter(([, markers]) => markers.modified || markers.affected === true)
+      .map(([useCase, markers]) => [useCase, markers.modified ? 'modified' : 'affected']);
+
+  it('marks only the edited route when the join changes nothing on the model it picks', () => {
+    // Regression pin for #307's first defect, which no longer reproduces: rows
+    // are marked by reach (the destination selector's changed roles), not by
+    // the confirmation set, which still names the fork source's use cases and
+    // cloud-mimo's because Go's verifyRouteConfirmations compares it whole.
+    const join = probeRouteChange('analysis', mimo);
+    const projected = projectDraft(base, stage([join]));
+    expect(marked(projected)).toEqual([['analysis', 'modified']]);
+    expect(projected.selectorUseCases.get('analysis')).toEqual(REACHED);
+  });
+
+  it('marks the routes that fall back to the model affected, never modified, once the join changes it', () => {
+    const join = {
+      ...probeRouteChange('analysis', mimo),
+      exposedCaps: [...DERIVED, 'tool_call'] as CapabilityName[],
+    };
+    const projected = projectDraft(base, stage([join]));
+    expect(marked(projected)).toEqual([
+      ['analysis', 'modified'],
+      ['agent', 'affected'],
+      ['chat', 'affected'],
+      ['completion', 'affected'],
+      ['reasoning', 'affected'],
+    ]);
+  });
+
+  it('reports what the edit changes, which the gate it is checked against can exceed', () => {
+    const draft = cleanDraft(REVISION_A);
+    const noOp = probeRouteChange('analysis', mimo);
+    const reach = reachGroupFor(base, draft, noOp);
+    expect(reach).toMatchObject({ model: 'mimo-v2.5', sameModel: [], fallback: [] });
+    expect(reach?.affectedRoles).toEqual([]);
+
+    const widened = { ...noOp, exposedCaps: [...DERIVED, 'tool_call'] as CapabilityName[] };
+    expect(reachGroupFor(base, draft, widened)?.fallback).toEqual([
+      'agent',
+      'chat',
+      'completion',
+      'reasoning',
+    ]);
+
+    // An owner's set is not the derived one, so a join exposing exactly it is
+    // gated against every route on the selector, yet changes none of them.
+    const OWNED: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    const owned = chainRow('cloud-mimo', 'mimo-v2.5', {
+      effectiveCapabilities: OWNED,
+      exposedCapabilities: OWNED,
+      capabilityOverride: OWNED,
+    });
+    const ownedBase: DraftBaseProjection = { ...base, models: [pro, flash, owned] };
+    const join = probeRouteChange('analysis', owned);
+    expect(governedUseCasesOf(ownedBase, draft, join)).toEqual([
+      'analysis',
+      'agent',
+      'chat',
+      'completion',
+      'reasoning',
+    ]);
+    expect(reachGroupFor(ownedBase, draft, join)).toMatchObject({ sameModel: [], fallback: [] });
   });
 });

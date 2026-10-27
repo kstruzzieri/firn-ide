@@ -1,13 +1,22 @@
 import {
   abilitiesLine,
   assertedOf,
+  editReachOf,
   noteOf,
   pendingOf,
   snapshotOf,
   type Seed,
   usedByOf,
 } from '../../../components/GolemConfig/routeEdit';
-import { CAPABILITY_NAMES, type ModelProjection } from '../../../types/golem';
+import { CAPABILITY_NAMES, type CapabilityName, type ModelProjection } from '../../../types/golem';
+import {
+  cleanDraft,
+  KeyVault,
+  reachGroupFor,
+  stageChange,
+  type DraftBaseProjection,
+  type RouteChange,
+} from '../../../types/golemConfig';
 
 const model = (over: Partial<ModelProjection> = {}): ModelProjection => ({
   role: 'chat-role',
@@ -264,6 +273,56 @@ describe('card helpers', () => {
       { useCase: 'xＡ', role: 'r' },
     ];
     expect(usedByOf(routes2, ['r'])).toEqual(['xＡ', 'x\u{1F600}']);
+  });
+  it('editReachOf splits who else an edit reaches into users, fallbacks and defined roles (#307, #349)', () => {
+    // On gpt-5: agent-role routes agent (and planning, through planning-role's
+    // fallback) and spare-role routes nothing. analysis is already staged onto
+    // gpt-5; chat joins it with an exposure both roles lack, which the
+    // coalesced group writes to every role on the selector.
+    const GPT5: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    const onGpt5 = (role: string, routedUseCases: string[]) =>
+      model({ role, modelName: 'gpt-5', routedUseCases });
+    const base: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'analysis', role: 'analysis-role' },
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'planning-role' },
+      ],
+      models: [
+        onGpt5('agent-role', ['agent', 'planning']),
+        onGpt5('spare-role', []),
+        model({ role: 'analysis-role', modelName: 'gpt-4o', routedUseCases: ['analysis'] }),
+        model(),
+        model({
+          role: 'planning-role',
+          modelName: 'gpt-4',
+          routedUseCases: ['planning'],
+          fallbacks: ['agent-role'],
+        }),
+      ],
+    };
+    const join = (useCase: string): RouteChange => ({
+      kind: 'route',
+      useCase,
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: { caps: GPT5, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: GPT5,
+      thinkMode: '',
+      confirmUnknown: false,
+    });
+    const draft = stageChange(
+      cleanDraft('0'.repeat(64)),
+      join('analysis'),
+      new KeyVault(new Map())
+    );
+    expect(editReachOf(reachGroupFor(base, draft, join('chat')), 'chat')).toEqual({
+      uses: ['agent', 'analysis'],
+      fallsBack: ['planning'],
+      definedAs: ['spare-role'],
+    });
+    // Nothing projected, nothing reached.
+    expect(editReachOf(undefined, 'chat')).toEqual({ uses: [], fallsBack: [], definedAs: [] });
   });
   it('abilitiesLine joins with spaces and never reads empty', () => {
     expect(abilitiesLine(['tool_call', 'chat', 'stream'])).toBe('tool_call chat stream');

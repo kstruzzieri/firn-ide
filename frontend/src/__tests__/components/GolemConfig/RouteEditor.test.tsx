@@ -844,12 +844,16 @@ describe('RouteEditor', () => {
       ],
     });
     await openRoute('chat');
-    // Staging chat onto the agent's selector makes the capability edit govern
-    // the agent route too — but chat JOINS that selector, and only an override
-    // writes Think selector-wide, so the notice says Think stays on this route.
+    // Staging chat onto the agent's selector with the exposure agent already
+    // has is checked against agent's floor but changes nothing for it [#307];
+    // once the edit changes the model, it changes it for agent too — but chat
+    // JOINS that selector, and only an override writes Think selector-wide,
+    // so the notice says Think stays on this route.
     await pickModel('gpt-5');
+    expect(screen.queryByText(/belong to/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/^generate/));
     expect(screen.getByText(/belong to/)).toHaveTextContent(
-      'The abilities above belong to the model chosen above and change for agent too; Think applies to this route only.'
+      'agent also uses gpt-5. The abilities above belong to the model, so they change there too; Think applies to this route only.'
     );
   });
 
@@ -888,7 +892,7 @@ describe('RouteEditor', () => {
     await openRoute('chat');
     await pickModel('gpt-5');
     expect(screen.getByText(/belong to/)).toHaveTextContent(
-      'The abilities and Think mode above belong to the model chosen above and change for agent too.'
+      'agent also uses gpt-5. The abilities and Think mode above belong to the model, so they change there too.'
     );
 
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
@@ -944,8 +948,10 @@ describe('RouteEditor', () => {
       .find((option) => within(option).queryByText(/7B/) !== null);
     if (card === undefined) throw new Error('no 7B card');
     await userEvent.click(card);
+    // [#307] The reach sentence waits for a change to the model's values.
+    await userEvent.click(screen.getByLabelText(/^generate/));
     expect(screen.getByText(/belong to/)).toHaveTextContent(
-      'The abilities above belong to the model chosen above and change for agent too; Think applies to this route only.'
+      'agent also uses gpt-5-mini. The abilities above belong to the model, so they change there too; Think applies to this route only.'
     );
   });
 
@@ -983,9 +989,11 @@ describe('RouteEditor', () => {
     });
     await openRoute('chat');
     await pickModel('gpt-5');
+    // [#307] summarize is reached once the edit changes the model's values.
+    await userEvent.click(screen.getByLabelText(/^generate/));
     // Two peers: the clause lists them after this route, one conjunction.
     expect(screen.getByText(/belong to/)).toHaveTextContent(
-      'The abilities above belong to the model chosen above and change for analysis, planning and summarize too; Think applies to this route, analysis and planning.'
+      'analysis, planning and summarize also use gpt-5. The abilities above belong to the model, so they change there too; Think applies to this route, analysis and planning.'
     );
 
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
@@ -3390,18 +3398,20 @@ describe('RouteEditor', () => {
     await userEvent.click(screen.getByLabelText(/^thinking/));
     expect(screen.getByText(/run on/).closest('[data-tone]')).toBe(merged);
     expect(within(merged).getByText(/belong to/)).toHaveTextContent(
-      'The abilities and Think mode above belong to the model chosen above and change for summarize too.'
+      'summarize also uses gpt-5-mini. The abilities and Think mode above belong to the model, so they change there too.'
     );
     expect(merged.querySelectorAll('p')).toHaveLength(2);
     await userEvent.click(screen.getByLabelText(/^thinking/));
 
-    // Retargeting reaches the selector sibling, needs the summarize acknowledgement
-    // and drops authored fields.
+    // Retargeting needs the summarize acknowledgement and drops authored
+    // fields; once it changes the model, it reaches the selector sibling.
     await pickModel('gpt-5');
     expect(screen.getByText(/run on/).closest('[data-tone]')).toBe(merged);
     expect(merged).toHaveAttribute('data-tone', 'caution');
+    expect(merged.querySelectorAll('p')).toHaveLength(1);
+    await userEvent.click(screen.getByLabelText(/^generate/));
     expect(within(merged).getByText(/belong to/)).toHaveTextContent(
-      'The abilities above belong to the model chosen above and change for agent too; Think applies to this route only.'
+      'agent also uses gpt-5. The abilities above belong to the model, so they change there too; Think applies to this route only.'
     );
     expect(merged.querySelectorAll('p')).toHaveLength(2);
     expect(screen.getByText(/Firn has/).closest('div')).toHaveAttribute('data-tone', 'caution');
@@ -4430,5 +4440,121 @@ describe('RouteEditor union floor (wave 4c)', () => {
     expect(staged.thinkMode).toBe('always');
     expect(staged.capabilityFacts.caps).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
     expect(staged.exposedCaps).toEqual(['chat', 'stream', 'tool_call', 'thinking']);
+  });
+});
+
+describe('RouteEditor reach sentence (#307, #349)', () => {
+  const caps = (list: CapabilityName[]) => ({
+    effectiveCapabilities: list,
+    capabilityFacts: { caps: list, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: list,
+  });
+  /** The caution notice's second paragraph, the one about the chosen model. */
+  const reachSentence = () => screen.queryByText(/belong to/);
+
+  it('says the routes reaching the chosen model through a fallback fall back to it, by name', async () => {
+    // The #307 reproduction: five use cases run on cloud-pro, whose chain
+    // reaches cloud-mimo through cloud-flash. Editing analysis onto
+    // mimo-v2.5 forks cloud-pro, so the other four keep deepseek-v4-pro; they
+    // still FALL BACK to mimo-v2.5, so a change to mimo-v2.5 reaches them.
+    const DERIVED: CapabilityName[] = ['chat', 'generate', 'stream'];
+    const reached = ['agent', 'analysis', 'chat', 'completion', 'reasoning'];
+    const chainRow = (role: string, modelName: string, over: Partial<ModelProjection> = {}) =>
+      model({
+        role,
+        modelName,
+        provider: 'opencode',
+        type: 'moe',
+        ...caps(DERIVED),
+        routedUseCases: reached,
+        ...over,
+      });
+    renderRouting({
+      providers: [providerRow({ name: 'opencode' })],
+      routes: reached.map((useCase) => ({ useCase, role: 'cloud-pro' })),
+      models: [
+        chainRow('cloud-pro', 'deepseek-v4-pro', { fallbacks: ['cloud-flash'] }),
+        chainRow('cloud-flash', 'deepseek-v4-flash', { fallbacks: ['cloud-mimo'] }),
+        chainRow('cloud-mimo', 'mimo-v2.5', { capabilityOverride: DERIVED }),
+      ],
+    });
+    await openRoute('analysis');
+    await pickModel('mimo-v2.5');
+    expect(screen.getByText(/run on/)).toHaveTextContent(
+      'analysis, agent, chat, completion and reasoning run on deepseek-v4-pro. Picking a different model here changes analysis only; agent, chat, completion and reasoning keep deepseek-v4-pro.'
+    );
+    // Picking the model changes nothing on it, so nothing else is reached.
+    expect(reachSentence()).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText(/^tool_call/));
+    expect(reachSentence()).toHaveTextContent(
+      'agent, chat, completion and reasoning fall back to mimo-v2.5. The abilities above belong to the model, so they change there too; Think applies to this route only.'
+    );
+  });
+
+  it('names who uses the chosen model and who falls back to it, and only once something changes for them', async () => {
+    // agent runs on gpt-5 and planning reaches it through planning-role's
+    // fallback. chat joining gpt-5 with the exposure agent already has is
+    // checked against both floors but changes neither route.
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'planning', role: 'planning-role' },
+      ],
+      models: [
+        model(),
+        model({
+          role: 'agent-role',
+          modelName: 'gpt-5',
+          ...caps(['chat', 'stream', 'tool_call', 'thinking']),
+          routedUseCases: ['agent', 'planning'],
+        }),
+        model({
+          role: 'planning-role',
+          modelName: 'gpt-4',
+          ...caps(['chat', 'stream', 'tool_call']),
+          routedUseCases: ['planning'],
+          fallbacks: ['agent-role'],
+        }),
+      ],
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    expect(reachSentence()).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText(/^generate/));
+    expect(reachSentence()).toHaveTextContent(
+      'agent also uses gpt-5, and planning falls back to it. The abilities above belong to the model, so they change there too; Think applies to this route only.'
+    );
+  });
+
+  it('names the defined roles on the model that an override rewrites (#349)', async () => {
+    // chat runs on general (gemma4:31b); agent and judge are defined on the
+    // same model and route nothing. An override is selector-wide
+    // (SetRoleOverrides), so it rewrites both, which the Defined models list
+    // then marks: the notice says so before Done.
+    const gemma = (role: string, routedUseCases: string[]) =>
+      model({
+        role,
+        modelName: 'gemma4:31b',
+        ...caps(['chat', 'stream', 'thinking']),
+        routedUseCases,
+      });
+    const routes = [{ useCase: 'chat', role: 'general' }];
+    const models = [gemma('general', ['chat']), gemma('agent', []), gemma('judge', [])];
+    const { onStage } = renderRouting({ routes, models });
+    await openRoute('chat');
+    expect(screen.queryByText(/defined as/)).not.toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
+    expect(reachSentence()).toHaveTextContent(
+      'gemma4:31b is also defined as agent and judge. The abilities and Think mode above belong to the model, so they change there too.'
+    );
+
+    // The roles named are the ones the Defined models list marks.
+    await stage();
+    const projected = projectDraft({ routes, models }, draftWith(onStage.mock.calls[0][0][0]));
+    expect([...projected.roleRows.keys()].sort()).toEqual(['agent', 'judge']);
   });
 });
