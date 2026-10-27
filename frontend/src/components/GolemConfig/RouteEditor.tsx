@@ -496,6 +496,13 @@ export function RouteEditor({
    * A sibling's own staged override lands in the overrides phase, after every
    * join, so its APPLIED Think is what this join meets — even while the row
    * already paints the staged one.
+   * A lock is replaced (same-selector retarget) or left behind (departure
+   * to another selector) at THAT plan's place in stable-id order, and every
+   * other mutation of this selector group that runs before it — an earlier
+   * join or retarget, coalesced to the same values — still meets the applied
+   * lock; overrides run in a later phase and meet nothing here. So a rewrite
+   * or a departure counts only when it sorts before every other mutation of
+   * the group, not merely before this join.
    * Ceiling: a sibling routed by exactly one use case that an unrouted role
    * lists as a fallback is forked too (`fallbacks[role]`), invisible here —
    * the pre-check may mark it gone and the backend refuses late.
@@ -517,19 +524,43 @@ export function RouteEditor({
       draft.changes.flatMap((change) => (change.kind === 'route-unassign' ? [change.useCase] : []))
     );
     const joinId = changeStableID(candidate);
+    // The stable ids of every mutation of this selector group that runs in
+    // the route-plan phase: this join and each other staged join or retarget
+    // onto the selector (an override of its own applied model runs later).
+    const roleOfUseCase = new Map(base.routes.map((route) => [route.useCase, route.role]));
+    const modelOfRole = new Map(base.models.map((entry) => [entry.role, entry]));
+    const groupMutations = [
+      joinId,
+      ...others.flatMap((change) => {
+        if (
+          change.kind !== 'route' ||
+          change.modelFacts.provider !== candidate.modelFacts.provider ||
+          change.modelFacts.model !== candidate.modelFacts.model
+        )
+          return [];
+        const applied = modelOfRole.get(roleOfUseCase.get(change.useCase) ?? '');
+        return applied !== undefined && sameModelFacts(applied, change.modelFacts)
+          ? []
+          : [changeStableID(change)];
+      }),
+    ];
+    /** Whether the plan with this id runs before every other mutation of the group. */
+    const runsFirst = (id: string): boolean =>
+      groupMutations.every((other) => other === id || compareString(id, other) < 0);
     /** Names holding the applied constraints, or null once those are replaced. */
     const staying = (sibling: ModelProjection): string[] | null => {
       const rewrite =
         sibling.routedUseCases.length === 1 ? staged.get(sibling.routedUseCases[0]) : undefined;
-      // A same-selector retarget also replaces the old lock before this join;
-      // coalescing gives both plans the candidate's capabilities and Think.
+      // A same-selector retarget replaces the old lock — SetRoleModel rewrites
+      // the role with the coalesced capabilities and Think — for every
+      // mutation of the group that runs after it.
       if (
         rewrite !== undefined &&
         !sameModelFacts(sibling, rewrite.modelFacts) &&
         base.routes.some(
           (route) => route.useCase === rewrite.useCase && route.role === sibling.role
         ) &&
-        compareString(changeStableID(rewrite), joinId) < 0
+        runsFirst(changeStableID(rewrite))
       )
         return null;
       const leaving = leavingRoutes(base, staged, sibling);
@@ -538,7 +569,7 @@ export function RouteEditor({
       const gone =
         sibling.role === role
           ? sharedRole.length === 0
-          : departure !== undefined && compareString(changeStableID(departure), joinId) < 0;
+          : departure !== undefined && runsFirst(changeStableID(departure));
       if (gone) return null;
       const names = sibling.routedUseCases.filter(
         (other) =>
@@ -546,12 +577,16 @@ export function RouteEditor({
           !unassigned.has(other) &&
           (sibling.role !== role || other !== useCase)
       );
-      // Still here, but only because its plan sorts after this join — say so.
-      // departure !== undefined means the sibling's one route is leaving, so
-      // names is always empty then — the note only ever decorates the
-      // role-fallback name.
+      // Still here, but only because its plan sorts after this join, or after
+      // an earlier mutation of the group — say so. departure !== undefined
+      // means the sibling's one route is leaving, so names is always empty
+      // then — the note only ever decorates the role-fallback name.
       const departureNote =
-        departure !== undefined ? ` (its ${departure.useCase} route leaves after this join)` : '';
+        departure === undefined
+          ? ''
+          : compareString(changeStableID(departure), joinId) > 0
+            ? ` (its ${departure.useCase} route leaves after this join)`
+            : ` (its ${departure.useCase} route leaves after an earlier change in this group)`;
       return names.length > 0 ? names : [`role ${sibling.role}${departureNote}`];
     };
     for (const sibling of base.models) {

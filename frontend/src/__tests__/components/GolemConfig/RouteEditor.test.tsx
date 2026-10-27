@@ -1803,6 +1803,89 @@ describe('RouteEditor', () => {
     }
   );
 
+  it('keeps the applied lock when an earlier join in the group meets it before the rewrite', async () => {
+    // chat-role owns set A on gpt-5. Staged: agent joins gpt-5 (route:agent),
+    // chat is retargeted on the same selector (route:chat). The planning
+    // join edited here adds thinking, and coalescing gives every change in
+    // the group that set. Plans run in stable-id order — agent, chat,
+    // planning — so the agent join writes the widened set while chat-role
+    // still holds A: selector_conflict. The rewrite replaces the lock only
+    // for mutations that run after it.
+    const agentJoin: RouteChange = {
+      kind: 'route',
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: { caps: OWNED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: OWNED,
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const chatRewrite: RouteChange = {
+      ...agentJoin,
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'moe' },
+    };
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'plan-role' },
+      ],
+      models: [
+        model({ role: 'agent-role', modelName: 'gpt-5-mini', routedUseCases: ['agent'] }),
+        gpt5Owner({ role: 'chat-role', routedUseCases: ['chat'] }),
+        model({ role: 'plan-role', modelName: 'gpt-5-plan', routedUseCases: ['planning'] }),
+      ],
+      draft: draftWith(agentJoin, chatRewrite),
+    });
+    await openRoute('planning');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText(/^thinking/));
+    expect(screen.getByText(/already exposes/)).toHaveTextContent(
+      'chat already exposes chat, stream, tool_call on this model; a route joining it cannot expose a different set.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it('keeps the second owner lock when two owners are rewritten before the join', async () => {
+    // agent-role and analysis-role both own set A on gpt-5; both are
+    // retargeted on the same selector before chat joins (route:agent <
+    // route:analysis < route:chat). The first rewrite writes the widened set
+    // onto agent-role while analysis-role still holds A, so analysis's lock
+    // is met, not replaced.
+    const rewrite = (useCase: string): RouteChange => ({
+      kind: 'route',
+      useCase,
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'moe' },
+      capabilityFacts: { caps: [...OWNED, 'thinking'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: [...OWNED, 'thinking'],
+      thinkMode: '',
+      confirmUnknown: true,
+    });
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'analysis', role: 'analysis-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [
+        model(),
+        gpt5Owner({ role: 'agent-role', routedUseCases: ['agent'] }),
+        gpt5Owner({ role: 'analysis-role', routedUseCases: ['analysis'] }),
+      ],
+      draft: draftWith(rewrite('agent'), rewrite('analysis')),
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    expect(screen.getByLabelText(/^thinking/)).toBeChecked();
+    expect(screen.getByText(/already exposes/)).toHaveTextContent(
+      'analysis already exposes chat, stream, tool_call on this model; a route joining it cannot expose a different set.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
   it('unlocks the selector when its only owner leaves, though a deriving sibling stays', async () => {
     // The owner (agent-role) is retargeted away before this join; spare-role
     // stays but only DERIVES its set — its exposure still shows the folded
