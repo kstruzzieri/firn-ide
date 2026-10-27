@@ -3,6 +3,7 @@ package git
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -467,11 +468,22 @@ func TestGenerateStaged_PolicyChangeBeforeSendMakesNoRequest(t *testing.T) {
 	writeFile(t, dir, "main.go", mainGo)
 	gitCmd(t, dir, "add", "main.go")
 	noRuntime(t)
+	// Listing and checking make the same guard calls on both passes, so a
+	// full run (which then fails at the missing runtime) is counted and the
+	// policy denies from the second pass on.
 	var calls atomic.Int32
 	gen := NewMessageGenerator()
 	gen.SetScopeGuardSource(func(string) (agenttools.ScopeGuard, string, error) {
+		return func(string, bool) error { calls.Add(1); return nil }, "", nil
+	})
+	if _, err := gen.GenerateStaged(ctx(), NewService(), dir); err == nil || errors.Is(err, errStagedChangesMoved) {
+		t.Fatalf("counting run error = %v, want the missing-runtime failure", err)
+	}
+	firstPass := calls.Load() / 2
+	calls.Store(0)
+	gen.SetScopeGuardSource(func(string) (agenttools.ScopeGuard, string, error) {
 		return func(string, bool) error {
-			if calls.Add(1) > 1 {
+			if calls.Add(1) > firstPass {
 				return errors.New("detached")
 			}
 			return nil
@@ -535,4 +547,89 @@ func TestGenerateStaged_SkippedRenameDetectionMakesNoRequest(t *testing.T) {
 	if !errors.Is(err, ErrRenameDetectionLimited) {
 		t.Fatalf("GenerateStaged() error = %v, want ErrRenameDetectionLimited", err)
 	}
+}
+
+// With more unmodified files than diff.renameLimit, a repository-wide
+// --find-copies-harder pass drops unmodified copy sources. The protected file
+// is checked as a copy source directly, so an edited copy of a committed .env
+// is still withheld as a copy.
+func TestGenerateStaged_WithholdsInexactCopyPastRenameLimit(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, ".env", "A=1\nB=2\nC=3\nD=4\nAPI_TOKEN=inexact-copy\n")
+	for i := range 5 {
+		writeFile(t, dir, fmt.Sprintf("filler-%d.txt", i), fmt.Sprintf("filler %d\n", i))
+	}
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "add env and fillers")
+	writeFile(t, dir, "config.txt", "A=1\nB=2\nC=3\nD=9\nAPI_TOKEN=inexact-copy\n")
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "config.txt", "main.go")
+	gitCmd(t, dir, "config", "diff.renameLimit", "3")
+	provider := gittest.Start(t, "feat: add main", nil)
+	gen := NewMessageGenerator()
+	chatPolicy(gen)
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil {
+		t.Fatalf("GenerateStaged() error = %v", err)
+	}
+	if !slices.Equal(result.Withheld, []string{".env -> config.txt"}) {
+		t.Errorf("Withheld = %q", result.Withheld)
+	}
+	assertWithheld(t, readRequest(t, provider), []string{"inexact-copy"}, []string{"config.txt"})
+}
+
+// When even the protected-source check exceeds diff.renameLimit, nothing is
+// sent.
+func TestGenerateStaged_LimitedCopyCheckMakesNoRequest(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, ".env", "API_TOKEN=one\n")
+	writeFile(t, dir, "deploy.key", "KEY=two\n")
+	gitCmd(t, dir, "add", ".env", "deploy.key")
+	gitCmd(t, dir, "commit", "-m", "add secrets")
+	writeFile(t, dir, "config.txt", "API_TOKEN=one\nmore\n")
+	gitCmd(t, dir, "add", "config.txt")
+	gitCmd(t, dir, "config", "diff.renameLimit", "1")
+	noRuntime(t)
+	gen := NewMessageGenerator()
+	chatPolicy(gen)
+
+	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if !errors.Is(err, ErrRenameDetectionLimited) {
+		t.Fatalf("GenerateStaged() error = %v, want ErrRenameDetectionLimited", err)
+	}
+}
+
+// The protected-source copy check passes every added path to git, so it runs
+// in batches that fit a Windows command line; a copy in the last batch is
+// still found.
+func TestGenerateStaged_FindsProtectedCopyAcrossBatches(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, ".env", "A=1\nB=2\nC=3\nD=4\nAPI_TOKEN=batched-copy\n")
+	gitCmd(t, dir, "add", ".env")
+	gitCmd(t, dir, "commit", "-m", "add env")
+	const added = 1500
+	for i := range added {
+		writeFile(t, dir, fmt.Sprintf("vendor/package-%04d/file.txt", i), fmt.Sprintf("file %d\n", i))
+	}
+	writeFile(t, dir, "vendor/zzz-last/settings.txt", "A=1\nB=2\nC=3\nD=9\nAPI_TOKEN=batched-copy\n")
+	gitCmd(t, dir, "add", "vendor")
+	provider := gittest.Start(t, "chore: vendor", nil)
+	gen := NewMessageGenerator()
+	chatPolicy(gen)
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil {
+		t.Fatalf("GenerateStaged() error = %v", err)
+	}
+	if !slices.Equal(result.Withheld, []string{".env -> vendor/zzz-last/settings.txt"}) {
+		t.Errorf("Withheld = %q", result.Withheld)
+	}
+	assertWithheld(t, readRequest(t, provider), []string{"batched-copy"}, []string{"settings.txt"})
 }

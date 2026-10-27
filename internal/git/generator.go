@@ -75,13 +75,6 @@ func (g *MessageGenerator) SetScopeGuardSource(src func(repoRoot string) (agentt
 // many were withheld. When everything is withheld no runtime is started and
 // the result carries no message.
 func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir string) (CommitMessageResult, error) {
-	changes, err := svc.StagedChanges(ctx, dir)
-	if err != nil {
-		return CommitMessageResult{}, err
-	}
-	if len(changes) == 0 {
-		return CommitMessageResult{}, errNothingStaged
-	}
 	root, err := svc.TopLevel(ctx, dir)
 	if err != nil {
 		return CommitMessageResult{}, err
@@ -93,19 +86,29 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 			return CommitMessageResult{}, err
 		}
 	}
+	denied := func(path string) bool { return guard(path, false) != nil }
+	changes, err := svc.StagedChanges(ctx, dir, denied)
+	if err != nil {
+		return CommitMessageResult{}, err
+	}
+	if len(changes) == 0 {
+		return CommitMessageResult{}, errNothingStaged
+	}
 	allowed, withheld, excluded := partitionStaged(changes, guard)
 	result := CommitMessageResult{Withheld: withheld}
 	if len(allowed) == 0 {
 		return result, nil
 	}
-	diff, err := svc.StagedDiff(ctx, dir, allowed, excluded)
+	diff, err := svc.StagedDiff(ctx, dir, excluded)
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
+	// The diff names everything staged but excluded, so anything staged after
+	// the listing would ride along unchecked: list and check again.
 	// ponytail: a re-list, not an index snapshot, so an index changed and
 	// changed back between the two listings goes unseen; copying the index
 	// for GIT_INDEX_FILE would close it if that ever matters.
-	again, err := svc.StagedChanges(ctx, dir)
+	again, err := svc.StagedChanges(ctx, dir, denied)
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
@@ -122,8 +125,7 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 // partitionStaged applies guard to each staged change. allowed holds every
 // path the diff may name, both sides of an allowed rename or copy; withheld
 // holds each withheld change for display, "path" or "old -> new"; excluded
-// holds every withheld path, both sides, so the diff can keep them out of an
-// allowed directory pathspec.
+// holds every withheld path, both sides, which the diff leaves out.
 func partitionStaged(changes []StagedChange, guard agenttools.ScopeGuard) (allowed, withheld, excluded []string) {
 	withheld = []string{}
 	for _, change := range changes {

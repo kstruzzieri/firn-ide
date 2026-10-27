@@ -276,31 +276,118 @@ type StagedChange struct {
 	OldPath string
 }
 
-// ErrRenameDetectionLimited reports that git stopped pairing inexact renames
-// because more files changed than diff.renameLimit allows, so a modified
-// rename lists as an unrelated deletion and addition and cannot be checked
-// as one change.
-var ErrRenameDetectionLimited = errors.New("too many staged files for git to pair renames, so they cannot be checked against the AI policy; write this message by hand")
+// ErrRenameDetectionLimited reports that git stopped pairing renames or
+// copies because more files changed than diff.renameLimit allows, so a
+// modified rename or copy would list as an unrelated addition and could not
+// be checked as one change.
+var ErrRenameDetectionLimited = errors.New("too many files for git to pair renames and copies, so they cannot be checked against the AI policy; write this message by hand")
 
-// StagedChanges lists the staged paths. Rename and copy detection are forced
-// on, copies from unmodified files included, so a rename or copy reports both
-// sides whatever diff.renames says. Exact copies are found in any repository;
-// past diff.renameLimit git pairs inexact copies only from modified files and
-// returns ErrRenameDetectionLimited when it pairs no inexact renames at all.
-func (s *Service) StagedChanges(ctx context.Context, dir string) ([]StagedChange, error) {
+// maxPathspecBytes bounds the pathspec arguments of one git command, so the
+// command line stays under Windows' 32,767-character limit with room for the
+// fixed arguments. Bytes overcount UTF-16 units, so the bound is safe.
+const maxPathspecBytes = 24 << 10
+
+// limitWarnings are the stderr warnings git prints when diff.renameLimit cut
+// rename or copy detection short: "inexact" before git 2.48, "exhaustive"
+// since, and the copies-harder fallback that drops unmodified sources.
+var limitWarnings = []string{"rename detection was skipped", "only found copies from modified paths"}
+
+func limited(warnings string) bool {
+	for _, w := range limitWarnings {
+		if strings.Contains(warnings, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// StagedChanges lists the staged paths with rename and copy detection forced
+// on, so a rename or copy reports both sides whatever diff.renames says.
+// Copies are found from modified and deleted files; an unmodified file is a
+// copy source only when copySource reports it, which keeps the check to the
+// few files that matter instead of every tracked file. When git cuts either
+// detection short, it returns ErrRenameDetectionLimited.
+func (s *Service) StagedChanges(ctx context.Context, dir string, copySource func(path string) bool) ([]StagedChange, error) {
 	root, err := s.TopLevel(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
-	out, warnings, err := s.runEnv(ctx, root, nil, "diff", "--cached", "-M", "--find-copies-harder", "--name-status", "-z")
+	out, warnings, err := s.runEnv(ctx, root, nil, "diff", "--cached", "-M", "-C", "--name-status", "-z")
 	if err != nil {
 		return nil, err
 	}
-	// "inexact" before git 2.48, "exhaustive" since; both end this way.
-	if strings.Contains(warnings, "rename detection was skipped") {
+	if limited(warnings) {
 		return nil, ErrRenameDetectionLimited
 	}
-	return parseNameStatus(out)
+	changes, err := parseNameStatus(out)
+	if err != nil || copySource == nil {
+		return changes, err
+	}
+	return s.markCopiesFrom(ctx, root, changes, copySource)
+}
+
+// markCopiesFrom turns each addition that git pairs as a copy of an
+// unmodified index file copySource reports into that copy. git considers
+// unmodified files as sources only under --find-copies-harder, which past
+// diff.renameLimit falls back to modified sources alone, so the check runs
+// with just those files and the additions as pathspecs, in batches that fit
+// one command line.
+func (s *Service) markCopiesFrom(ctx context.Context, root string, changes []StagedChange, copySource func(string) bool) ([]StagedChange, error) {
+	added := map[string]int{}
+	var dests []string
+	for i, change := range changes {
+		if change.Status == 'A' && !copySource(change.Path) {
+			added[change.Path] = i
+			dests = append(dests, ":(top,literal)"+change.Path)
+		}
+	}
+	if len(dests) == 0 {
+		return changes, nil
+	}
+	index, err := s.run(ctx, root, "ls-files", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var sources []string
+	size := 0
+	for _, path := range strings.Split(index, "\x00") {
+		if path != "" && copySource(path) {
+			sources = append(sources, ":(top,literal)"+path)
+			size += len(path) + 18
+		}
+	}
+	if len(sources) == 0 {
+		return changes, nil
+	}
+	if size > maxPathspecBytes/2 {
+		return nil, ErrRenameDetectionLimited
+	}
+	for len(dests) > 0 {
+		batch, used := append([]string(nil), sources...), size
+		for len(dests) > 0 && used+len(dests[0])+3 <= maxPathspecBytes {
+			batch = append(batch, dests[0])
+			used += len(dests[0]) + 3
+			dests = dests[1:]
+		}
+		args := append([]string{"diff", "--cached", "-M", "-C", "-C", "--name-status", "-z", "--"}, batch...)
+		out, warnings, err := s.runEnv(ctx, root, pathspecEnv, args...)
+		if err != nil {
+			return nil, err
+		}
+		if limited(warnings) {
+			return nil, ErrRenameDetectionLimited
+		}
+		found, err := parseNameStatus(out)
+		if err != nil {
+			return nil, err
+		}
+		for _, copied := range found {
+			if i, ok := added[copied.Path]; ok && copied.OldPath != "" {
+				changes[i] = copied
+			}
+		}
+	}
+	return changes, nil
 }
 
 // parseNameStatus decodes `--name-status -z` output: a status token, NUL, the
@@ -332,8 +419,8 @@ func parseNameStatus(out string) ([]StagedChange, error) {
 }
 
 // pathspecEnv restores git's default pathspec handling, so an inherited
-// GIT_LITERAL_PATHSPECS cannot switch off the exclude magic StagedDiff relies
-// on, and no glob or case folding widens a path.
+// GIT_LITERAL_PATHSPECS cannot switch off the magic these pathspecs rely on,
+// and no glob or case folding widens a path.
 var pathspecEnv = []string{
 	"GIT_LITERAL_PATHSPECS=0",
 	"GIT_GLOB_PATHSPECS=0",
@@ -341,25 +428,19 @@ var pathspecEnv = []string{
 	"GIT_ICASE_PATHSPECS=0",
 }
 
-// StagedDiff returns the unified diff of the index against HEAD for include,
-// minus exclude, all repo-relative and taken literally, as input for
-// commit-message generation (#384). A path also selects everything staged
-// under a directory of that name, which is why exclude exists. No include is
-// no diff, never everything: the caller decides what the model may see.
-// External diff drivers, textconv filters and submodule expansion are off, so
-// repository config cannot add content from paths the caller never checked.
-func (s *Service) StagedDiff(ctx context.Context, dir string, include, exclude []string) (string, error) {
-	if len(include) == 0 {
-		return "", nil
-	}
+// StagedDiff returns the unified diff of the index against HEAD minus exclude,
+// repo-relative paths taken literally, as input for commit-message generation
+// (#384). Excluding rather than naming what may be sent keeps the command line
+// short whatever is staged, and an excluded path stays out even when it sits
+// under a directory staged at another path's name. External diff drivers,
+// textconv filters and submodule expansion are off, so repository config
+// cannot add content from paths the caller never checked.
+func (s *Service) StagedDiff(ctx context.Context, dir string, exclude []string) (string, error) {
 	root, err := s.TopLevel(ctx, dir)
 	if err != nil {
 		return "", err
 	}
-	args := []string{"diff", "--cached", "-M", "--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short", "--"}
-	for _, path := range include {
-		args = append(args, ":(top,literal)"+path)
-	}
+	args := []string{"diff", "--cached", "-M", "--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short", "--", ":(top)"}
 	for _, path := range exclude {
 		args = append(args, ":(top,literal,exclude)"+path)
 	}

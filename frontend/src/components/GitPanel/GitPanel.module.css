@@ -234,6 +234,12 @@
   gap: 6px;
 }
 
+/* The live region stays mounted while empty; cancel the flex gap it would
+   otherwise add between the message box and its controls. */
+.statusRegion:empty {
+  margin-top: -6px;
+}
+
 .aiWithheldList {
   margin: 4px 0 0;
   padding-left: 16px;

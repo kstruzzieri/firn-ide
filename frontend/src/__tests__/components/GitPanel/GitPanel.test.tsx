@@ -621,8 +621,14 @@ describe('GitPanel AI withheld paths (#384)', () => {
     });
 
     render(<GitPanel />);
+    // The live region is mounted before the notice fills it, so screen
+    // readers announce the notice.
+    const region = screen.getByRole('status');
+    expect(region).toBeEmptyDOMElement();
     fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
     await act(async () => {});
+
+    expect(within(region).getByTestId('ai-withheld')).toBeInTheDocument();
 
     expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('feat: generated');
     const notice = screen.getByTestId('ai-withheld');

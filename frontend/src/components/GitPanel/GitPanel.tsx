@@ -315,12 +315,12 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
         </div>
       )}
       {/* Mounted empty so screen readers announce the notice when it fills. */}
-      <div role="status">
+      <div role="status" className={styles.statusRegion}>
         {withheldFromAI && (
           <div className={styles.aiWithheld} data-testid="ai-withheld">
             {withheldFromAI.allWithheld
-              ? 'Every staged file is withheld from the AI by the sensitive-path policy, so no request was made. Write the message by hand.'
-              : 'Withheld from the AI by the sensitive-path policy, so the message may not mention:'}
+              ? "Every staged file is withheld from the AI by Golem's file access rules, so no request was made. Write the message by hand."
+              : "Withheld from the AI by Golem's file access rules, so the message may not mention:"}
             <ul className={styles.aiWithheldList}>
               {withheldFromAI.paths.map((path) => (
                 <li key={path}>

@@ -184,3 +184,27 @@ func TestStagedPathGuard_ClosedServiceIsAnError(t *testing.T) {
 		t.Fatalf("StagedPathGuard on a closed service = %v, want errServiceClosing", err)
 	}
 }
+
+// On a case-insensitive filesystem a project opened through a differently
+// cased path is the same directory git reports, so paths map one to one.
+func TestStagedPathGuard_SameDirectoryInAnotherCaseMapsDirectly(t *testing.T) {
+	outsideConfig(t)
+	top := filepath.Join(t.TempDir(), "Repo")
+	if err := os.MkdirAll(top, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lower := filepath.Join(filepath.Dir(top), "repo")
+	if _, err := os.Stat(lower); err != nil {
+		t.Skip("case-sensitive filesystem")
+	}
+	svc := newStagedGuardService(t)
+	bindStaged(t, svc, lower)
+
+	guard, _, err := svc.StagedPathGuard(top)
+
+	if err != nil {
+		t.Fatalf("StagedPathGuard: %v", err)
+	}
+	assertAllowed(t, guard, "main.go")
+	assertDenied(t, guard, ".env")
+}

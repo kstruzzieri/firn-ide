@@ -374,6 +374,12 @@ func (s *Service) StagedPathGuard(gitRoot string) (agenttools.ScopeGuard, string
 	if err != nil {
 		return nil, "", err
 	}
+	// The usual case: the project is the git top level. Compared by identity,
+	// because on a case-insensitive filesystem the bound root keeps the case
+	// the project was opened with while git reports the case on disk.
+	if same, sameErr := sameDirectory(s.fs, top, boundRoot); sameErr == nil && same {
+		return guard, configPath, nil
+	}
 	return func(rel string, write bool) error {
 		bound, err := filepath.Rel(boundRoot, filepath.Join(top, filepath.FromSlash(rel)))
 		if err != nil || !filepath.IsLocal(bound) {
@@ -381,6 +387,19 @@ func (s *Service) StagedPathGuard(gitRoot string) (agenttools.ScopeGuard, string
 		}
 		return guard(filepath.ToSlash(bound), write)
 	}, configPath, nil
+}
+
+// sameDirectory reports whether a and b name the same directory.
+func sameDirectory(fsys filesystem.FileSystem, a, b string) (bool, error) {
+	ai, err := filesystem.Lstat(fsys, a)
+	if err != nil {
+		return false, err
+	}
+	bi, err := filesystem.Lstat(fsys, b)
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(ai, bi), nil
 }
 
 // stagedPolicy issues the current binding's guard under the binding gate's
