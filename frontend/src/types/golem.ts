@@ -1005,14 +1005,19 @@ function readModel(value: unknown): ModelProjection | null {
     const override = readCappedArray(value.capabilityOverride, CAPABILITY_NAMES.length, (cap) =>
       isOneOf(cap, CAPABILITY_NAMES) ? cap : null
     );
-    // The producer folds the override into exposedCapabilities and omits the
-    // key rather than sending an empty list, so a projection whose two
-    // disagree, or that names an empty override, was not produced by it.
+    // An owner's resolved set IS its explicit set (ResolvedCapabilities), and
+    // the producer folds that set into exposedCapabilities and omits the key
+    // rather than sending an empty list: a projection whose override differs
+    // from either, or that names an empty override, was not produced by it.
+    const sameAs = (caps: readonly CapabilityName[]): boolean =>
+      override !== null &&
+      override.length === caps.length &&
+      override.every((cap, index) => cap === caps[index]);
     if (
       override === null ||
       override.length === 0 ||
-      override.length !== exposedCapabilities.length ||
-      override.some((cap, index) => cap !== exposedCapabilities[index])
+      !sameAs(exposedCapabilities) ||
+      !sameAs(effectiveCapabilities)
     )
       return null;
     capabilityOverride = override;

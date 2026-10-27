@@ -252,6 +252,20 @@ describe('parseSettingsProjection', () => {
       },
     ],
     [
+      // An owner resolves to its explicit set: an override beside a different
+      // effective set is a role that owns nothing dressed as one.
+      'a capability override that is not the effective set',
+      (v: Record<string, unknown>) => {
+        const model = (v.models as Record<string, unknown>[])[0];
+        model.effectiveCapabilities = ['chat', 'stream'];
+        model.capabilityFacts = {
+          caps: ['chat', 'stream'],
+          knownCaps: ['chat', 'generate', 'stream', 'embed', 'tool_call', 'thinking', 'insert'],
+        };
+        model.capabilityOverride = ['chat', 'stream', 'tool_call'];
+      },
+    ],
+    [
       'an empty capability override',
       (v: Record<string, unknown>) => {
         (v.models as Record<string, unknown>[])[0].capabilityOverride = [];

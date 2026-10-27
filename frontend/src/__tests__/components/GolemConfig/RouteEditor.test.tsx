@@ -1651,14 +1651,15 @@ describe('RouteEditor', () => {
 
   it('does not hold the current model to its own selector override', async () => {
     // Keeping chat's model is an OVERRIDE — SetRoleOverrides rewrites every
-    // role on the selector, the deriving spare-role included — not a join:
-    // changing the exposure here is the selector-wide edit the override
-    // exists for.
+    // role on the selector, spare-role included — not a join: changing the
+    // exposure here is the selector-wide edit the override exists for. The
+    // spare is itself an owner of the same set (owners on a selector agree),
+    // so only the override gate keeps it from locking this edit.
     const { onStage } = renderRouting({
       routes: [{ useCase: 'chat', role: 'chat-role' }],
       models: [
         gpt5Owner({ role: 'chat-role', modelName: 'gpt-5-mini', routedUseCases: ['chat'] }),
-        gpt5Deriving(OWNED, {
+        gpt5Owner({
           role: 'spare-role',
           modelName: 'gpt-5-mini',
           routedUseCases: [],
