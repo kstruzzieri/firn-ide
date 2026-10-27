@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -24,6 +26,9 @@ func requireGit(t *testing.T) {
 }
 
 // gitCmd runs git in dir with identity/config isolated from the host user.
+// Automatic maintenance is off: `git commit` otherwise starts a detached
+// `git maintenance run --auto` that can still be writing .git/objects when
+// t.TempDir's cleanup removes the repository.
 func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -31,6 +36,9 @@ func gitCmd(t *testing.T, dir string, args ...string) string {
 	cmd.Env = append(ScrubGitEnv(os.Environ()),
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_KEY_0=maintenance.auto", "GIT_CONFIG_VALUE_0=false",
+		"GIT_CONFIG_KEY_1=gc.auto", "GIT_CONFIG_VALUE_1=0",
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
 	)
@@ -668,20 +676,145 @@ func TestService_FileAtRev_LargeFileTruncated(t *testing.T) {
 	}
 }
 
-func TestService_StagedDiff(t *testing.T) {
+func TestService_StagedDiff_ExcludesPaths(t *testing.T) {
 	requireGit(t)
 	dir := initRepo(t)
 	writeFile(t, dir, "README.md", "hello\nmore\n")
+	writeFile(t, dir, "other.txt", "other content\n")
 	svc := NewService()
-	_ = svc.Stage(ctx(), dir, []string{"README.md"})
+	_ = svc.Stage(ctx(), dir, []string{"README.md", "other.txt"})
 
-	diff, err := svc.StagedDiff(ctx(), dir)
+	diff, err := svc.StagedDiff(ctx(), dir, []string{"other.txt"})
 
 	if err != nil {
 		t.Fatalf("StagedDiff() error = %v", err)
 	}
 	if !strings.Contains(diff, "+more") {
 		t.Errorf("diff %q missing +more hunk line", diff)
+	}
+	if strings.Contains(diff, "other") {
+		t.Errorf("diff %q includes an excluded path", diff)
+	}
+}
+
+func TestService_StagedDiff_ExcludeIsLiteral(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "a[1].txt", "bracketed\n")
+	writeFile(t, dir, "a1.txt", "plain\n")
+	svc := NewService()
+	_ = svc.Stage(ctx(), dir, []string{"a[1].txt", "a1.txt"})
+
+	diff, err := svc.StagedDiff(ctx(), dir, []string{"a[1].txt"})
+
+	if err != nil {
+		t.Fatalf("StagedDiff() error = %v", err)
+	}
+	if strings.Contains(diff, "+bracketed") || !strings.Contains(diff, "+plain") {
+		t.Errorf("diff %q, want only the literally named file excluded", diff)
+	}
+}
+
+// A file replaced by a directory: excluding the withheld descendant keeps it
+// out while the deletion stays, whatever the caller's pathspec environment.
+func TestService_StagedDiff_ExcludesWithheldDescendants(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "config", "plain config\n")
+	gitCmd(t, dir, "add", "config")
+	gitCmd(t, dir, "commit", "-m", "add config")
+	gitCmd(t, dir, "rm", "-q", "config")
+	writeFile(t, dir, "config/.env", "TOKEN=descendant\n")
+	gitCmd(t, dir, "add", "config/.env")
+	svc := NewService()
+
+	for _, env := range []string{"", "GIT_LITERAL_PATHSPECS", "GIT_ICASE_PATHSPECS"} {
+		if env != "" {
+			t.Setenv(env, "1")
+		}
+		diff, err := svc.StagedDiff(ctx(), dir, []string{"config/.env"})
+
+		if err != nil {
+			t.Fatalf("StagedDiff() with %s error = %v", env, err)
+		}
+		if !strings.Contains(diff, "-plain config") || strings.Contains(diff, "descendant") || strings.Contains(diff, ".env") {
+			t.Errorf("StagedDiff() with %s = %q, want the deletion without the excluded descendant", env, diff)
+		}
+	}
+}
+
+// An unmodified file the caller names as a copy source is checked directly,
+// whatever diff.renameLimit says; other unmodified files are not sources.
+func TestService_StagedChanges_ReportsCopyOfNamedUnmodifiedSource(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "notes.txt", "one\ntwo\nthree\nfour\n")
+	gitCmd(t, dir, "add", "notes.txt")
+	gitCmd(t, dir, "commit", "-m", "add notes")
+	writeFile(t, dir, "copy.txt", "one\ntwo\nthree\nFOUR\n")
+	gitCmd(t, dir, "add", "copy.txt")
+	gitCmd(t, dir, "config", "diff.renameLimit", "1")
+	svc := NewService()
+
+	changes, err := svc.StagedChanges(ctx(), dir, func(path string) bool { return path == "notes.txt" })
+
+	want := []StagedChange{{Status: 'C', Path: "copy.txt", OldPath: "notes.txt"}}
+	if err != nil || !slices.Equal(changes, want) {
+		t.Errorf("StagedChanges(notes.txt as source) = %+v, %v, want %+v", changes, err, want)
+	}
+
+	changes, err = svc.StagedChanges(ctx(), dir, nil)
+
+	want = []StagedChange{{Status: 'A', Path: "copy.txt"}}
+	if err != nil || !slices.Equal(changes, want) {
+		t.Errorf("StagedChanges(no sources) = %+v, %v, want %+v", changes, err, want)
+	}
+}
+
+func TestService_StagedChanges(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "old.txt", "moved content\n")
+	gitCmd(t, dir, "add", "old.txt")
+	gitCmd(t, dir, "commit", "-m", "add old")
+	gitCmd(t, dir, "config", "diff.renames", "false") // renames are still reported
+	gitCmd(t, dir, "mv", "old.txt", "moved.txt")
+	writeFile(t, dir, "README.md", "hello\nmore\n")
+	writeFile(t, dir, "new file.txt", "spaced name\n")
+	gitCmd(t, dir, "add", "README.md", "new file.txt")
+	svc := NewService()
+
+	changes, err := svc.StagedChanges(ctx(), filepath.Join(dir), nil) // from the root
+
+	if err != nil {
+		t.Fatalf("StagedChanges() error = %v", err)
+	}
+	slices.SortFunc(changes, func(a, b StagedChange) int { return strings.Compare(a.Path, b.Path) })
+	want := []StagedChange{
+		{Status: 'M', Path: "README.md"},
+		{Status: 'R', Path: "moved.txt", OldPath: "old.txt"},
+		{Status: 'A', Path: "new file.txt"},
+	}
+	if !slices.Equal(changes, want) {
+		t.Errorf("StagedChanges() = %+v, want %+v", changes, want)
+	}
+
+	// Paths stay repo-relative from a subdirectory.
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fromSub, err := svc.StagedChanges(ctx(), filepath.Join(dir, "sub"), nil)
+	if err != nil {
+		t.Fatalf("StagedChanges(sub) error = %v", err)
+	}
+	slices.SortFunc(fromSub, func(a, b StagedChange) int { return strings.Compare(a.Path, b.Path) })
+	if !slices.Equal(fromSub, want) {
+		t.Errorf("StagedChanges(sub) = %+v, want %+v", fromSub, want)
+	}
+
+	empty, err := svc.StagedChanges(ctx(), initRepo(t), nil)
+	if err != nil || len(empty) != 0 {
+		t.Errorf("StagedChanges(clean) = %+v, %v, want none", empty, err)
 	}
 }
 
@@ -693,4 +826,104 @@ func countWhere(files []FileChange, pred func(FileChange) bool) int {
 		}
 	}
 	return n
+}
+
+func TestBatchPathspecs(t *testing.T) {
+	spec := strings.Repeat("x", 1000)
+	specs := make([]string, 30) // 30 * 1003 bytes: three batches of 12 KiB
+	for i := range specs {
+		specs[i] = spec
+	}
+
+	batches, err := batchPathspecs(specs)
+
+	if err != nil || len(batches) != 3 {
+		t.Fatalf("batchPathspecs() = %d batches, %v, want 3", len(batches), err)
+	}
+	total := 0
+	for _, batch := range batches {
+		total += len(batch)
+		if size := len(batch) * (len(spec) + 3); size > copyCheckBatchBytes {
+			t.Errorf("batch of %d bytes exceeds %d", size, copyCheckBatchBytes)
+		}
+	}
+	if total != len(specs) {
+		t.Errorf("batches hold %d pathspecs, want %d", total, len(specs))
+	}
+
+	if _, err := batchPathspecs([]string{strings.Repeat("x", copyCheckBatchBytes)}); !errors.Is(err, ErrPathTooLong) {
+		t.Errorf("batchPathspecs(oversized) error = %v, want ErrPathTooLong", err)
+	}
+}
+
+func TestService_StagedChanges_CopyDestinationDoesNotIncludeDeletedDescendants(t *testing.T) {
+	requireGit(t)
+	for _, tc := range []struct {
+		name     string
+		path     string
+		unixOnly bool
+	}{
+		{name: "plain", path: "config"},
+		{name: "nested", path: "sub/config"},
+		{name: "unicode", path: "配置/é😀"},
+		{name: "leading unicode", path: "😀"},
+		{name: "brackets", path: "[config]"},
+		{name: "space", path: "space name"},
+		{name: "wildcards", path: "con*fi?g", unixOnly: true},
+		{name: "backslash", path: `\config`, unixOnly: true},
+		{name: "nested metacharacters", path: `sub[dir]/con\fi*g?`, unixOnly: true},
+		{name: "colon", path: ":config", unixOnly: true},
+		{name: "newline", path: "line\nbreak", unixOnly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.unixOnly && runtime.GOOS == "windows" {
+				t.Skip("filename contains characters Windows does not allow")
+			}
+			dir := initRepo(t)
+			common := strings.Repeat("common unchanged configuration line\n", 10)
+			allowed := common + strings.Repeat("extra allowed configuration line\n", 4)
+			old := tc.path + "/old.txt"
+			writeFile(t, dir, ".env", common+"TOKEN=synthetic-secret-copy\n")
+			writeFile(t, dir, old, allowed)
+			gitCmd(t, dir, "add", ".")
+			gitCmd(t, dir, "commit", "-m", "seed")
+			gitCmd(t, dir, "--literal-pathspecs", "rm", "--", old)
+			writeFile(t, dir, tc.path, allowed+"TOKEN=synthetic-secret-copy\n")
+			gitCmd(t, dir, "add", ".")
+
+			changes, err := NewService().StagedChanges(ctx(), dir, func(path string) bool { return path == ".env" })
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []StagedChange{{Status: 'C', Path: tc.path, OldPath: ".env"}, {Status: 'D', Path: old}}
+			if !slices.Equal(changes, want) {
+				t.Fatalf("StagedChanges() = %+v, want %+v", changes, want)
+			}
+		})
+	}
+}
+
+func TestService_StagedChanges_RejectsRawPathspecSpellingAsCopySource(t *testing.T) {
+	requireGit(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("backslash is a directory separator on Windows")
+	}
+	dir := initRepo(t)
+	common := strings.Repeat("common unchanged configuration line\n", 10)
+	allowed := common + strings.Repeat("extra allowed configuration line\n", 4)
+	writeFile(t, dir, ".env", common+"TOKEN=synthetic-secret-copy\n")
+	// Git tries this literal spelling before interpreting the glob's escapes.
+	writeFile(t, dir, `\config/old.txt`, allowed)
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "seed")
+	gitCmd(t, dir, "--literal-pathspecs", "rm", "--", `\config/old.txt`)
+	writeFile(t, dir, "config", allowed+"TOKEN=synthetic-secret-copy\n")
+	gitCmd(t, dir, "add", "config")
+
+	changes, err := NewService().StagedChanges(ctx(), dir, func(path string) bool { return path == ".env" })
+
+	if !errors.Is(err, ErrUnexpectedCopySource) || changes != nil {
+		t.Fatalf("StagedChanges() = %+v, %v, want no changes and ErrUnexpectedCopySource", changes, err)
+	}
 }

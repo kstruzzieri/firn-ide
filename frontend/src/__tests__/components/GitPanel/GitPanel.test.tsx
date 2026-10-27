@@ -528,6 +528,9 @@ describe('GitPanel commit area', () => {
 });
 
 describe('GitPanel AI message generation', () => {
+  const generated = (message: string, withheld: string[] = []) =>
+    ({ message, withheld }) as git.CommitMessageResult;
+
   it('hides the generate button when golem is unavailable', () => {
     seed([file('staged.ts', 'M', '.')]);
 
@@ -537,7 +540,7 @@ describe('GitPanel AI message generation', () => {
   });
 
   it('fills an empty draft directly from the generator', async () => {
-    mockGenerate.mockResolvedValue('feat: generated');
+    mockGenerate.mockResolvedValue(generated('feat: generated'));
     seed([file('staged.ts', 'M', '.')]);
     act(() => {
       useGitStore.setState({ aiAvailable: true });
@@ -548,10 +551,11 @@ describe('GitPanel AI message generation', () => {
     await act(async () => {});
 
     expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('feat: generated');
+    expect(screen.queryByTestId('ai-withheld')).not.toBeInTheDocument();
   });
 
   it('offers a non-destructive suggestion when a draft exists', async () => {
-    mockGenerate.mockResolvedValue('feat: generated');
+    mockGenerate.mockResolvedValue(generated('feat: generated'));
     seed([file('staged.ts', 'M', '.')]);
     act(() => {
       useGitStore.setState({ aiAvailable: true });
@@ -573,6 +577,227 @@ describe('GitPanel AI message generation', () => {
 
     fireEvent.click(within(suggestion).getByRole('button', { name: /use/i }));
     expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('feat: generated');
+  });
+});
+
+describe('GitPanel AI generation preserves current drafts', () => {
+  it.each([
+    ['generated', 'feat: generated', []],
+    ['all withheld', '', ['.env']],
+    ['failed', null, []],
+  ] as const)('keeps edits made during a %s request', async (_outcome, message, withheld) => {
+    let resolve!: (result: git.CommitMessageResult) => void;
+    let reject!: (error: Error) => void;
+    mockGenerate.mockReturnValueOnce(
+      new Promise<git.CommitMessageResult>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      }) as unknown as ReturnType<typeof GitGenerateCommitMessage>
+    );
+    seed([file('.env', 'A', '.'), file('main.go', 'A', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+    render(<GitPanel />);
+    const input = screen.getByRole('textbox', { name: /commit message/i });
+    fireEvent.change(input, { target: { value: 'my draft' } });
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    fireEvent.change(input, { target: { value: 'my completed draft' } });
+    await act(async () => {
+      if (message === null) reject(new Error('model unavailable'));
+      else resolve({ message, withheld: [...withheld] } as git.CommitMessageResult);
+    });
+
+    expect(input).toHaveValue('my completed draft');
+    if (message) expect(screen.getByTestId('ai-suggestion')).toHaveTextContent(message);
+    else expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
+  });
+
+  it('offers a suggestion when an empty draft is filled while generation is pending', async () => {
+    let resolve!: (result: git.CommitMessageResult) => void;
+    mockGenerate.mockReturnValueOnce(
+      new Promise<git.CommitMessageResult>((res) => {
+        resolve = res;
+      }) as unknown as ReturnType<typeof GitGenerateCommitMessage>
+    );
+    seed([file('main.go', 'A', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+    render(<GitPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    const input = screen.getByRole('textbox', { name: /commit message/i });
+    fireEvent.change(input, { target: { value: 'new draft' } });
+    await act(async () => {
+      resolve({ message: 'feat: generated', withheld: [] } as git.CommitMessageResult);
+    });
+
+    expect(input).toHaveValue('new draft');
+    expect(screen.getByTestId('ai-suggestion')).toHaveTextContent('feat: generated');
+  });
+
+  it('clears an earlier suggestion when an all-withheld retry starts', async () => {
+    mockGenerate.mockResolvedValueOnce({
+      message: 'feat: earlier',
+      withheld: [],
+    } as git.CommitMessageResult);
+    seed([file('main.go', 'A', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+    render(<GitPanel />);
+    fireEvent.change(screen.getByRole('textbox', { name: /commit message/i }), {
+      target: { value: 'my draft' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+    expect(screen.getByTestId('ai-suggestion')).toBeInTheDocument();
+
+    let resolve!: (result: git.CommitMessageResult) => void;
+    mockGenerate.mockReturnValueOnce(
+      new Promise<git.CommitMessageResult>((res) => {
+        resolve = res;
+      }) as unknown as ReturnType<typeof GitGenerateCommitMessage>
+    );
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
+    await act(async () => {
+      resolve({ message: '', withheld: ['.env'] } as git.CommitMessageResult);
+    });
+
+    expect(screen.getByTestId('ai-withheld')).toHaveTextContent(/no request was made/i);
+    expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('my draft');
+  });
+
+  it('clears an earlier suggestion after a successful commit', async () => {
+    mockGenerate.mockResolvedValueOnce({
+      message: 'feat: earlier',
+      withheld: [],
+    } as git.CommitMessageResult);
+    mockGitStatus.mockResolvedValue(repoStatus([file('main.go', 'A', '.')]));
+    (GitCommit as jest.MockedFunction<typeof GitCommit>).mockResolvedValueOnce(
+      '[main abc1234] my draft'
+    );
+    seed([file('main.go', 'A', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+    render(<GitPanel />);
+    fireEvent.change(screen.getByRole('textbox', { name: /commit message/i }), {
+      target: { value: 'my draft' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+    expect(screen.getByTestId('ai-suggestion')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^commit$/i }));
+    await act(async () => {});
+    expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('');
+  });
+});
+
+describe('GitPanel AI generation across a workspace switch', () => {
+  it('clears an existing suggestion when a workspace reset and status refresh are batched', async () => {
+    mockGenerate.mockResolvedValueOnce({
+      message: 'feat: old workspace',
+      withheld: [],
+    } as git.CommitMessageResult);
+    seed([file('main.go', 'A', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+    render(<GitPanel />);
+    fireEvent.change(screen.getByRole('textbox', { name: /commit message/i }), {
+      target: { value: 'old draft' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+    expect(screen.getByTestId('ai-suggestion')).toBeInTheDocument();
+
+    act(() => {
+      useGitStore.getState().resetForWorkspace('/other');
+      useGitStore.setState({ status: repoStatus([], { repoRoot: '/other' }) });
+    });
+    expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('');
+  });
+
+  it('does not carry a draft into another workspace when it switches mid-generate', async () => {
+    let resolve: (result: git.CommitMessageResult) => void = () => {};
+    mockGenerate.mockReturnValue(
+      new Promise<git.CommitMessageResult>((r) => {
+        resolve = r;
+      }) as unknown as ReturnType<typeof GitGenerateCommitMessage>
+    );
+    seed([file('staged.ts', 'M', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+
+    render(<GitPanel />);
+    fireEvent.change(screen.getByRole('textbox', { name: /commit message/i }), {
+      target: { value: 'draft for the first repository' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    act(() => {
+      useGitStore.getState().resetForWorkspace('/other');
+    });
+    await act(async () => {
+      resolve({ message: 'feat: late', withheld: [] } as git.CommitMessageResult);
+    });
+
+    expect(useGitStore.getState().commitMessage).toBe('');
+  });
+});
+
+describe('GitPanel AI withheld paths (#384)', () => {
+  const generated = (message: string, withheld: string[] = []) =>
+    ({ message, withheld }) as git.CommitMessageResult;
+
+  it('lists the staged files withheld from the AI beside the generated message', async () => {
+    mockGenerate.mockResolvedValue(generated('feat: generated', ['.env', 'old.key -> new.key']));
+    seed([file('.env', 'A', '.'), file('staged.ts', 'M', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+
+    render(<GitPanel />);
+    // The live region is mounted before the notice fills it, so screen
+    // readers announce the notice.
+    const region = screen.getByRole('status');
+    expect(region).toBeEmptyDOMElement();
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+
+    expect(within(region).getByTestId('ai-withheld')).toBeInTheDocument();
+
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('feat: generated');
+    const notice = screen.getByTestId('ai-withheld');
+    expect(notice).toHaveTextContent(/withheld from the AI/i);
+    expect(notice).toHaveTextContent(/may not mention/i);
+    expect(within(notice).getByText('.env')).toBeInTheDocument();
+    expect(within(notice).getByText('old.key -> new.key')).toBeInTheDocument();
+  });
+
+  it('explains that no request was made when every staged file is withheld', async () => {
+    mockGenerate.mockResolvedValue(generated('', ['.env']));
+    seed([file('.env', 'A', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+
+    render(<GitPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('');
+    const notice = screen.getByTestId('ai-withheld');
+    expect(notice).toHaveTextContent(/no request was made/i);
+    expect(within(notice).getByText('.env')).toBeInTheDocument();
+    expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('git-error')).not.toBeInTheDocument();
   });
 });
 

@@ -210,6 +210,10 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.aiService = ai.NewService(ctx, a.osFS, consentPath, a.emit, firnUserAgent())
 	a.gitMsgGen.SetDestinationPolicySource(a.aiService.DestinationPolicy)
+	a.gitMsgGen.SetScopeSource(func(root string) (git.StagedScope, error) {
+		scope, err := a.aiService.StagedScope(root)
+		return git.StagedScope(scope), err
+	})
 }
 
 // wireLSPProvisioners builds and registers the managed-server provisioners on

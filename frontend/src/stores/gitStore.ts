@@ -290,6 +290,11 @@ interface GitState {
   /** Set on successful commit; cleared by the next mutating op or reset. */
   lastCommitReceipt: CommitReceipt | null;
   aiAvailable: boolean;
+  /** Staged paths the last Generate withheld from the AI under the
+   * sensitive-path policy (#384), shown locally only. allWithheld means every
+   * staged path was withheld, so no request was made and no message came
+   * back. Cleared by the next Generate, a commit, or a workspace reset. */
+  withheldFromAI: { paths: string[]; allWithheld: boolean } | null;
   /** Monotonic guard: refreshes started before the last workspace switch
    * must not apply their result. */
   epoch: number;
@@ -338,7 +343,7 @@ interface GitActions {
   push: () => Promise<void>;
   loadBranches: () => Promise<void>;
   checkout: (branch: string, create: boolean) => Promise<void>;
-  generateMessage: () => Promise<void>;
+  generateMessage: () => Promise<string | null>;
   probeAiAvailable: () => Promise<void>;
   requestBranchPopupFocus: () => void;
   openDiff: (
@@ -461,6 +466,7 @@ export const useGitStore = create<GitStore>()(
       lastError: null,
       lastCommitReceipt: null,
       aiAvailable: false,
+      withheldFromAI: null,
       epoch: 0,
       statusRevision: 0,
       focusBranchRevision: 0,
@@ -489,6 +495,7 @@ export const useGitStore = create<GitStore>()(
             lastOpOutput: null,
             lastError: null,
             lastCommitReceipt: null,
+            withheldFromAI: null,
             diffSession: null,
             diffSource: null,
             diffFocused: false,
@@ -603,6 +610,7 @@ export const useGitStore = create<GitStore>()(
           set(
             {
               commitMessage: '',
+              withheldFromAI: null,
               lastCommitReceipt: { ...parseCommitSummary(output), files: stagedFiles, output },
             },
             false,
@@ -639,13 +647,27 @@ export const useGitStore = create<GitStore>()(
       },
 
       generateMessage: async () => {
-        await runOp(
+        let message: string | null = null;
+        let withheld: string[] = [];
+        const ok = await runOp(
           'generate',
           get,
           set,
-          (root) => GitGenerateCommitMessage(root),
-          (message) => ({ commitMessage: message ?? '', lastOpOutput: null })
+          async (root) => {
+            // A new attempt replaces the last verdict, even if it fails.
+            set({ withheldFromAI: null }, false, 'git/generateWithheldReset');
+            const result = await GitGenerateCommitMessage(root);
+            withheld = result.withheld;
+            message = result.message;
+            return message;
+          },
+          (message) => ({
+            // An empty message means every staged path was withheld.
+            withheldFromAI: withheld.length ? { paths: withheld, allWithheld: !message } : null,
+            lastOpOutput: null,
+          })
         );
+        return ok ? message : null;
       },
 
       probeAiAvailable: async () => {

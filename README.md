@@ -109,7 +109,9 @@ Remote egress is consent-gated per destination and durable: nothing leaves the
 machine until a destination is approved, and the approval is recorded so it is
 not asked again. Providers, models, roles and destinations are configured from
 the Golem configuration workspace inside the app, and the same runtime writes
-commit messages.
+commit messages under the same sensitive-path rules: a staged file the policy
+denies is withheld from the model by name and content, and the Git panel lists
+it locally.
 
 Still ahead: durable multi-conversation history (#264), token and context usage
 once `go-llm` emits it (#265), and a guarded preview-and-apply mode for
