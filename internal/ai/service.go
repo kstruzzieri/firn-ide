@@ -343,6 +343,27 @@ func (s *Service) DestinationPolicy() provider.DestinationPolicy {
 	return s.consent.DestinationPolicy()
 }
 
+// StagedPathGuard returns the scope guard commit-message generation applies to
+// the repo-relative staged paths of the repository at repoRoot (#384). It is
+// built the way BindRepository builds chat's: the floor, the repository's
+// manifests and the protected config source, all through ScopePolicy, so the
+// two cannot drift. A root that cannot be canonicalized or a config source
+// that cannot be protected denies every path.
+func (s *Service) StagedPathGuard(repoRoot string) agenttools.ScopeGuard {
+	denyAll := func(string, bool) error { return errPolicyDenied }
+	root, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		return denyAll
+	}
+	policy := LoadScopePolicy(s.fs, root)
+	if sn := s.snapshotOrBuild(); sn.canonicalPath != "" {
+		if err := policy.ProtectConfigSource(sn.canonicalPath); err != nil {
+			return denyAll
+		}
+	}
+	return policy.Guard("")
+}
+
 // BindRepository makes repoPath the current repository incarnation and returns
 // the canonical root it authorized alongside the identity, so no caller has to
 // recompute it. A failed bind leaves the previous binding and its attached

@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"firn/internal/git"
@@ -100,19 +102,28 @@ func TestGitCommitMessageAvailable_UsesEmbeddedRuntime(t *testing.T) {
 
 func TestGitGenerateCommitMessage_Binding(t *testing.T) {
 	dir := initGitRepoForApp(t)
-	gittest.Start(t, "feat: add f.txt", nil)
-	app := NewApp()
-	if err := app.GitStage(dir, []string{"f.txt"}); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("TOKEN=hunter2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := newGolemApp(t) // startup wires the staged-path policy source (#384)
+	provider := gittest.Start(t, "feat: add f.txt", nil)
+	if err := app.GitStage(dir, []string{"f.txt", ".env"}); err != nil {
 		t.Fatal(err)
 	}
 
-	msg, err := app.GitGenerateCommitMessage(dir)
+	result, err := app.GitGenerateCommitMessage(dir)
 
 	if err != nil {
 		t.Fatalf("GitGenerateCommitMessage() error = %v", err)
 	}
-	if msg != "feat: add f.txt" {
-		t.Errorf("msg = %q", msg)
+	if result.Message != "feat: add f.txt" {
+		t.Errorf("Message = %q", result.Message)
+	}
+	if !slices.Equal(result.Withheld, []string{".env"}) {
+		t.Errorf("Withheld = %q, want [.env]", result.Withheld)
+	}
+	if request := string(<-provider.Requests); strings.Contains(request, "hunter2") || strings.Contains(request, "a/.env") {
+		t.Errorf("provider request carries the withheld file:\n%s", request)
 	}
 }
 

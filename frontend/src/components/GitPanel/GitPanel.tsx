@@ -256,6 +256,7 @@ function SyncControls() {
 function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: boolean }) {
   const commitMessage = useGitStore((s) => s.commitMessage);
   const aiAvailable = useGitStore((s) => s.aiAvailable);
+  const withheldFromAI = useGitStore((s) => s.withheldFromAI);
   const [amend, setAmend] = useState(false);
   const [suggestion, setSuggestion] = useState<string | null>(null);
 
@@ -306,6 +307,20 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
               Dismiss
             </button>
           </div>
+        </div>
+      )}
+      {withheldFromAI && (
+        <div className={styles.aiWithheld} data-testid="ai-withheld" role="status">
+          {withheldFromAI.allWithheld
+            ? 'Every staged file is withheld from the AI by the sensitive-path policy, so no request was made. Write the message by hand.'
+            : 'Withheld from the AI by the sensitive-path policy, so the message may not mention:'}
+          <ul className={styles.aiWithheldList}>
+            {withheldFromAI.paths.map((path) => (
+              <li key={path}>
+                <code>{path}</code>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       <ScopeGuard />

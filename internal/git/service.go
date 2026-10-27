@@ -88,9 +88,20 @@ func (s *Service) run(ctx context.Context, dir string, args ...string) (string, 
 		if msg == "" {
 			msg = err.Error()
 		}
-		return stdout.String(), fmt.Errorf("git %s: %s", args[0], msg)
+		return stdout.String(), fmt.Errorf("git %s: %s", subcommand(args), msg)
 	}
 	return stdout.String(), nil
+}
+
+// subcommand names the git subcommand in args, skipping global options such
+// as --literal-pathspecs, for error labels.
+func subcommand(args []string) string {
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			return arg
+		}
+	}
+	return args[0]
 }
 
 // Status returns the repository snapshot for the repo containing dir.
@@ -258,18 +269,80 @@ func isBinary(content string) bool {
 	return strings.ContainsRune(probe, 0)
 }
 
-// StagedDiff returns the unified diff of the index against HEAD, used as
-// input for commit-message generation.
-func (s *Service) StagedDiff(ctx context.Context, dir string) (string, error) {
-	return s.run(ctx, dir, "diff", "--cached")
+// StagedChange is one staged path as `git diff --cached --name-status` reports
+// it: Status is the status letter (A, M, D, R, C, T, U), Path and OldPath are
+// repo-relative, and OldPath is set only for a rename or copy.
+type StagedChange struct {
+	Status  byte
+	Path    string
+	OldPath string
+}
+
+// StagedChanges lists the staged paths. Rename detection is forced on so a
+// rename reports both sides whatever diff.renames says.
+func (s *Service) StagedChanges(ctx context.Context, dir string) ([]StagedChange, error) {
+	out, err := s.runAtRoot(ctx, dir, "diff", "--cached", "-M", "--name-status", "-z")
+	if err != nil {
+		return nil, err
+	}
+	return parseNameStatus(out)
+}
+
+// parseNameStatus decodes `--name-status -z` output: a status token, NUL, the
+// path, NUL; a rename or copy carries the old path first, then the new one.
+func parseNameStatus(out string) ([]StagedChange, error) {
+	fields := strings.Split(out, "\x00")
+	var changes []StagedChange
+	for i := 0; i < len(fields); {
+		status := fields[i]
+		if status == "" { // the terminator after the final entry
+			i++
+			continue
+		}
+		if i+1 >= len(fields) {
+			return nil, fmt.Errorf("git diff --name-status: truncated entry %q", status)
+		}
+		change := StagedChange{Status: status[0], Path: fields[i+1]}
+		i += 2
+		if change.Status == 'R' || change.Status == 'C' {
+			if i >= len(fields) {
+				return nil, fmt.Errorf("git diff --name-status: truncated rename %q", change.Path)
+			}
+			change.OldPath, change.Path = change.Path, fields[i]
+			i++
+		}
+		changes = append(changes, change)
+	}
+	return changes, nil
+}
+
+// StagedDiff returns the unified diff of the index against HEAD for paths,
+// repo-relative and taken literally, as input for commit-message generation;
+// renames are detected so both sides of a rename show as one. No paths is no
+// diff, never everything: the caller decides what the model may see (#384).
+func (s *Service) StagedDiff(ctx context.Context, dir string, paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", nil
+	}
+	args := append([]string{"--literal-pathspecs", "diff", "--cached", "-M", "--"}, paths...)
+	return s.runAtRoot(ctx, dir, args...)
+}
+
+// TopLevel returns the root of the working tree containing dir.
+func (s *Service) TopLevel(ctx context.Context, dir string) (string, error) {
+	out, err := s.run(ctx, dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
 }
 
 // runAtRoot runs git from the repo top-level, so repo-root-relative path
 // arguments (the porcelain contract) resolve even when dir is a subdirectory.
 func (s *Service) runAtRoot(ctx context.Context, dir string, args ...string) (string, error) {
 	root := dir
-	if out, err := s.run(ctx, dir, "rev-parse", "--show-toplevel"); err == nil {
-		root = strings.TrimSpace(out)
+	if top, err := s.TopLevel(ctx, dir); err == nil {
+		root = top
 	}
 	return s.run(ctx, root, args...)
 }

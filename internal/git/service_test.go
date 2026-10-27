@@ -629,20 +629,95 @@ func TestService_FileAtRev_LargeFileTruncated(t *testing.T) {
 	}
 }
 
-func TestService_StagedDiff(t *testing.T) {
+func TestService_StagedDiff_LimitsToPaths(t *testing.T) {
 	requireGit(t)
 	dir := initRepo(t)
 	writeFile(t, dir, "README.md", "hello\nmore\n")
+	writeFile(t, dir, "other.txt", "other content\n")
 	svc := NewService()
-	_ = svc.Stage(ctx(), dir, []string{"README.md"})
+	_ = svc.Stage(ctx(), dir, []string{"README.md", "other.txt"})
 
-	diff, err := svc.StagedDiff(ctx(), dir)
+	diff, err := svc.StagedDiff(ctx(), dir, []string{"README.md"})
 
 	if err != nil {
 		t.Fatalf("StagedDiff() error = %v", err)
 	}
 	if !strings.Contains(diff, "+more") {
 		t.Errorf("diff %q missing +more hunk line", diff)
+	}
+	if strings.Contains(diff, "other") {
+		t.Errorf("diff %q includes a path outside the pathspec", diff)
+	}
+
+	// No paths is no diff, never everything: the caller decides what may be seen.
+	diff, err = svc.StagedDiff(ctx(), dir, nil)
+	if err != nil || diff != "" {
+		t.Errorf("StagedDiff(nil paths) = %q, %v, want empty and no error", diff, err)
+	}
+}
+
+func TestService_StagedDiff_PathspecIsLiteral(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "a[1].txt", "bracketed\n")
+	writeFile(t, dir, "a1.txt", "plain\n")
+	svc := NewService()
+	_ = svc.Stage(ctx(), dir, []string{"a[1].txt", "a1.txt"})
+
+	diff, err := svc.StagedDiff(ctx(), dir, []string{"a[1].txt"})
+
+	if err != nil {
+		t.Fatalf("StagedDiff() error = %v", err)
+	}
+	if !strings.Contains(diff, "+bracketed") || strings.Contains(diff, "+plain") {
+		t.Errorf("diff %q, want only the literally named file", diff)
+	}
+}
+
+func TestService_StagedChanges(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "old.txt", "moved content\n")
+	gitCmd(t, dir, "add", "old.txt")
+	gitCmd(t, dir, "commit", "-m", "add old")
+	gitCmd(t, dir, "config", "diff.renames", "false") // renames are still reported
+	gitCmd(t, dir, "mv", "old.txt", "moved.txt")
+	writeFile(t, dir, "README.md", "hello\nmore\n")
+	writeFile(t, dir, "new file.txt", "spaced name\n")
+	gitCmd(t, dir, "add", "README.md", "new file.txt")
+	svc := NewService()
+
+	changes, err := svc.StagedChanges(ctx(), filepath.Join(dir)) // from the root
+
+	if err != nil {
+		t.Fatalf("StagedChanges() error = %v", err)
+	}
+	slices.SortFunc(changes, func(a, b StagedChange) int { return strings.Compare(a.Path, b.Path) })
+	want := []StagedChange{
+		{Status: 'M', Path: "README.md"},
+		{Status: 'R', Path: "moved.txt", OldPath: "old.txt"},
+		{Status: 'A', Path: "new file.txt"},
+	}
+	if !slices.Equal(changes, want) {
+		t.Errorf("StagedChanges() = %+v, want %+v", changes, want)
+	}
+
+	// Paths stay repo-relative from a subdirectory.
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fromSub, err := svc.StagedChanges(ctx(), filepath.Join(dir, "sub"))
+	if err != nil {
+		t.Fatalf("StagedChanges(sub) error = %v", err)
+	}
+	slices.SortFunc(fromSub, func(a, b StagedChange) int { return strings.Compare(a.Path, b.Path) })
+	if !slices.Equal(fromSub, want) {
+		t.Errorf("StagedChanges(sub) = %+v, want %+v", fromSub, want)
+	}
+
+	empty, err := svc.StagedChanges(ctx(), initRepo(t))
+	if err != nil || len(empty) != 0 {
+		t.Errorf("StagedChanges(clean) = %+v, %v, want none", empty, err)
 	}
 }
 
