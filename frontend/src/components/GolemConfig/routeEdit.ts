@@ -99,13 +99,16 @@ export const noteOf = (
 ): string | undefined => descriptions[0]?.description;
 
 /**
- * The Think mode Done would stage: a mode is meaningless without the
- * capability that justifies it, so the select's value counts only while
- * `thinking` is exposed. Unticking `thinking` clears it; re-ticking finds it
- * where it was left.
+ * The Think mode Done would stage. The select's value counts while `thinking`
+ * is exposed; unticking `thinking` the row had exposed is an actual removal
+ * and clears the mode (re-ticking finds it where it was left). [#311] A mode
+ * the row holds BEHIND an unexposed `thinking` (go-llm ties think_mode to no
+ * capability) is preserved as long as nothing removed `thinking`: an
+ * untouched editor stages nothing, and a model chosen above keeps its own
+ * authored mode. `against` is the row side the edit is measured from.
  */
-const effectiveThink = (seed: Seed): ThinkMode =>
-  seed.exposed.includes('thinking') ? seed.think : '';
+export const effectiveThink = (seed: Seed, against: Seed): ThinkMode =>
+  seed.exposed.includes('thinking') || !against.exposed.includes('thinking') ? seed.think : '';
 
 /**
  * Which side of the comparison a seed stands on. The editor's state is read
@@ -139,7 +142,7 @@ interface EditFacets {
   ackDrops: boolean;
 }
 
-const facetsOf = (seed: Seed, side: Side): EditFacets => {
+const facetsOf = (seed: Seed, side: Side, against: Seed = seed): EditFacets => {
   const facts = seed.defined === null ? null : modelFactsOf(seed.defined);
   // A list model that carries none of the optional facts reads exactly like a
   // hand declaration of it: both stage {provider, model, type}.
@@ -153,14 +156,15 @@ const facetsOf = (seed: Seed, side: Side): EditFacets => {
       : '',
     caps: seed.manual?.caps ?? seed.defined?.capabilityFacts.caps ?? [],
     exposed: seed.exposed,
-    think: side === 'stage' ? effectiveThink(seed) : seed.think,
+    think: side === 'stage' ? effectiveThink(seed, against) : seed.think,
     ackUnknown: seed.ackUnknown,
     ackDrops: seed.ackDrops,
   };
 };
 
 /** One side as a comparable string — the test oracle for `pendingOf`'s emptiness. */
-export const snapshotOf = (seed: Seed, side: Side): string => JSON.stringify(facetsOf(seed, side));
+export const snapshotOf = (seed: Seed, side: Side, against: Seed = seed): string =>
+  JSON.stringify(facetsOf(seed, side, against));
 
 const shown = (value: string): string => value || '—';
 /** The declare form's own Type label, or the placeholder while none is chosen. */
@@ -213,7 +217,7 @@ const setDelta = (
  * exactly when `snapshotOf(now, 'stage')` equals `snapshotOf(was, 'row')`.
  */
 export const pendingOf = (now: Seed, was: Seed): string[] => {
-  const a = facetsOf(now, 'stage');
+  const a = facetsOf(now, 'stage', was);
   const b = facetsOf(was, 'row');
   const pending: string[] = [];
   if (a.provider !== b.provider)
@@ -241,9 +245,13 @@ export const pendingOf = (now: Seed, was: Seed): string[] => {
     pending.push(`Type: ${typeLabel(a.type)} (was ${typeLabel(b.type)})`);
   pending.push(...setDelta('Capabilities', a.exposed, b.exposed));
   if (a.think !== b.think) {
-    // The select reads "Default" while it is on screen; once `thinking` is
-    // unticked there is no select, and Done clears the mode.
-    const nowLabel = now.exposed.includes('thinking') ? THINK_LABEL[a.think] : 'cleared';
+    // The select reads "Default" while it is on screen; once `thinking` the
+    // row had exposed is unticked there is no select, and Done clears the
+    // mode. A mode kept behind a `thinking` neither side exposes is named.
+    const nowLabel =
+      now.exposed.includes('thinking') || !was.exposed.includes('thinking')
+        ? THINK_LABEL[a.think]
+        : 'cleared';
     // A row holding no model shows no Think either.
     const wasLabel = b.model === '' ? '—' : THINK_LABEL[b.think];
     pending.push(`Think mode: ${nowLabel} (was ${wasLabel})`);

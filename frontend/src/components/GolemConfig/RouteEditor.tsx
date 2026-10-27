@@ -76,6 +76,7 @@ import { ModelBand } from './ModelBand';
 import { canonicalCaps } from './modelRows';
 import {
   abilitiesLine,
+  effectiveThink,
   THINK_LABEL,
   pendingOf,
   usedByOf,
@@ -398,6 +399,10 @@ export function RouteEditor({
     setAckUnknown(false);
   }
 
+  // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
+  // waiting for Done, never a committed state, so it must read as unstaged.
+  const [baseline] = useState(() => heldSeed(staged, current, models, base, others));
+
   const candidate: RouteChange | null =
     facts === null || capabilityFacts === null
       ? null
@@ -408,8 +413,14 @@ export function RouteEditor({
           capabilityFacts,
           // The checked set, nothing added: what the checklist shows is what is sent.
           exposedCaps: exposed,
-          // A think mode is meaningless without the capability that justifies it.
-          thinkMode: exposed.includes('thinking') ? think : '',
+          // The select's value while `thinking` is exposed; cleared once a
+          // `thinking` the row had exposed is unticked; kept as held behind a
+          // `thinking` nothing removed ([#311], the same rule the footer reads
+          // through `pendingOf`).
+          thinkMode: effectiveThink(
+            { provider, defined, manual, exposed, think, ackUnknown, ackDrops },
+            baseline
+          ),
           confirmUnknown: false,
         };
 
@@ -689,6 +700,19 @@ export function RouteEditor({
     `${listUseCases(names)} already ${agrees(names, 'exposes', 'expose')} ${caps.join(', ')} on this model; a route joining it cannot expose a different set.`;
 
   /**
+   * [#311] A card collapses every role with the same model facts and is
+   * represented by one of them; for the APPLIED model that representative
+   * may carry another role's Think. The card stands for this row's own role
+   * here — its probe, its preview and a re-pick read `current` — so an
+   * untouched assignment is judged, and restored, by its own values.
+   */
+  const cardRole = useCallback(
+    (model: ModelProjection): ModelProjection =>
+      current !== null && sameModelFacts(current, modelFactsOf(model)) ? current : model,
+    [current]
+  );
+
+  /**
    * [K6] One verdict per card, cached by role for the life of the draft: the
    * band re-renders on every keystroke in the declare form, and every verdict
    * projects the whole draft.
@@ -698,7 +722,7 @@ export function RouteEditor({
     return (model: ModelProjection): readonly FloorShortfall[] => {
       const cached = cache.get(model.role);
       if (cached !== undefined) return cached;
-      const probe = probeRouteChange(useCase, model, draft.changes);
+      const probe = probeRouteChange(useCase, cardRole(model), draft.changes);
       const verdict = withReach(
         floorShortfalls(probe.exposedCaps, governedBy(probe)),
         base,
@@ -707,7 +731,7 @@ export function RouteEditor({
       cache.set(model.role, verdict);
       return verdict;
     };
-  }, [base, draft, useCase, governedBy]);
+  }, [base, draft, useCase, governedBy, cardRole]);
 
   /**
    * [rev 7] What a card WOULD expose, and the floor it would meet, for the
@@ -723,7 +747,7 @@ export function RouteEditor({
     return (model: ModelProjection) => {
       const cached = cache.get(model.role);
       if (cached !== undefined) return cached;
-      const probe = probeRouteChange(useCase, model, draft.changes);
+      const probe = probeRouteChange(useCase, cardRole(model), draft.changes);
       const governedByCard = governedUseCasesOf(base, draft, probe);
       const verdict = {
         required: [...unionFloor(governedByCard)],
@@ -733,11 +757,8 @@ export function RouteEditor({
       cache.set(model.role, verdict);
       return verdict;
     };
-  }, [base, draft, useCase]);
+  }, [base, draft, useCase, cardRole]);
 
-  // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
-  // waiting for Done, never a committed state, so it must read as unstaged.
-  const [baseline] = useState(() => heldSeed(staged, current, models, base, others));
   // An acknowledgement counts only while its question is on screen — on BOTH
   // sides. submit() sends `confirmDrops` only with drops to confirm and gates
   // on `ackUnknown` only with unknown use cases, so a tick left behind a
@@ -990,7 +1011,7 @@ export function RouteEditor({
           clearRefusal();
         }}
         onSelect={(model) => {
-          setDefined(model);
+          setDefined(cardRole(model));
           setManual(null);
           completedManualName.current = null;
           clearRefusal();

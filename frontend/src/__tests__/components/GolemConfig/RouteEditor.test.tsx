@@ -2769,19 +2769,130 @@ describe('RouteEditor', () => {
     expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
   });
 
-  it('says Done clears a Think mode the row holds behind an unexposed thinking', async () => {
+  it('keeps a Think mode the row holds behind an unexposed thinking until thinking is actually removed', async () => {
     // go-llm ties think_mode to no capability, so a row can hold `auto` with
-    // thinking unexposed; the editor cannot stage that (thinkMode '' clears
-    // the override), so an untouched editor already says what Done would do.
+    // thinking unexposed. [#311] An untouched editor is untouched: the held
+    // mode is preserved, nothing is pending and nothing gates (before, the
+    // candidate normalised it to '' at open, read as an override of the whole
+    // selector, and a chain sibling could refuse the row's own model).
     renderRouting({ models: [model({ thinkMode: 'auto' }), other] });
     await openRoute('chat');
-    expect(summary()).toBe('Think mode: cleared (was Auto)');
-    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-changes')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
     // Exposing thinking lets the held `auto` stage as it is: nothing to say about Think.
     await userEvent.click(screen.getByRole('checkbox', { name: /^thinking/ }));
     expect(summary()).toBe('Capabilities: + thinking');
     expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
     expect(screen.getByLabelText('Think mode').parentElement).not.toHaveAttribute('data-changed');
+    // Unticking it again is back to the row: no removal happened.
+    await userEvent.click(screen.getByRole('checkbox', { name: /^thinking/ }));
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+  });
+
+  it('opens clean on a chain-reached model whose Think sits behind an unexposed thinking', async () => {
+    // [#311] analysis on pro-role (Think auto, thinking unexposed), reached by
+    // agent through its fallback. Untouched means untouched: no refusal, no
+    // Done, the card is offered, and re-picking it stages nothing.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'analysis', role: 'pro-role' },
+      ],
+      models: [
+        model({
+          role: 'agent-role',
+          modelName: 'gpt-5',
+          effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'tool_call'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'tool_call'],
+          routedUseCases: ['agent'],
+          fallbacks: ['pro-role'],
+        }),
+        model({
+          role: 'pro-role',
+          modelName: 'deepseek',
+          effectiveCapabilities: ['chat', 'generate', 'stream'],
+          capabilityFacts: {
+            caps: ['chat', 'generate', 'stream'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'generate', 'stream'],
+          thinkMode: 'auto',
+          routedUseCases: ['agent', 'analysis'],
+        }),
+      ],
+    });
+    await openRoute('analysis');
+    expect(screen.queryByText(/does not declare|takes it from/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /not eligible/ })).not.toBeInTheDocument();
+    await pickModel('gpt-5');
+    await pickModel('deepseek');
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it('re-picks the applied model by the edited role, not by the card representative', async () => {
+    // Two roles with identical facts collapse into one card whose
+    // representative (a-role, Think '') is not the edited role (pro-role,
+    // Think auto). The applied card must stay eligible and re-picking it must
+    // stage nothing — the card stands for THIS row's role here.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'analysis', role: 'pro-role' },
+      ],
+      models: [
+        model({
+          role: 'a-role',
+          modelName: 'deepseek',
+          effectiveCapabilities: ['chat', 'stream', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'thinking'],
+          thinkMode: '',
+          routedUseCases: ['agent'],
+        }),
+        model({
+          role: 'agent-role',
+          modelName: 'gpt-5',
+          effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'tool_call'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'tool_call'],
+          routedUseCases: ['agent'],
+          fallbacks: ['a-role'],
+        }),
+        model({
+          role: 'pro-role',
+          modelName: 'deepseek',
+          effectiveCapabilities: ['chat', 'stream', 'thinking'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'thinking'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'thinking'],
+          thinkMode: 'auto',
+          routedUseCases: ['analysis'],
+        }),
+      ],
+    });
+    await openRoute('analysis');
+    expect(screen.queryByText(/does not declare|takes it from/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /not eligible/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+    await pickModel('gpt-5');
+    await pickModel('deepseek');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(onStage).not.toHaveBeenCalled();
   });
 
   it('reopens a staged route on its list card with the declaration as staged, facts kept', async () => {
