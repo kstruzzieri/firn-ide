@@ -17,10 +17,11 @@
  * - a real retarget drops the authored, model-specific ThinkTags/Slots, which
  *   the projection reports only as existence facts (§5.2b, plan amendment 13).
  *
- * Two more block Done outright, because the backend would refuse the request:
- * a floor capability the checked set lacks (never ticked for the user — an
- * asserted cap is taken as truth), and a Think mode a selector sibling already
- * sets differently (go-llm's selectorPairConflict).
+ * Three more block Done outright, because the backend would refuse the
+ * request: a floor capability the checked set lacks (never ticked for the
+ * user — an asserted cap is taken as truth), a Think mode a selector sibling
+ * already sets differently, and a capability set a selector sibling already
+ * fixes explicitly (both go-llm's selectorPairConflict; #335).
  *
  * The affected and governed sets are NEVER re-derived here: the candidate
  * change is projected through `projectDraft`, the same reducer whose
@@ -498,25 +499,24 @@ export function RouteEditor({
    * Ceiling: a sibling routed by exactly one use case that an unrouted role
    * lists as a fallback is forked too (`fallbacks[role]`), invisible here —
    * the pre-check may mark it gone and the backend refuses late.
-   * Capability overrides conflict the same way, but the projection cannot
-   * tell a sibling's explicit override from its declared caps, so that half
-   * stays with the backend.
+   *
+   * [#335] A capability override conflicts the same way — selectorPairConflict
+   * compares two EXPLICIT sets — and is judged by the same staying rule,
+   * against the sibling's `selectorCapabilityOverride`: a sibling that only
+   * derives its set locks nothing, and the projection folds the one override
+   * a selector can hold onto every role on it, so the lock is one set.
    */
   const conflictsByMode = new Map<ThinkMode, Set<string>>();
-  if (!isOverride && candidate !== null && candidate.thinkMode !== '') {
+  const lockedBy = new Set<string>();
+  let lockedCaps: CapabilityName[] | undefined;
+  if (!isOverride && candidate !== null) {
     const staged = stagedRoutes(draft.changes);
     const unassigned = new Set(
       draft.changes.flatMap((change) => (change.kind === 'route-unassign' ? [change.useCase] : []))
     );
     const joinId = changeStableID(candidate);
-    for (const sibling of base.models) {
-      if (
-        sibling.provider !== candidate.modelFacts.provider ||
-        sibling.modelName !== candidate.modelFacts.model ||
-        sibling.thinkMode === '' ||
-        sibling.thinkMode === candidate.thinkMode
-      )
-        continue;
+    /** What `sibling` still serves when this join runs, or null once it is gone. */
+    const staying = (sibling: ModelProjection): string[] | null => {
       const leaving = leavingRoutes(base, staged, sibling);
       // The route taking the sibling's ONLY use case elsewhere, if there is one.
       const departure = retargetOf(base, staged, sibling);
@@ -524,8 +524,8 @@ export function RouteEditor({
         sibling.role === role
           ? sharedRole.length === 0
           : departure !== undefined && compareString(changeStableID(departure), joinId) < 0;
-      if (gone) continue;
-      const staying = sibling.routedUseCases.filter(
+      if (gone) return null;
+      const names = sibling.routedUseCases.filter(
         (other) =>
           !leaving.has(other) &&
           !unassigned.has(other) &&
@@ -533,19 +533,45 @@ export function RouteEditor({
       );
       // Still here, but only because its plan sorts after this join — say so.
       // departure !== undefined means the sibling's one route is leaving, so
-      // staying is always empty then — the note only ever decorates the
+      // names is always empty then — the note only ever decorates the
       // role-fallback name.
       const departureNote =
         departure !== undefined ? ` (its ${departure.useCase} route leaves after this join)` : '';
-      const names = conflictsByMode.get(sibling.thinkMode) ?? new Set<string>();
-      for (const name of staying.length > 0 ? staying : [`role ${sibling.role}${departureNote}`])
-        names.add(name);
-      conflictsByMode.set(sibling.thinkMode, names);
+      return names.length > 0 ? names : [`role ${sibling.role}${departureNote}`];
+    };
+    for (const sibling of base.models) {
+      if (
+        sibling.provider !== candidate.modelFacts.provider ||
+        sibling.modelName !== candidate.modelFacts.model
+      )
+        continue;
+      const thinkDiffers =
+        candidate.thinkMode !== '' &&
+        sibling.thinkMode !== '' &&
+        sibling.thinkMode !== candidate.thinkMode;
+      const capsDiffer =
+        sibling.selectorCapabilityOverride !== undefined &&
+        !sameCaps(sibling.selectorCapabilityOverride, candidate.exposedCaps);
+      if (!thinkDiffers && !capsDiffer) continue;
+      const names = staying(sibling);
+      if (names === null) continue;
+      if (thinkDiffers) {
+        const held = conflictsByMode.get(sibling.thinkMode) ?? new Set<string>();
+        for (const name of names) held.add(name);
+        conflictsByMode.set(sibling.thinkMode, held);
+      }
+      if (capsDiffer) {
+        lockedCaps = sibling.selectorCapabilityOverride;
+        for (const name of names) lockedBy.add(name);
+      }
     }
   }
   const thinkConflicts = [...conflictsByMode].map(([mode, names]) => ({ mode, names: [...names] }));
   const thinkConflictLine = ({ mode, names }: { mode: ThinkMode; names: string[] }): string =>
     `${listUseCases(names)} already ${agrees(names, 'sets', 'set')} Think to ${mode} on this model; a route joining it cannot set a different Think mode.`;
+  const capsConflict = lockedCaps === undefined ? null : { caps: lockedCaps, names: [...lockedBy] };
+  const capsConflictLine = ({ caps, names }: { caps: CapabilityName[]; names: string[] }): string =>
+    `${listUseCases(names)} already ${agrees(names, 'exposes', 'expose')} ${caps.join(', ')} on this model; a route joining it cannot expose a different set.`;
 
   /**
    * [K6] One verdict per card, cached by role for the life of the draft: the
@@ -665,6 +691,10 @@ export function RouteEditor({
     // floor clause, which names what a floored route is missing.
     if (exposed.length === 0) {
       setRefusal(EMPTY_EXPOSURE);
+      return;
+    }
+    if (capsConflict !== null) {
+      setRefusal(capsConflictLine(capsConflict));
       return;
     }
     if (thinkConflicts.length > 0) {
@@ -910,6 +940,16 @@ export function RouteEditor({
       ) : null}
 
       {/* Staging is refused while any of these stand. */}
+      {capsConflict !== null && (
+        <div className={styles.disclosure} data-tone="blocking">
+          <p className={styles.disclosureText}>
+            <strong>{listUseCases(capsConflict.names)}</strong> already{' '}
+            {agrees(capsConflict.names, 'exposes', 'expose')}{' '}
+            <strong>{capsConflict.caps.join(', ')}</strong> on this model; a route joining it cannot
+            expose a different set.
+          </p>
+        </div>
+      )}
       {thinkConflicts.map(({ mode, names }) => (
         <div key={mode} className={styles.disclosure} data-tone="blocking">
           <p className={styles.disclosureText}>

@@ -625,6 +625,12 @@ export interface ModelProjection {
   effectiveCapabilities: CapabilityName[];
   capabilityFacts: CapabilityFacts;
   exposedCapabilities: CapabilityName[];
+  /**
+   * The selector's EXPLICIT capability override, which `exposedCapabilities`
+   * folds into the declared set; absent when no role on the selector sets one
+   * (#335). Equals `exposedCapabilities` whenever present.
+   */
+  selectorCapabilityOverride?: CapabilityName[];
   thinkMode: ThinkMode;
   routedUseCases: string[];
   /** Existence facts only — a retarget drops these, the values never cross. */
@@ -916,6 +922,7 @@ function readModel(value: unknown): ModelProjection | null {
       'effectiveCapabilities',
       'capabilityFacts',
       'exposedCapabilities',
+      'selectorCapabilityOverride',
       'thinkMode',
       'routedUseCases',
       'hasThinkTags',
@@ -991,6 +998,26 @@ function readModel(value: unknown): ModelProjection | null {
   )
     return null;
 
+  let selectorCapabilityOverride: CapabilityName[] | undefined;
+  if (hasPresentKey(value, 'selectorCapabilityOverride')) {
+    const override = readCappedArray(
+      value.selectorCapabilityOverride,
+      CAPABILITY_NAMES.length,
+      (cap) => (isOneOf(cap, CAPABILITY_NAMES) ? cap : null)
+    );
+    // The producer folds the override into exposedCapabilities and omits the
+    // key rather than sending an empty list, so a projection whose two
+    // disagree, or that names an empty override, was not produced by it.
+    if (
+      override === null ||
+      override.length === 0 ||
+      override.length !== exposedCapabilities.length ||
+      override.some((cap, index) => cap !== exposedCapabilities[index])
+    )
+      return null;
+    selectorCapabilityOverride = override;
+  }
+
   return {
     role,
     modelName,
@@ -1003,6 +1030,7 @@ function readModel(value: unknown): ModelProjection | null {
     effectiveCapabilities,
     capabilityFacts,
     exposedCapabilities,
+    ...(selectorCapabilityOverride === undefined ? {} : { selectorCapabilityOverride }),
     thinkMode,
     routedUseCases,
     hasThinkTags,

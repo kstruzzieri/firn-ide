@@ -87,6 +87,25 @@ describe('parseSettingsProjection', () => {
     expect(p.providers[0].classification).toBe('remote');
   });
 
+  it('reads a selector capability override back, and an absent one as none', () => {
+    // #335: the projection names the selector's EXPLICIT override beside the
+    // folded exposure, so the editor can tell an override from declared caps.
+    expect(parseSettingsProjection(validProjection()).models[0].selectorCapabilityOverride).toBe(
+      undefined
+    );
+    const value = validProjection();
+    (value.models as Record<string, unknown>[])[0].selectorCapabilityOverride = [
+      'chat',
+      'stream',
+      'tool_call',
+    ];
+    expect(parseSettingsProjection(value).models[0].selectorCapabilityOverride).toEqual([
+      'chat',
+      'stream',
+      'tool_call',
+    ]);
+  });
+
   it.each([
     [
       'unknown state',
@@ -224,6 +243,36 @@ describe('parseSettingsProjection', () => {
         model.capabilityFacts = { caps: ['chat'], knownCaps: ['chat', 'stream'] };
         model.effectiveCapabilities = ['chat'];
         model.exposedCapabilities = ['chat', 'embed'];
+      },
+    ],
+    [
+      // The producer folds an override into exposedCapabilities, so a
+      // projection whose two disagree was not produced by it.
+      'a selector override that is not the exposed set',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].selectorCapabilityOverride = ['chat', 'stream'];
+      },
+    ],
+    [
+      'an empty selector override',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].selectorCapabilityOverride = [];
+      },
+    ],
+    [
+      'a non-canonical selector override',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].selectorCapabilityOverride = [
+          'stream',
+          'chat',
+          'tool_call',
+        ];
+      },
+    ],
+    [
+      'a null selector override',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].selectorCapabilityOverride = null;
       },
     ],
     [

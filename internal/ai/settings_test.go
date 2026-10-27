@@ -210,6 +210,68 @@ func TestProjectionSelectorWideExposedCapabilities(t *testing.T) {
 	}
 }
 
+func TestProjectionSelectorCapabilityOverride(t *testing.T) {
+	cfg := projectionConfig()
+	cfg.Models = map[string]config.ModelConfig{
+		"alpha": {
+			Name: "shared", Provider: "hosted", Type: "dense",
+			Capabilities: []string{"tool_call", "chat"},
+		},
+		"beta":  {Name: "shared", Provider: "hosted", Type: "dense"},
+		"gamma": {Name: "other", Provider: "hosted", Type: "dense"},
+	}
+	cfg.Defaults = map[string]string{"agent": "alpha"}
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	alpha, beta := projectedModel(t, p, "alpha"), projectedModel(t, p, "beta")
+	gamma := projectedModel(t, p, "gamma")
+	// #335: the selector's explicit override, canonical, on EVERY role sharing
+	// the selector — the one that authored it and the one that only derives —
+	// so the editor can tell an explicit override from the declared set that
+	// ExposedCapabilities folds it into.
+	want := []string{"chat", "tool_call"}
+	if !reflect.DeepEqual(alpha.SelectorCapabilityOverride, want) ||
+		!reflect.DeepEqual(beta.SelectorCapabilityOverride, want) {
+		t.Fatalf("override alpha=%v beta=%v, want %v",
+			alpha.SelectorCapabilityOverride, beta.SelectorCapabilityOverride, want)
+	}
+	// A selector no role overrides names none, and the wire omits the key: the
+	// frontend reads absence, never an empty list.
+	if gamma.SelectorCapabilityOverride != nil {
+		t.Fatalf("gamma override = %v, want none", gamma.SelectorCapabilityOverride)
+	}
+	raw, err := json.Marshal(p.Models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range wire {
+		role := string(m["role"])
+		_, present := m["selectorCapabilityOverride"]
+		if want := role != `"gamma"`; present != want {
+			t.Fatalf("role %s: selectorCapabilityOverride present=%v, want %v", role, present, want)
+		}
+	}
+	// Owned by the clone like every other slice: a caller's edit never reaches
+	// the cached snapshot.
+	cloned := p.clone()
+	projectedModelIndex := func(models []ModelProjection, role string) int {
+		for i, m := range models {
+			if m.Role == role {
+				return i
+			}
+		}
+		t.Fatalf("model %q missing", role)
+		return -1
+	}
+	cloned.Models[projectedModelIndex(cloned.Models, "alpha")].SelectorCapabilityOverride[0] = "embed"
+	if got := p.Models[projectedModelIndex(p.Models, "alpha")].SelectorCapabilityOverride; !reflect.DeepEqual(got, want) {
+		t.Fatalf("clone aliased the override: %v", got)
+	}
+}
+
 func TestProjectionUnsafeIdentifierLimited(t *testing.T) {
 	cfg := projectionConfig()
 	m := cfg.Models["agent-m"]

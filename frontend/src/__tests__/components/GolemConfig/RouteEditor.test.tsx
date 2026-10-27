@@ -1556,6 +1556,127 @@ describe('RouteEditor', () => {
     );
   });
 
+  /** gpt-5 declaring thinking too, exposing three caps; `locked` makes that
+   *  exposure the selector's EXPLICIT override, as the projection reports it. */
+  const gpt5Exposing = (locked: boolean, over: Partial<ModelProjection>): ModelProjection =>
+    model({
+      modelName: 'gpt-5',
+      effectiveCapabilities: ['chat', 'stream', 'tool_call', 'thinking'],
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCapabilities: ['chat', 'stream', 'tool_call'],
+      ...(locked ? { selectorCapabilityOverride: ['chat', 'stream', 'tool_call'] } : {}),
+      ...over,
+    });
+
+  it('refuses a join whose exposure differs from the override a sibling fixes on the model', async () => {
+    // #335: agent-role sets gpt-5's capabilities explicitly. A role joining the
+    // selector writes its own explicit set, and go-llm refuses the finished
+    // document when two explicit sets on one selector differ
+    // (selectorPairConflict → selector_conflict). Say so before Apply, the way
+    // the Think conflict is said.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), gpt5Exposing(true, { role: 'agent-role', routedUseCases: ['agent'] })],
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    // The checklist opens on the selector's override: nothing conflicts yet.
+    expect(screen.queryByText(/already exposes/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText('thinking'));
+    const conflict = screen.getByText(/already exposes/);
+    expect(conflict).toHaveTextContent(
+      'agent already exposes chat, stream, tool_call on this model; a route joining it cannot expose a different set.'
+    );
+    expect(conflict.closest('div')).toHaveAttribute('data-tone', 'blocking');
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/already exposes chat, stream, tool_call/);
+
+    await userEvent.click(screen.getByLabelText('thinking'));
+    expect(screen.queryByText(/already exposes/)).not.toBeInTheDocument();
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat', 'stream', 'tool_call']);
+  });
+
+  it('lets a join widen a selector no sibling overrides explicitly', async () => {
+    // The same shape with agent-role's set DERIVED from its type: go-llm
+    // compares explicit sets only, so the join's own set conflicts with nothing.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), gpt5Exposing(false, { role: 'agent-role', routedUseCases: ['agent'] })],
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText('thinking'));
+    expect(screen.queryByText(/already exposes/)).not.toBeInTheDocument();
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual([
+      'chat',
+      'stream',
+      'tool_call',
+      'thinking',
+    ]);
+  });
+
+  it('does not hold the current model to its own selector override', async () => {
+    // Keeping chat's model is an OVERRIDE — SetRoleOverrides rewrites every
+    // role on the selector, spare-role included — not a join: changing the
+    // exposure here is the selector-wide edit the override exists for.
+    const { onStage } = renderRouting({
+      routes: [{ useCase: 'chat', role: 'chat-role' }],
+      models: [
+        gpt5Exposing(true, {
+          role: 'chat-role',
+          modelName: 'gpt-5-mini',
+          routedUseCases: ['chat'],
+        }),
+        gpt5Exposing(true, {
+          role: 'spare-role',
+          modelName: 'gpt-5-mini',
+          routedUseCases: [],
+          removable: true,
+        }),
+      ],
+    });
+    await openRoute('chat');
+    await userEvent.click(screen.getByLabelText('tool_call'));
+    expect(screen.queryByText(/already exposes/)).not.toBeInTheDocument();
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat', 'stream']);
+  });
+
+  it('ignores an override-setting sibling the draft already moves off the model', async () => {
+    // [W4-10] as for Think: agent-role fixes gpt-5's set, but the draft routes
+    // agent elsewhere first, so nothing of agent-role is left on the selector.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [model(), gpt5Exposing(true, { role: 'agent-role', routedUseCases: ['agent'] })],
+      draft: draftWith(routedAway('agent')),
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText('thinking'));
+    expect(screen.queryByText(/already exposes/)).not.toBeInTheDocument();
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+  });
+
   it('requires the unknown-requirement acknowledgement and sets confirmUnknown', async () => {
     const { onStage } = renderRouting({
       routes: [
