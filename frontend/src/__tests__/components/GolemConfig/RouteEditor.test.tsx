@@ -1,11 +1,7 @@
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import {
-  RoutingCard,
-  routeRowKey,
-  routeUseCases,
-  type RoutingCardProps,
-} from '../../../components/GolemConfig/RoutingCard';
+import { RoutingCard, type RoutingCardProps } from '../../../components/GolemConfig/RoutingCard';
+import { routeRowKey, routeUseCases } from '../../../components/GolemConfig/routingRows';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
 import {
   buildApplyRequest,
@@ -2367,10 +2363,14 @@ describe('RouteEditor', () => {
       ],
     });
     await openRoute('chat');
+    const announcement = screen.getByRole('alert');
+    expect(announcement).toBeEmptyDOMElement();
+    expect(announcement).toHaveAttribute('aria-atomic', 'true');
     await pickModel('gpt-5');
     await stage();
 
     const refusal = screen.getByRole('alert');
+    expect(refusal).toBe(announcement);
     expect(refusal).toHaveTextContent(/requirements are unknown/i);
     expect(screen.getByTestId('editor-changes').nextElementSibling).toBe(refusal);
     expect(refusal.nextElementSibling).toContainElement(
@@ -2465,7 +2465,7 @@ describe('RouteEditor', () => {
     // stage, so the acknowledgement question and Done go with the refusal
     // ([#311]: an acknowledgement alone never stages an override).
     await userEvent.click(screen.getByLabelText('chat'));
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeEmptyDOMElement();
     expect(screen.queryByText(/Mark at least one capability/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
@@ -3723,7 +3723,7 @@ describe('RouteEditor union floor (wave 4c)', () => {
     });
     await openRoute('chat');
     expect(screen.queryByText(/does not declare|takes it from/)).not.toBeInTheDocument();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeEmptyDOMElement();
     expect(screen.getByText('Model — every card below can serve chat')).toBeInTheDocument();
     expect(names().sort()).toEqual(['gpt-5', 'gpt-5-mini']);
     expect(screen.queryByRole('button', { name: /not eligible/ })).not.toBeInTheDocument();

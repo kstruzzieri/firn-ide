@@ -1568,8 +1568,8 @@ export const leavingRoutes = (
  * role routing EXACTLY one use case (fallback-inclusive `routedUseCases`)
  * whose use case is among `leavingRoutes(base, staged, model)`. Mirrors the
  * backend's own split in `planRouteChanges` — fork iff
- * `len(routed[role]) > 1 || fallbacks[role]` — for the `len` half only; the
- * `fallbacks[role]` half stays the ceiling already named at both call sites.
+ * `len(routed[role]) > 1 || fallbacks[role]`, including references from
+ * unrouted roles through the projected fallbacks.
  */
 export const retargetOf = (
   base: DraftBaseProjection,
@@ -1750,7 +1750,7 @@ const listHoldersAt = (
       if (asserts) holders.set(role, exposure);
       else holders.delete(role);
     } else if (asserts) {
-      holders.set(forked || role === undefined ? `route:${change.useCase}` : role, exposure);
+      holders.set(forked || role === undefined ? `\u0000route:${change.useCase}` : role, exposure);
     }
   }
   return holders;

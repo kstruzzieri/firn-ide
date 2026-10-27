@@ -1248,13 +1248,15 @@ export function RouteEditor({
         </p>
       )}
 
-      {/* Done is what refuses, so its answer sits directly above it, not at
-          the top of the editor. */}
-      {refusal !== '' && (
-        <p className={styles.fieldError} role="alert">
-          {refusal}
-        </p>
-      )}
+      {/* Keep the live region mounted before its text changes so VoiceOver
+          announces Done's refusal; its answer stays directly above the footer. */}
+      <p
+        className={refusal === '' ? styles.srOnly : styles.fieldError}
+        role="alert"
+        aria-atomic="true"
+      >
+        {refusal}
+      </p>
 
       <div className={styles.editorFooter}>
         {/* Always enabled once something differs: this button IS the

@@ -3272,6 +3272,48 @@ func TestApplySettingsRemovingTheLastOwnerWithSlotsIsStillRefused(t *testing.T) 
 	}
 }
 
+func TestApplySettingsRemovingRedundantOwnerPreservesSelectorSlots(t *testing.T) {
+	fixture := strings.Replace(orphanedMaskJSON,
+		`"base_url": "http://localhost:11434"`,
+		`"base_url": "http://localhost:11434", "api_format": "openai-compat", "slot_discovery": true`, 1)
+	fixture = strings.Replace(fixture,
+		`"old-m": {"name": "chat-model",`, `"old-m": {"slots": 2, "name": "chat-model",`, 1)
+	t.Run("sole slots owner is retained", func(t *testing.T) {
+		h := newApplyHarness(t, fixture)
+		before := h.targetBytes(t)
+		res, err := h.svc.ApplySettings(h.request(t, Change{Kind: changeKindRoleRemove, Role: "old-m"}))
+		if err != nil {
+			t.Fatalf("ApplySettings(remove sole slots owner): %v", err)
+		}
+		if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+			res.Diagnostics[0].Code != codeInvalidArgument || res.Diagnostics[0].SubjectName != "chat-m" {
+			t.Fatalf("ApplySettings(remove sole slots owner) = %+v, want refusal naming chat-m", res)
+		}
+		if !bytes.Equal(h.targetBytes(t), before) {
+			t.Fatal("ApplySettings(remove sole slots owner) changed target bytes")
+		}
+	})
+	t.Run("matching sibling slots permit removal", func(t *testing.T) {
+		shared := strings.Replace(fixture,
+			`"chat-m": {"name": "chat-model",`, `"chat-m": {"slots": 2, "name": "chat-model",`, 1)
+		h := newApplyHarness(t, shared)
+		res, err := h.svc.ApplySettings(h.request(t, Change{Kind: changeKindRoleRemove, Role: "old-m"}))
+		if err != nil {
+			t.Fatalf("ApplySettings(remove shared slots owner): %v", err)
+		}
+		if res.Status != "applied" {
+			t.Fatalf("ApplySettings(remove shared slots owner) = %+v, want applied", res)
+		}
+		models := writtenModels(t, h)
+		if _, still := models["old-m"]; still {
+			t.Fatal("ApplySettings(remove shared slots owner) retained old-m")
+		}
+		if got := string(models["chat-m"]["slots"]); got != "2" {
+			t.Fatalf("surviving selector slots = %s, want 2", got)
+		}
+	})
+}
+
 // TestApplySettingsForkWithNarrowingExposureIsRefusedByUseCase: the same move
 // with an exposure that differs from the derived set IS an explicit override,
 // selector-wide, so `mimo-m`'s chain use case gates it. The refusal names that

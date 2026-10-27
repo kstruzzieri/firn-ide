@@ -1,6 +1,7 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RoutingCard, routeRowKey } from '../../../components/GolemConfig/RoutingCard';
+import { RoutingCard } from '../../../components/GolemConfig/RoutingCard';
+import { routeRowKey } from '../../../components/GolemConfig/routingRows';
 import {
   CAPABILITY_NAMES,
   type ModelProjection,

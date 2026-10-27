@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Golem route refusals update an existing alert region, so screen readers can
+  announce the error when Done is pressed. (#311, #338)
 - Double-clicking a file tree row opens the file or toggles the folder without
   highlighting the row's name, and dragging across rows no longer selects
   their text. The rows never turned text selection off, so a double-click also

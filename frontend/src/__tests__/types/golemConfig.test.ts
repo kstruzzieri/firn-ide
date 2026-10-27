@@ -1301,6 +1301,58 @@ describe('governed set under the asserted-override rule (#311)', () => {
     ).toEqual(['analysis', 'agent', 'chat']);
   });
 
+  it.each([
+    ['earlier departure', 'analysis', 'other-model', false, ['chat', 'agent']],
+    ['later departure', 'summary', 'other-model', false, ['chat']],
+    ['earlier retype', 'analysis', 'shared-model', false, ['chat', 'agent', 'analysis']],
+    ['forked departure', 'analysis', 'other-model', true, ['chat']],
+    ['forked retype', 'analysis', 'shared-model', true, ['chat', 'analysis']],
+  ] as const)(
+    'counts list holders at mutation time after an %s',
+    (_name, peerUseCase, destination, referenced, expected) => {
+      const own = modelRow({
+        role: 'own-role',
+        modelName: 'shared-model',
+        effectiveCapabilities: DERIVED,
+        capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: DERIVED,
+        capabilityOverride: DERIVED,
+        routedUseCases: ['chat'],
+      });
+      const peer = modelRow({ ...own, role: 'peer-role', routedUseCases: [peerUseCase] });
+      const fallback = modelRow({
+        ...own,
+        role: 'fallback-role',
+        capabilityOverride: undefined,
+        routedUseCases: ['agent'],
+      });
+      const primary = modelRow({ ...owner, fallbacks: ['fallback-role'] });
+      const referrer = modelRow({ role: 'unrouted', routedUseCases: [], fallbacks: ['peer-role'] });
+      const currentBase: DraftBaseProjection = {
+        routes: [
+          { useCase: 'chat', role: own.role },
+          { useCase: peerUseCase, role: peer.role },
+          { useCase: 'agent', role: primary.role },
+        ],
+        models: [own, peer, fallback, primary, ...(referenced ? [referrer] : [])],
+      };
+      const retype = routeChange({
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'shared-model', type: 'moe' },
+        capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: DERIVED,
+      });
+      const prior = {
+        ...retype,
+        useCase: peerUseCase,
+        modelFacts: { ...retype.modelFacts, model: destination },
+      };
+      expect(governedUseCasesOf(currentBase, { ...draft, changes: [prior] }, retype)).toEqual(
+        expected
+      );
+    }
+  );
+
   it('governs every route on the selector for an override, changed or not', () => {
     // Whatever is staged as an override is applied through SetRoleOverrides,
     // which gates every role on the selector; the EDITOR is what keeps an
