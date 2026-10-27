@@ -69,10 +69,11 @@ describe('TreeRow text selection', () => {
       'utf8'
     );
     const row = cssRule(css, '.row');
-    // The prefixed form is for WebKit (WKWebView, WebKitGTK); the lookbehind
-    // keeps it from also satisfying the unprefixed check.
-    expect(row).toMatch(/-webkit-user-select:\s*none/);
-    expect(row).toMatch(/(?<!-webkit-)user-select:\s*none/);
+    // The prefixed form is for WebKit (WKWebView, WebKitGTK). Matching whole
+    // declarations from the line start keeps the prefixed one from satisfying
+    // the unprefixed check, and rejects a custom property or a longer value.
+    expect(row).toMatch(/^\s*-webkit-user-select:\s*none\s*;/m);
+    expect(row).toMatch(/^\s*user-select:\s*none\s*;/m);
   });
 });
 

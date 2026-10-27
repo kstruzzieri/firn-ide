@@ -7,8 +7,8 @@
   height: 28px;
   box-sizing: border-box;
   cursor: default;
-  /* Double-click opens or toggles; it must not select the name. WebKit
-     (WKWebView, WebKitGTK) honors only the prefixed form. */
+  /* Double-click opens or toggles; it must not select the name. Keep the
+     prefix for WebKit versions that require it (WKWebView, WebKitGTK). */
   -webkit-user-select: none;
   user-select: none;
   border-radius: 4px;
