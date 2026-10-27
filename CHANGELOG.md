@@ -76,10 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Golem Configuration accepts narrowing a model's capabilities for one route
   while another route on the same role moves to a different model, in one
   Apply. Keeping `chat` on a shared model without tool_call while `agent`
-  moves off it was refused twice over: the route editor said agent needs
-  tool_call and kept Done disabled, and Apply refused it for agent as well,
-  though agent's new model has tool_call and every requirement holds once the
-  change is applied. Apply now binds a moved route to the role it creates for
+  moves off it was refused twice over: the route editor would not stage it,
+  saying agent needs tool_call, and Apply refused it for agent as well, though
+  agent's new model has tool_call and every requirement holds once the change
+  is applied. Apply now binds a moved route to the role it creates for
   it before any capability override runs, and the editor checks the override
   against the routes that stay on the model, which are still checked and
   named. Apply runs route changes in use-case name order, and the editor now
