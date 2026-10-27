@@ -675,17 +675,13 @@ describe('projected draft normalization', () => {
     const projected = projectDraft(base, stage([routeChange({ useCase: 'chat' })]));
     expect(projected.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
     expect(selectorFields(projected.changes[0]).confirmUnknownUseCases).toEqual(['summarize']);
-    // [#311] This override keeps the exposure and Think the selector holds, so
-    // it stages nothing and governs chat alone; one that changes either
-    // rewrites every role on the selector and governs summarize too. A fork
-    // onto a selector nobody is on governs chat alone and summarize is
+    // An override sits on the selector the current role is on, so it governs
+    // summarize too — every override that is actually staged is applied
+    // through SetRoleOverrides, which gates every role on the selector (the
+    // editor never stages one that changes nothing: #311); a fork onto a
+    // selector nobody is on governs chat alone and summarize is
     // confirmation-only (the source role is left as it was).
-    expect(projected.governedUseCases.get('chat')).toEqual(['chat']);
-    const narrowed = projectDraft(
-      base,
-      stage([routeChange({ useCase: 'chat', exposedCaps: ['chat', 'stream', 'tool_call'] })])
-    );
-    expect(narrowed.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    expect(projected.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
     const forked = projectDraft(
       base,
       stage([
@@ -1137,23 +1133,74 @@ describe('governed set under the asserted-override rule (#311)', () => {
     expect(governedUseCasesOf(base, draft, probe)).toEqual(['analysis', 'agent']);
   });
 
-  it('governs the route alone for an override that keeps the exposure and Think it has', () => {
-    // Nothing would be staged (Done is never offered), so nothing is gated
-    // beyond the route's own floor — not the siblings a real override rewrites.
-    const probe = probeRouteChange('analysis', pro);
-    expect(governedUseCasesOf(base, draft, probe)).toEqual(['analysis']);
+  it('governs every route on the selector for an override, changed or not', () => {
+    // Whatever is staged as an override is applied through SetRoleOverrides,
+    // which gates every role on the selector; the EDITOR is what keeps an
+    // override that changes nothing from being staged at all.
+    const held = probeRouteChange('analysis', pro);
+    expect(governedUseCasesOf(base, draft, held)).toEqual(['analysis', 'agent']);
+    const narrowed: RouteChange = { ...held, exposedCaps: ['chat', 'stream'] };
+    expect(governedUseCasesOf(base, draft, narrowed)).toEqual(['analysis', 'agent']);
   });
 
-  it('governs every route on the selector once an override changes the exposure or the Think', () => {
-    const held = probeRouteChange('analysis', pro);
-    expect(
-      governedUseCasesOf(base, draft, {
-        ...held,
-        exposedCaps: ['chat', 'stream'] as CapabilityName[],
-      })
-    ).toEqual(['analysis', 'agent']);
-    expect(governedUseCasesOf(base, draft, { ...held, thinkMode: 'auto' })).toEqual([
-      'analysis',
+  it('counts an owner only while it is still on the selector when the join runs', () => {
+    // Ownership is judged at the join's place in stable-id order, as the
+    // backend sees the document then: an owner whose only route a staged
+    // retarget moves away BEFORE the join is gone (the selector is unowned,
+    // the derived exposure asserts nothing, the join governs itself alone);
+    // one whose route leaves only AFTER the join is still there (the explicit
+    // list is sent, every role on the selector is gated).
+    const sharedOwner = (role: string, useCase: string): ModelProjection =>
+      modelRow({
+        role,
+        modelName: 'shared',
+        effectiveCapabilities: OWNED,
+        capabilityFacts: { caps: OWNED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: OWNED,
+        capabilityOverride: OWNED,
+        routedUseCases: [useCase],
+      });
+    // spare-role derives its set, routes nothing itself, and is agent-role's fallback.
+    const spare = modelRow({
+      role: 'spare-role',
+      modelName: 'shared',
+      effectiveCapabilities: DERIVED,
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: OWNED,
+      routedUseCases: ['agent'],
+    });
+    const agentRole = modelRow({ ...owner, modelName: 'agent-model', fallbacks: ['spare-role'] });
+    const away = (useCase: string): RouteChange =>
+      routeChange({
+        useCase,
+        modelFacts: { provider: 'hosted', model: 'elsewhere', type: 'dense' },
+        capabilityFacts: { caps: OWNED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: OWNED,
+      });
+    const joinChat: RouteChange = { ...probeRouteChange('chat', spare), exposedCaps: DERIVED };
+
+    // `route:analysis` sorts before `route:chat`: the owner has left.
+    const earlier: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'analysis', role: 'analysis-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [agentRole, sharedOwner('analysis-role', 'analysis'), spare, modelRow()],
+    };
+    expect(governedUseCasesOf(earlier, stage([away('analysis')]), joinChat)).toEqual(['chat']);
+
+    // `route:planning` sorts after `route:chat`: the owner is still there.
+    const later: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'plan-role' },
+      ],
+      models: [agentRole, sharedOwner('plan-role', 'planning'), spare, modelRow()],
+    };
+    expect(governedUseCasesOf(later, stage([away('planning')]), joinChat)).toEqual([
+      'chat',
       'agent',
     ]);
   });

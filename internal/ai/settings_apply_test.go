@@ -3104,6 +3104,31 @@ func TestApplySettingsRetargetWritesAnOverrideOnlyWhenItDiffersFromDerived(t *te
 	}
 }
 
+// TestApplySettingsRetargetEvaluatesTheDerivedSetWhenItOmitsTheOverride: a
+// model whose card declares less than its type derives, retargeted with the
+// derived exposure. No override is written (it would be redundant), and the
+// eligibility facts handed to both gates are the set the role will actually
+// resolve — the derived one, fully known — not the card's narrower
+// declaration, which would refuse chat for a stream the persisted role has.
+func TestApplySettingsRetargetEvaluatesTheDerivedSetWhenItOmitsTheOverride(t *testing.T) {
+	h := newApplyHarness(t, chainTargetJSON)
+	change := routeChange("chat", "ollama", "other-model", "chat", "generate", "stream")
+	change.CapabilityFacts = &CapabilityFacts{
+		Caps: []string{"chat"}, KnownCaps: append([]string{}, provider.CanonicalCapabilityNames...),
+	}
+	res, err := h.svc.ApplySettings(h.request(t, change))
+	if err != nil {
+		t.Fatalf("ApplySettings(retarget): %v", err)
+	}
+	if res.Status != "applied" {
+		t.Fatalf("ApplySettings(retarget) = %+v, want applied", res)
+	}
+	role := writtenModels(t, h)["chat-m"]
+	if caps, explicit := writtenCapabilities(t, role); explicit {
+		t.Fatalf("redundant override written: %v", caps)
+	}
+}
+
 // TestCheckPreparedDocumentNamesAnIndirectlyBrokenUseCase pins the completed-
 // document loop: a Firn floor the request never names but the finished
 // document no longer meets is reported on THAT use case. The apply path

@@ -51,6 +51,7 @@ it('keeps an unstaged route edit mounted when Edit is clicked again', async () =
       roleRows={new Map()}
       selectorUseCases={new Map()}
       routeReach={new Map()}
+      reachGroups={[]}
       diagnostics={[]}
       editable
       onStage={() => {}}
@@ -90,6 +91,7 @@ it('keeps an unstaged route assignment mounted when Assign is clicked again', as
       roleRows={new Map()}
       selectorUseCases={new Map()}
       routeReach={new Map()}
+      reachGroups={[]}
       diagnostics={[]}
       editable
       onStage={() => {}}
@@ -127,6 +129,7 @@ describe('route editor Done (firn-ide#284)', () => {
     roleRows: new Map(),
     selectorUseCases: new Map(),
     routeReach: new Map(),
+    reachGroups: [],
     diagnostics: [],
     editable: true,
     onStage: jest.fn(),
@@ -405,6 +408,7 @@ const renderProjected = (
       roleRows={projected.roleRows}
       selectorUseCases={projected.selectorUseCases}
       routeReach={projected.routeReach}
+      reachGroups={projected.reachGroups}
       diagnostics={[]}
       editable
       onStage={() => {}}
@@ -715,6 +719,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
       roleRows: projected.roleRows,
       selectorUseCases: projected.selectorUseCases,
       routeReach: projected.routeReach,
+      reachGroups: projected.reachGroups,
       diagnostics: [],
       editable: true,
       onStage: () => {},
@@ -737,6 +742,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
         rows={plain.routeRows}
         roleRows={plain.roleRows}
         routeReach={plain.routeReach}
+        reachGroups={plain.reachGroups}
       />
     );
     const reached = screen.getByTestId('route-row-completion');
@@ -819,6 +825,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
         roleRows={projected.roleRows}
         selectorUseCases={projected.selectorUseCases}
         routeReach={projected.routeReach}
+        reachGroups={projected.reachGroups}
         diagnostics={[]}
         editable
         onStage={() => {}}
@@ -884,6 +891,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
         roleRows={new Map()}
         selectorUseCases={new Map()}
         routeReach={new Map()}
+        reachGroups={[]}
         diagnostics={[]}
         editable
         onStage={() => {}}
@@ -916,6 +924,7 @@ describe('Defined models — Assign (wave 4d)', () => {
     roleRows: new Map(),
     selectorUseCases: new Map(),
     routeReach: new Map(),
+    reachGroups: [],
     diagnostics: [],
     editable: true,
     onStage: jest.fn(),
@@ -967,6 +976,7 @@ describe('Defined models — Assign (wave 4d)', () => {
           rows={projected.routeRows}
           selectorUseCases={projected.selectorUseCases}
           routeReach={projected.routeReach}
+          reachGroups={projected.reachGroups}
         />
       );
       await userEvent.click(assign());
@@ -1181,6 +1191,7 @@ describe('Defined models — Assign (wave 4d)', () => {
         rows={projected.routeRows}
         selectorUseCases={projected.selectorUseCases}
         routeReach={projected.routeReach}
+        reachGroups={projected.reachGroups}
       />
     );
     await user.click(assign());
@@ -1311,6 +1322,7 @@ describe('the role a routing row runs through (#344)', () => {
         roleRows={new Map()}
         selectorUseCases={new Map()}
         routeReach={new Map()}
+        reachGroups={[]}
         diagnostics={[]}
         editable
         onStage={() => {}}

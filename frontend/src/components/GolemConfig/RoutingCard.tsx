@@ -46,6 +46,7 @@ import {
   type Draft,
   type RouteChange,
   type RouteReach,
+  type ReachGroup,
   type RouteReachEntry,
   type RowMarkers,
 } from '../../types/golemConfig';
@@ -226,6 +227,8 @@ export interface RoutingCardProps {
   selectorUseCases: ReadonlyMap<string, readonly string[]>;
   /** [W6] Use case → how a staged model change reaches its row (`projectDraft`). */
   routeReach: ReadonlyMap<string, RouteReachEntry>;
+  /** [W6] Every staged selector group (`projectDraft`): a row's refusal is explained from the groups that reach it. */
+  reachGroups: readonly ReachGroup[];
   diagnostics: readonly SettingsDiagnostic[];
   /** False while the document is Limited, Invalid, or otherwise unwritable. */
   editable: boolean;
@@ -249,6 +252,7 @@ export function RoutingCard({
   roleRows,
   selectorUseCases,
   routeReach,
+  reachGroups,
   diagnostics,
   editable,
   focusRequest = null,
@@ -467,7 +471,10 @@ export function RoutingCard({
    * [#311][#338] The backend refuses an ineligible route on the USE CASE whose
    * floor fails. On that row, say what fails and how the route reaches the
    * staged model — the same clause the editor's pre-check and the picker's
-   * blocked card use — from the staged group that reaches this row.
+   * blocked card use — from EVERY staged group that reaches this row and
+   * falls short of its floor, not only the one the row's marker names (a
+   * route edited onto an eligible model can still be broken by an override on
+   * a selector it falls back to).
    */
   const rowDiagnosticText = (useCase: string, diagnostic: SettingsDiagnostic): string => {
     const { text } = formatSettingsDiagnostic(
@@ -475,13 +482,20 @@ export function RoutingCard({
       diagnostic.subjectKind,
       diagnostic.subjectName
     );
-    const reach = routeReach.get(useCase);
-    if (diagnostic.code !== 'eligibility_ineligible' || reach === undefined) return text;
-    const short = withReach(floorShortfalls(reach.group.staged.exposedCaps, [useCase]), base, {
-      provider: reach.group.provider,
-      model: reach.group.model,
+    if (diagnostic.code !== 'eligibility_ineligible') return text;
+    const clauses = reachGroups.flatMap((group) => {
+      const reaches =
+        group.edited.some((edit) => edit.useCase === useCase) ||
+        group.sameModel.includes(useCase) ||
+        group.fallback.includes(useCase);
+      if (!reaches) return [];
+      const short = withReach(floorShortfalls(group.staged.exposedCaps, [useCase]), base, {
+        provider: group.provider,
+        model: group.model,
+      });
+      return short.length === 0 ? [] : [shortfallLine(short)];
     });
-    return short.length === 0 ? text : `${text} ${shortfallLine(short)}.`;
+    return clauses.length === 0 ? text : `${text} ${clauses.join('; ')}.`;
   };
 
   return (

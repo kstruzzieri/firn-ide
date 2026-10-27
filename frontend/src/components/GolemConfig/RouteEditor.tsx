@@ -30,7 +30,7 @@
  * omission or an extra.
  */
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   CAPABILITY_NAMES,
   compareString,
@@ -414,6 +414,30 @@ export function RouteEditor({
         };
 
   /**
+   * [#311] A change that keeps the applied model with the exposure and Think
+   * the document already holds would change nothing: Done is never offered
+   * for it (an acknowledgement alone is no change — see `unknownUseCases`),
+   * and if the row holds a staged change, Done drops that change instead of
+   * staging an override the backend would gate selector-wide. So it gates
+   * nothing beyond the route's own floor — not the siblings a real override
+   * reaches, which is what refused the model a route already used at open.
+   */
+  const unchanged = useCallback(
+    (change: RouteChange): boolean =>
+      current !== null &&
+      sameModelFacts(current, change.modelFacts) &&
+      sameCaps(change.exposedCaps, current.exposedCapabilities) &&
+      change.thinkMode === current.thinkMode,
+    [current]
+  );
+  /** The use cases `change` gates: the route alone when it changes nothing. */
+  const governedBy = useCallback(
+    (change: RouteChange): string[] =>
+      unchanged(change) ? [useCase] : governedUseCasesOf(base, draft, change),
+    [unchanged, base, draft, useCase]
+  );
+
+  /**
    * Two sets from the same reducer Apply sends through, the edited use case
    * first (§4.5). `affected` is what the backend asks the user to CONFIRM —
    * it feeds the unknown-requirements acknowledgement. `governed` is what the
@@ -421,8 +445,11 @@ export function RouteEditor({
    * notice read it, because a fork leaves the source role's other use cases
    * exactly as they are.
    */
-  const affected = candidate === null ? [useCase] : affectedUseCases(base, draft, candidate);
-  const governed = candidate === null ? [useCase] : governedUseCasesOf(base, draft, candidate);
+  const affected =
+    candidate === null || unchanged(candidate)
+      ? [useCase]
+      : affectedUseCases(base, draft, candidate);
+  const governed = candidate === null ? [useCase] : governedBy(candidate);
   /** [W4-2] The floor this route must meet: the union over everything it governs. */
   const floor = unionFloor(governed);
   const floorOwners = governed.filter((other) => (USE_CASE_FLOORS.get(other) ?? []).length > 0);
@@ -440,7 +467,12 @@ export function RouteEditor({
   const removed = short.filter(({ cap }) => declared.has(cap));
   const undeclared = short.filter(({ cap }) => !declared.has(cap));
   const alsoGoverns = governed.filter((other) => other !== useCase);
-  const unknownUseCases = affected.filter((other) => !USE_CASE_FLOORS.has(other));
+  // Nothing to apply, nothing to acknowledge: the question is asked only for a
+  // change that would be staged.
+  const unknownUseCases =
+    candidate !== null && unchanged(candidate)
+      ? []
+      : affected.filter((other) => !USE_CASE_FLOORS.has(other));
 
   /**
    * An override — the same full facts the role already names — is the one
@@ -662,14 +694,14 @@ export function RouteEditor({
       if (cached !== undefined) return cached;
       const probe = probeRouteChange(useCase, model, draft.changes);
       const verdict = withReach(
-        floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe)),
+        floorShortfalls(probe.exposedCaps, governedBy(probe)),
         base,
         probe.modelFacts
       );
       cache.set(model.role, verdict);
       return verdict;
     };
-  }, [base, draft, useCase]);
+  }, [base, draft, useCase, governedBy]);
 
   /**
    * [rev 7] What a card WOULD expose, and the floor it would meet, for the
@@ -790,6 +822,15 @@ export function RouteEditor({
     }
     if (drops.length > 0 && !ackDrops) {
       setRefusal('Confirm what this change removes from the current model before staging it.');
+      return;
+    }
+    // [#311] Back to exactly what the document holds: the only thing to stage
+    // is the removal of whatever this row had staged. An override that changes
+    // nothing is never sent — the backend would still gate it selector-wide.
+    if (unchanged(candidate)) {
+      onStage([], staged === undefined ? [] : [changeStableID(candidate)]);
+      setRefusal('');
+      onStaged(`${useCase} model kept: ${candidate.modelFacts.model}`);
       return;
     }
 

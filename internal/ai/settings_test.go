@@ -326,6 +326,25 @@ func TestProjectionFallbacks(t *testing.T) {
 	}
 }
 
+func TestProjectionFallbacksSanitized(t *testing.T) {
+	// A fallback naming a role with a bidi override is an unsafe identifier:
+	// the projection is limited, and the projected chain carries the scrubbed
+	// name like every other identifier, so the frontend parser still accepts
+	// the (limited) projection rather than refusing it whole.
+	cfg := projectionConfig()
+	m := cfg.Models["agent-m"]
+	m.Fallbacks = []string{"weird\u202e"}
+	cfg.Models["agent-m"] = m
+	cfg.Models["weird\u202e"] = config.ModelConfig{Name: "weird-model", Provider: "hosted", Type: "dense"}
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	if p.State != "limited" {
+		t.Fatalf("projection state = %q, want limited", p.State)
+	}
+	if got := projectedModel(t, p, "agent-m").Fallbacks; !reflect.DeepEqual(got, []string{"weird\ufffd"}) {
+		t.Fatalf("projected fallbacks = %q, want the scrubbed role name", got)
+	}
+}
+
 // TestTypeDerivedCapabilitiesAreOneTable: the capabilities a model type
 // derives when no explicit list is authored are go-llm's
 // (ResolvedCapabilities with empty Capabilities); the shared fixture is what

@@ -92,6 +92,7 @@ function renderRouting(over: Partial<RoutingCardProps> = {}) {
     roleRows: new Map(),
     selectorUseCases: projection.selectorUseCases,
     routeReach: projection.routeReach,
+    reachGroups: projection.reachGroups,
     diagnostics: [],
     editable: true,
     onStage,
@@ -2301,11 +2302,16 @@ describe('RouteEditor', () => {
       "Mark at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing."
     );
 
+    // Ticking it back restores exactly what the document holds: nothing to
+    // stage, so the acknowledgement question and Done go with the refusal
+    // ([#311]: an acknowledgement alone never stages an override).
     await userEvent.click(screen.getByLabelText('chat'));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByText(/Mark at least one capability/)).not.toBeInTheDocument();
-    await stage();
-    expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(['chat']);
+    expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(onStage).not.toHaveBeenCalled();
   });
 
   it('refuses a hand-declared model with nothing ticked on a floorless route', async () => {
@@ -3434,6 +3440,89 @@ describe('RouteEditor union floor (wave 4c)', () => {
         { ...agentModel, fallbacks: ['chat-role'] },
       ],
       draft: draftWith(narrowed),
+      diagnostics: [
+        {
+          code: 'eligibility_ineligible',
+          subjectKind: 'use_case',
+          subjectName: 'agent',
+          blocking: true,
+        },
+      ],
+    });
+    const row = routeCells('agent');
+    expect(within(row.parentElement!).getByText(/does not meet/)).toHaveTextContent(
+      'This model does not meet every affected use-case requirement. agent (via agent-role → chat-role) needs tool_call.'
+    );
+  });
+
+  it('never stages an acknowledgement alone on a route that keeps its model', async () => {
+    // [#311] analysis is floorless, so its editor carries the "Apply anyway"
+    // acknowledgement. Ticking it with nothing else changed must not make a
+    // change to stage: an override staged that way would go through
+    // SetRoleOverrides and be gated on agent, which reaches the model through
+    // its chain. With nothing to apply there is no question to answer.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'analysis', role: 'pro-role' },
+      ],
+      models: [
+        { ...agentModel, fallbacks: ['pro-role'] },
+        model({ role: 'pro-role', modelName: 'deepseek', routedUseCases: ['agent', 'analysis'] }),
+      ],
+    });
+    await openRoute('analysis');
+    expect(screen.queryByRole('checkbox', { name: 'Apply anyway' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    // The first real change brings the question (and the gate) back.
+    await userEvent.click(screen.getByLabelText(/^thinking/));
+    expect(screen.getByRole('checkbox', { name: 'Apply anyway' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it('explains a refusal on a row from the staged group that fails, not the one that edits it', async () => {
+    // agent is retargeted (an edited group that meets its floor) while chat's
+    // override removes tool_call from gpt-5-mini, which agent-role still falls
+    // back to. The refusal on agent's row must read the failing group.
+    const agentAway: RouteChange = {
+      kind: 'route',
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+      capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const narrowed: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+      capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+      ],
+      models: [
+        model({
+          effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'tool_call'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'tool_call'],
+          capabilityOverride: ['chat', 'stream', 'tool_call'],
+          routedUseCases: ['agent', 'chat'],
+        }),
+        { ...agentModel, fallbacks: ['chat-role'] },
+      ],
+      draft: draftWith(agentAway, narrowed),
       diagnostics: [
         {
           code: 'eligibility_ineligible',

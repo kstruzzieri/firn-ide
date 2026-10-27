@@ -1634,15 +1634,12 @@ function selectorGroups(
     for (const useCase of current?.routedUseCases ?? []) group.affected.add(useCase);
     const override = current !== undefined && sameModelFacts(current, change.modelFacts);
     // [#311] Whether the selector's roles are GATED mirrors what the backend
-    // sends. An override that changes the exposure or the Think rewrites every
-    // role on the selector (SetRoleOverrides gates them all); one that keeps
-    // both stages nothing — Done is never offered — so it gates nothing beyond
-    // the route's own floor. A join widens upstream's gate to the selector's
-    // roles only when it asserts an explicit override (`assertsOverride`).
-    const gates = override
-      ? !sameCaps(change.exposedCaps, current.exposedCapabilities) ||
-        change.thinkMode !== current.thinkMode
-      : assertsOverride(base, change);
+    // sends for what is actually staged: an override goes through
+    // SetRoleOverrides, which gates every role on the selector (the editor is
+    // what keeps an override that changes nothing from being staged at all);
+    // a join widens upstream's gate to the selector's roles only when it
+    // asserts an explicit override (`assertsOverride`).
+    const gates = override || assertsOverride(base, staged, change);
     // The CONFIRMATION set stays the wide one the backend's gateRolesFor asks
     // for: every change the editor stages carries a non-empty exposure [W5-1],
     // so the roles already on the selector feed it for every real change; the
@@ -1668,19 +1665,33 @@ function selectorGroups(
 /**
  * [#311] Whether a join's exposure becomes an explicit, selector-wide override
  * in the request — the backend's `assertedCapabilities`, mirrored: yes when a
- * role on the selector already owns one (the backend always sends the explicit
- * list there, since nil would leave the new role resolving the type defaults
- * under a folded override), or when the exposure is not what the model type
- * derives. Only an asserted override widens upstream's eligibility gate to the
- * selector's other roles.
+ * role on the selector still owns one when the join runs (the backend always
+ * sends the explicit list there, since nil would leave the new role resolving
+ * the type defaults under a folded override), or when the exposure is not
+ * what the model type derives. Only an asserted override widens upstream's
+ * eligibility gate to the selector's other roles. Ownership is read as the
+ * backend reads it, at the join's place in stable-id order: an owner whose
+ * only route a staged retarget moves away BEFORE the join is gone by then; one
+ * leaving only AFTER it still counts.
  */
-const assertsOverride = (base: DraftBaseProjection, change: RouteChange): boolean =>
-  base.models.some(
-    (model) =>
-      model.provider === change.modelFacts.provider &&
-      model.modelName === change.modelFacts.model &&
-      model.capabilityOverride !== undefined
-  ) || !sameCaps(change.exposedCaps, TYPE_DERIVED_CAPABILITIES[change.modelFacts.type]);
+const assertsOverride = (
+  base: DraftBaseProjection,
+  staged: ReadonlyMap<string, RouteChange>,
+  change: RouteChange
+): boolean => {
+  const joinId = changeStableID(change);
+  const owned = base.models.some((model) => {
+    if (
+      model.provider !== change.modelFacts.provider ||
+      model.modelName !== change.modelFacts.model ||
+      model.capabilityOverride === undefined
+    )
+      return false;
+    const departure = retargetOf(base, staged, model);
+    return departure === undefined || compareString(changeStableID(departure), joinId) >= 0;
+  });
+  return owned || !sameCaps(change.exposedCaps, TYPE_DERIVED_CAPABILITIES[change.modelFacts.type]);
+};
 
 /**
  * One staged change rebuilt from its selector's authority. Written out member

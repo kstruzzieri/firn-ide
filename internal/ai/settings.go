@@ -423,6 +423,9 @@ func sanitizeProjectionIdentifiers(p SettingsProjection) SettingsProjection {
 		m.Type = sanitizeIdentifier(m.Type)
 		m.ThinkMode = sanitizeIdentifier(m.ThinkMode)
 		m.Parameters = sanitizeIdentifier(m.Parameters)
+		for j := range m.Fallbacks {
+			m.Fallbacks[j] = sanitizeIdentifier(m.Fallbacks[j])
+		}
 		m.Description = sanitizeNote(m.Description)
 		for j := range m.RoutedUseCases {
 			m.RoutedUseCases[j] = sanitizeIdentifier(m.RoutedUseCases[j])

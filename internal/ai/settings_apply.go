@@ -1811,11 +1811,24 @@ func roleFacts(change Change) config.ModelFacts {
 }
 
 // roleOptions builds upstream's SetRoleModel options for a create, fork or
-// retarget against cfg, the document as it stands when the plan runs.
+// retarget against cfg, the document as it stands when the plan runs. When
+// the exposure is redundant and no override is sent (assertedCapabilities),
+// the eligibility facts are the set the role will actually resolve — the
+// type-derived one, fully known — not the card's declaration: a card that
+// declares less than its type derives would otherwise be refused for a
+// capability the persisted role has.
 func roleOptions(cfg *config.Config, plan routePlan) (config.SetRoleModelOpts, error) {
 	caps, known, err := changeCapabilities(plan.change)
 	if err != nil {
 		return config.SetRoleModelOpts{}, err
+	}
+	asserted := assertedCapabilities(cfg, plan)
+	if asserted == nil {
+		derived := config.ModelConfig{Type: plan.change.ModelFacts.Type}.ResolvedCapabilities()
+		if caps, err = provider.ParseCapsStrict(derived); err != nil {
+			return config.SetRoleModelOpts{}, err
+		}
+		known = provider.CanonicalCaps()
 	}
 	return config.SetRoleModelOpts{
 		Requirements: floorRequirements(),
@@ -1828,7 +1841,7 @@ func roleOptions(cfg *config.Config, plan routePlan) (config.SetRoleModelOpts, e
 		// check on the finished document; an INELIGIBLE verdict — an override
 		// that would break a live sibling route — is still refused here.
 		ConfirmUnknown: plan.change.ConfirmUnknown || plan.newRole != "",
-		Capabilities:   assertedCapabilities(cfg, plan),
+		Capabilities:   asserted,
 		ThinkMode:      plan.change.ThinkMode,
 	}, nil
 }
