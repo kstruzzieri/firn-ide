@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SSL_CERT_FILE` or `SSL_CERT_DIR` set, for example from a terminal, those
   files now replace the system certificate store on macOS and Windows for
   Firn's own HTTPS requests. (#418)
+- Commit message generation follows Golem's file access rules. A staged file
+  those rules deny, such as a `.env`, a key or credentials file, or a path an
+  `ai-kit.yaml` protects, is withheld from the request by name and content, and
+  the message is written from the rest of the staged changes. A rename or copy
+  of a protected file counts as protected. The Git panel lists the withheld
+  files under the message box, on this machine only, so you know the message
+  may not mention them. When every staged file is withheld, no request is sent
+  and the draft in the message box is kept. (#384)
 
 ### Fixed
 
