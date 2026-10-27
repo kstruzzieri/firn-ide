@@ -210,6 +210,75 @@ func TestProjectionSelectorWideExposedCapabilities(t *testing.T) {
 	}
 }
 
+func TestProjectionCapabilityOverride(t *testing.T) {
+	cfg := projectionConfig()
+	cfg.Models = map[string]config.ModelConfig{
+		"alpha": {
+			Name: "shared", Provider: "hosted", Type: "dense",
+			Capabilities: []string{"tool_call", "chat"},
+		},
+		"beta":  {Name: "shared", Provider: "hosted", Type: "dense"},
+		"gamma": {Name: "other", Provider: "hosted", Type: "dense"},
+	}
+	cfg.Defaults = map[string]string{"agent": "alpha"}
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	alpha, beta := projectedModel(t, p, "alpha"), projectedModel(t, p, "beta")
+	gamma := projectedModel(t, p, "gamma")
+	// #335: the explicit override is reported on the role that OWNS it,
+	// canonical, beside the folded exposure both roles show — so the editor
+	// can tell an owner from a sibling that only derives its set.
+	// The frontend validator refuses a projection whose override differs from
+	// the owner's effective set, so the three-way equality is pinned here,
+	// where it is produced (go-llm's ResolvedCapabilities returns the explicit
+	// set as written; the projection canonicalizes its order).
+	want := []string{"chat", "tool_call"}
+	if !reflect.DeepEqual(alpha.CapabilityOverride, want) ||
+		!reflect.DeepEqual(alpha.EffectiveCapabilities, want) ||
+		!reflect.DeepEqual(alpha.ExposedCapabilities, want) ||
+		!reflect.DeepEqual(beta.ExposedCapabilities, want) {
+		t.Fatalf("override alpha=%v (effective %v, exposed %v) beta exposed=%v, want %v",
+			alpha.CapabilityOverride, alpha.EffectiveCapabilities, alpha.ExposedCapabilities,
+			beta.ExposedCapabilities, want)
+	}
+	// A deriving role owns none, on an overridden selector or not, and the
+	// wire omits the key: the frontend reads absence, never an empty list.
+	if beta.CapabilityOverride != nil || gamma.CapabilityOverride != nil {
+		t.Fatalf("beta override = %v, gamma override = %v, want none",
+			beta.CapabilityOverride, gamma.CapabilityOverride)
+	}
+	raw, err := json.Marshal(p.Models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range wire {
+		role := string(m["role"])
+		_, present := m["capabilityOverride"]
+		if owner := role == `"alpha"`; present != owner {
+			t.Fatalf("role %s: capabilityOverride present=%v, want %v", role, present, owner)
+		}
+	}
+	// Owned by the clone like every other slice: a caller's edit never reaches
+	// the cached snapshot.
+	cloned := p.clone()
+	projectedModelIndex := func(models []ModelProjection, role string) int {
+		for i, m := range models {
+			if m.Role == role {
+				return i
+			}
+		}
+		t.Fatalf("model %q missing", role)
+		return -1
+	}
+	cloned.Models[projectedModelIndex(cloned.Models, "alpha")].CapabilityOverride[0] = "embed"
+	if got := p.Models[projectedModelIndex(p.Models, "alpha")].CapabilityOverride; !reflect.DeepEqual(got, want) {
+		t.Fatalf("clone aliased the override: %v", got)
+	}
+}
+
 func TestProjectionUnsafeIdentifierLimited(t *testing.T) {
 	cfg := projectionConfig()
 	m := cfg.Models["agent-m"]

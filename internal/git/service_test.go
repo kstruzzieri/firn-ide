@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -45,6 +46,10 @@ func gitCmd(t *testing.T, dir string, args ...string) string {
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
+	// Background maintenance must not outlive these temporary repositories.
+	if len(args) > 0 && args[0] == "init" {
+		gitCmd(t, dir, "config", "maintenance.auto", "false")
+	}
 	return string(out)
 }
 
@@ -84,6 +89,40 @@ func writeFile(t *testing.T, dir, name, content string) {
 }
 
 func ctx() context.Context { return context.Background() }
+
+func TestGitFixturesDoNotStartAutomaticMaintenance(t *testing.T) {
+	requireGit(t)
+	trace := filepath.Join(t.TempDir(), "git-trace.json")
+	t.Setenv("GIT_TRACE2_EVENT", trace)
+	dir, _ := initRepoWithRemote(t)
+	writeFile(t, dir, "README.md", "changed\n")
+	svc := NewService()
+	if err := svc.Stage(ctx(), dir, []string{"README.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Commit(ctx(), dir, "change", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Push(ctx(), dir); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte{'\n'}) {
+		var event struct {
+			Event string   `json:"event"`
+			Argv  []string `json:"argv"`
+		}
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Event == "child_start" && slices.Contains(event.Argv, "maintenance") {
+			t.Errorf("fixture launched %v, want no automatic maintenance before TempDir cleanup", event.Argv)
+		}
+	}
+}
 
 func TestGitCmd_ScrubsRepositoryEnvironment(t *testing.T) {
 	requireGit(t)
@@ -503,7 +542,7 @@ func TestService_Pull_Conflict_SurfacesError(t *testing.T) {
 
 	// Second clone pushes a conflicting change to the same line.
 	other := t.TempDir()
-	gitCmd(t, other, "clone", bare, ".")
+	gitCmd(t, other, "clone", "-c", "maintenance.auto=false", bare, ".")
 	gitCmd(t, other, "config", "user.name", "Test")
 	gitCmd(t, other, "config", "user.email", "test@example.com")
 	writeFile(t, other, "README.md", "their version\n")

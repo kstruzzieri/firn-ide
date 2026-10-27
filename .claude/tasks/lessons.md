@@ -172,3 +172,7 @@ Four rules, each load-bearing:
 The general shape: when a generator's output is committed in a *post-processed* form, the
 post-processing step is part of the generation procedure, not a cleanup someone remembers.
 Write it down next to the generate command or it gets re-litigated as a review finding.
+
+- PR #470: VoiceOver can start without a capturable app window. A tool timeout
+  or later inventory showing it stopped does not prove startup failed.
+  Distinguish unobserved state from failure; leave it off after the user closes it.
