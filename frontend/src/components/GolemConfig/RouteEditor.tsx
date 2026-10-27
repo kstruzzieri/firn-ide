@@ -30,7 +30,16 @@
  * omission or an extra.
  */
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   CAPABILITY_NAMES,
   compareString,
@@ -47,6 +56,8 @@ import {
   changeStableID,
   floorShortfalls,
   governedUseCasesOf,
+  isFallbackTarget,
+  routedOnto,
   leavingRoutes,
   modelFactsOf,
   overridesSelector,
@@ -59,6 +70,7 @@ import {
   stagedRoutes,
   unionFloor,
   USE_CASE_FLOORS,
+  withReach,
   type Change,
   type Draft,
   type DraftBaseProjection,
@@ -75,6 +87,7 @@ import { ModelBand } from './ModelBand';
 import { canonicalCaps } from './modelRows';
 import {
   abilitiesLine,
+  effectiveThink,
   THINK_LABEL,
   pendingOf,
   usedByOf,
@@ -336,7 +349,15 @@ export function RouteEditor({
   const [think, setThink] = useState<ThinkMode>(seed.think);
   const [ackUnknown, setAckUnknown] = useState(seed.ackUnknown);
   const [ackDrops, setAckDrops] = useState(seed.ackDrops);
-  const [refusal, setRefusal] = useState('');
+  const refusalRef = useRef<HTMLParagraphElement>(null);
+  // A fresh notice lets repeated Done presses focus the same refusal again.
+  const [refusal, setRefusal] = useReducer(
+    (_previous: { text: string }, text: string) => ({ text }),
+    { text: '' }
+  );
+  useEffect(() => {
+    if (refusal.text !== '') refusalRef.current?.focus();
+  }, [refusal]);
 
   // The facts the picker currently yields. `null` means "not choosable yet";
   // submit() names which half is missing.
@@ -387,15 +408,44 @@ export function RouteEditor({
       ? declarationKey(manual.caps)
       : `defined\u0000${provider}\u0000${defined?.modelName ?? ''}`;
   const [seenKey, setSeenKey] = useState(factsKey);
+  /**
+   * [#311] What the selected model ARRIVED with — the exposure the checklist
+   * was seeded from, captured at each seeding (the mount seed, a change of
+   * model, a hand declaration adopting a staged selector) rather than re-read
+   * from `offeredCaps`, which for a hand-declared model is its declared set
+   * and moves with the authority when another editor stages onto the
+   * selector. It decides whether an
+   * unticked capability is a removal, and whether an unticked `thinking`
+   * takes a Think with it. The row's baseline cannot: picking the applied
+   * model back over a staged change that exposed `thinking` on another model
+   * removes nothing.
+   */
+  const [arrivalExposed, setArrivalExposed] = useState<CapabilityName[]>(() =>
+    canonicalCaps(seed.exposed)
+  );
   if (factsKey !== seenKey) {
     setSeenKey(factsKey);
     setExposed(canonicalCaps(offeredCaps));
+    setArrivalExposed(canonicalCaps(offeredCaps));
     // A manual join adopts staged values in onManual; ordinary declaration
     // edits still seed from their own capabilities.
     setThink(manual === null ? (authority?.thinkMode ?? defined?.thinkMode ?? '') : '');
     setAckDrops(false);
     setAckUnknown(false);
   }
+
+  // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
+  // waiting for Done, never a committed state, so it must read as unstaged.
+  const [baseline] = useState(() => heldSeed(staged, current, models, base, others));
+  const arrival: Seed = {
+    provider,
+    defined,
+    manual,
+    exposed: arrivalExposed,
+    think,
+    ackUnknown,
+    ackDrops,
+  };
 
   const candidate: RouteChange | null =
     facts === null || capabilityFacts === null
@@ -407,10 +457,47 @@ export function RouteEditor({
           capabilityFacts,
           // The checked set, nothing added: what the checklist shows is what is sent.
           exposedCaps: exposed,
-          // A think mode is meaningless without the capability that justifies it.
-          thinkMode: exposed.includes('thinking') ? think : '',
+          // The select's value while `thinking` is exposed; cleared once a
+          // `thinking` the selected model arrived with is unticked; kept as
+          // held behind a `thinking` nothing removed ([#311], the same rule
+          // the footer reads through `pendingOf`).
+          thinkMode: effectiveThink(
+            { provider, defined, manual, exposed, think, ackUnknown, ackDrops },
+            arrival
+          ),
           confirmUnknown: false,
         };
+
+  /**
+   * [#311] A change that keeps the applied model with the exposure and Think
+   * the SELECTOR will hold without this row's own staging — the group's
+   * staged values when another route is staged onto it ([W5-5]), else the
+   * applied document's — would change nothing: Done is never offered for it
+   * (an acknowledgement alone is no change — see `unknownUseCases`), and if
+   * the row holds a staged change, Done drops that change instead of staging
+   * an override the backend would gate selector-wide. So it gates nothing
+   * beyond the route's own floor — not the siblings a real override reaches,
+   * which is what refused the model a route already used at open. Returning
+   * to the APPLIED exposure while a sibling stages a different one is a real
+   * edit — it becomes the group's authority — and is staged and gated.
+   */
+  const held = heldSeed(undefined, current, models, base, others);
+  const heldExposed = held.exposed.join(',');
+  const heldThink = held.think;
+  const unchanged = useCallback(
+    (change: RouteChange): boolean =>
+      current !== null &&
+      sameModelFacts(current, change.modelFacts) &&
+      change.exposedCaps.join(',') === heldExposed &&
+      change.thinkMode === heldThink,
+    [current, heldExposed, heldThink]
+  );
+  /** The use cases `change` gates: the route alone when it changes nothing. */
+  const governedBy = useCallback(
+    (change: RouteChange): string[] =>
+      unchanged(change) ? [useCase] : governedUseCasesOf(base, draft, change),
+    [unchanged, base, draft, useCase]
+  );
 
   /**
    * Two sets from the same reducer Apply sends through, the edited use case
@@ -420,15 +507,38 @@ export function RouteEditor({
    * notice read it, because a fork leaves the source role's other use cases
    * exactly as they are.
    */
-  const affected = candidate === null ? [useCase] : affectedUseCases(base, draft, candidate);
-  const governed = candidate === null ? [useCase] : governedUseCasesOf(base, draft, candidate);
+  const affected =
+    candidate === null || unchanged(candidate)
+      ? [useCase]
+      : affectedUseCases(base, draft, candidate);
+  const governed = candidate === null ? [useCase] : governedBy(candidate);
   /** [W4-2] The floor this route must meet: the union over everything it governs. */
   const floor = unionFloor(governed);
   const floorOwners = governed.filter((other) => (USE_CASE_FLOORS.get(other) ?? []).length > 0);
   /** [W4-7] What the checked set lacks against that floor — named, never ticked for the user. */
-  const short = candidate === null ? [] : floorShortfalls(exposed, governed);
+  const short =
+    candidate === null
+      ? []
+      : withReach(floorShortfalls(exposed, governed), base, candidate.modelFacts, [
+          useCase,
+          ...routedOnto(draft.changes, candidate.modelFacts),
+        ]);
+  /**
+   * [#311] A shortfall the checklist ARRIVED with is one it took away — an
+   * override of the whole selector, said as what it removes and from whom;
+   * one it never had keeps the W4-7 copy (pick another, or assert it). The
+   * arrival, not the row role's own resolved set: a deriving role on an owned
+   * selector arrives with the owner's folded set.
+   */
+  const removed = short.filter(({ cap }) => arrivalExposed.includes(cap));
+  const undeclared = short.filter(({ cap }) => !arrivalExposed.includes(cap));
   const alsoGoverns = governed.filter((other) => other !== useCase);
-  const unknownUseCases = affected.filter((other) => !USE_CASE_FLOORS.has(other));
+  // Nothing to apply, nothing to acknowledge: the question is asked only for a
+  // change that would be staged.
+  const unknownUseCases =
+    candidate !== null && unchanged(candidate)
+      ? []
+      : affected.filter((other) => !USE_CASE_FLOORS.has(other));
 
   /**
    * An override — the same full facts the role already names — is the one
@@ -507,9 +617,9 @@ export function RouteEditor({
    * lock; overrides run in a later phase and meet nothing here. So a rewrite
    * or a departure counts only when it sorts before every other mutation of
    * the group, not merely before this join.
-   * Ceiling: a sibling routed by exactly one use case that an unrouted role
-   * lists as a fallback is forked too (`fallbacks[role]`), invisible here —
-   * the pre-check may mark it gone and the backend refuses late.
+   * A role any role lists as a fallback — a sibling, or the edited role itself
+   * — is forked (`fallbacks[role]`, read from the projection's `fallbacks`
+   * since #311), so its lock is never gone.
    *
    * [#335] A capability override conflicts the same way — selectorPairConflict
    * compares two EXPLICIT sets — and is judged by the same staying rule,
@@ -560,10 +670,14 @@ export function RouteEditor({
       // A same-selector retarget replaces the old lock — SetRoleModel rewrites
       // the role with the coalesced capabilities and Think — for every
       // mutation of the group that runs after it.
+      // [#311] Not when any role lists the sibling as a fallback: the backend
+      // FORKS it then (`fallbacks[role]`), so its explicit set stays on the
+      // selector and the join still meets it.
       if (
         rewrite !== undefined &&
         rewrite.modelFacts.provider === sibling.provider &&
         rewrite.modelFacts.model === sibling.modelName &&
+        !isFallbackTarget(base, sibling.role) &&
         !sameModelFacts(sibling, rewrite.modelFacts) &&
         base.routes.some(
           (route) => route.useCase === rewrite.useCase && route.role === sibling.role
@@ -575,11 +689,14 @@ export function RouteEditor({
       // The route taking the sibling's ONLY use case elsewhere, if there is one.
       const departure = retargetOf(base, staged, sibling);
       // The edited role's own lock is rewritten by THIS plan: gone for it when
-      // nothing else shares the role — and only if no other mutation of the
-      // group runs before it and meets the old lock.
+      // nothing else shares the role and nothing lists it as a fallback (the
+      // backend forks it then, and the lock stays) — and only if no other
+      // mutation of the group runs before it and meets the old lock.
+      const rewritten =
+        sibling.role === role && sharedRole.length === 0 && !isFallbackTarget(base, role);
       const gone =
         sibling.role === role
-          ? sharedRole.length === 0 && runsFirst(joinId)
+          ? rewritten && runsFirst(joinId)
           : departure !== undefined && runsFirst(changeStableID(departure));
       if (gone) return null;
       const names = sibling.routedUseCases.filter(
@@ -599,7 +716,7 @@ export function RouteEditor({
           ? compareString(changeStableID(departure), joinId) > 0
             ? ` (its ${departure.useCase} route leaves after this join)`
             : ` (its ${departure.useCase} route leaves after an earlier change in this group)`
-          : sibling.role === role && sharedRole.length === 0
+          : rewritten
             ? ' (rewritten after an earlier change in this group)'
             : '';
       return names.length > 0 ? names : [`role ${sibling.role}${note}`];
@@ -639,6 +756,19 @@ export function RouteEditor({
     `${listUseCases(names)} already ${agrees(names, 'exposes', 'expose')} ${caps.join(', ')} on this model; a route joining it cannot expose a different set.`;
 
   /**
+   * [#311] A card collapses every role with the same model facts and is
+   * represented by one of them; for the APPLIED model that representative
+   * may carry another role's Think. The card stands for this row's own role
+   * here — its probe, its preview and a re-pick read `current` — so an
+   * untouched assignment is judged, and restored, by its own values.
+   */
+  const cardRole = useCallback(
+    (model: ModelProjection): ModelProjection =>
+      current !== null && sameModelFacts(current, modelFactsOf(model)) ? current : model,
+    [current]
+  );
+
+  /**
    * [K6] One verdict per card, cached by role for the life of the draft: the
    * band re-renders on every keystroke in the declare form, and every verdict
    * projects the whole draft.
@@ -648,12 +778,17 @@ export function RouteEditor({
     return (model: ModelProjection): readonly FloorShortfall[] => {
       const cached = cache.get(model.role);
       if (cached !== undefined) return cached;
-      const probe = probeRouteChange(useCase, model, draft.changes);
-      const verdict = floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe));
+      const probe = probeRouteChange(useCase, cardRole(model), draft.changes);
+      const verdict = withReach(
+        floorShortfalls(probe.exposedCaps, governedBy(probe)),
+        base,
+        probe.modelFacts,
+        [useCase, ...routedOnto(draft.changes, probe.modelFacts)]
+      );
       cache.set(model.role, verdict);
       return verdict;
     };
-  }, [base, draft, useCase]);
+  }, [base, draft, useCase, governedBy, cardRole]);
 
   /**
    * [rev 7] What a card WOULD expose, and the floor it would meet, for the
@@ -669,8 +804,8 @@ export function RouteEditor({
     return (model: ModelProjection) => {
       const cached = cache.get(model.role);
       if (cached !== undefined) return cached;
-      const probe = probeRouteChange(useCase, model, draft.changes);
-      const governedByCard = governedUseCasesOf(base, draft, probe);
+      const probe = probeRouteChange(useCase, cardRole(model), draft.changes);
+      const governedByCard = governedBy(probe);
       const verdict = {
         required: [...unionFloor(governedByCard)],
         owners: governedByCard.filter((other) => (USE_CASE_FLOORS.get(other) ?? []).length > 0),
@@ -679,11 +814,8 @@ export function RouteEditor({
       cache.set(model.role, verdict);
       return verdict;
     };
-  }, [base, draft, useCase]);
+  }, [draft, useCase, cardRole, governedBy]);
 
-  // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
-  // waiting for Done, never a committed state, so it must read as unstaged.
-  const [baseline] = useState(() => heldSeed(staged, current, models, base, others));
   // An acknowledgement counts only while its question is on screen — on BOTH
   // sides. submit() sends `confirmDrops` only with drops to confirm and gates
   // on `ackUnknown` only with unknown use cases, so a tick left behind a
@@ -704,7 +836,7 @@ export function RouteEditor({
    * the two can never disagree. Keith's wave-6 live gate: an edit undone by
    * hand looked no different from a pending one.
    */
-  const pending = pendingOf(now, was);
+  const pending = pendingOf(now, was, arrival);
   const unstaged = pending.length > 0;
   // A conflict or transport rejection marks every retained change Needs review,
   // and Apply stays refused until each is kept, re-staged or discarded. A
@@ -774,6 +906,15 @@ export function RouteEditor({
     }
     if (drops.length > 0 && !ackDrops) {
       setRefusal('Confirm what this change removes from the current model before staging it.');
+      return;
+    }
+    // [#311] Back to exactly what the document holds: the only thing to stage
+    // is the removal of whatever this row had staged. An override that changes
+    // nothing is never sent — the backend would still gate it selector-wide.
+    if (unchanged(candidate)) {
+      onStage([], staged === undefined ? [] : [changeStableID(candidate)]);
+      setRefusal('');
+      onStaged(`${useCase} model kept: ${candidate.modelFacts.model}`);
       return;
     }
 
@@ -927,7 +1068,7 @@ export function RouteEditor({
           clearRefusal();
         }}
         onSelect={(model) => {
-          setDefined(model);
+          setDefined(cardRole(model));
           setManual(null);
           completedManualName.current = null;
           clearRefusal();
@@ -948,6 +1089,7 @@ export function RouteEditor({
             ]);
             setManual({ ...next, caps });
             setExposed(canonicalCaps(stagedSelector.exposedCaps));
+            setArrivalExposed(canonicalCaps(stagedSelector.exposedCaps));
             setThink(stagedSelector.thinkMode);
             setAckDrops(false);
             setAckUnknown(false);
@@ -1081,15 +1223,27 @@ export function RouteEditor({
       )}
 
       {/* [W4-7] A required cap the model lacks is named, never ticked for the
-          user: the tick is an assertion go-llm takes as truth. */}
+          user: the tick is an assertion go-llm takes as truth. [#311] One the
+          model declares was unticked here: that is a removal from every route
+          on the selector, named with the route it breaks and how that route
+          reaches the model. */}
       {facts !== null && short.length > 0 && (
         <div className={styles.disclosure} data-tone="blocking">
-          <p className={styles.disclosureText}>
-            <strong>{facts.model}</strong> does not declare{' '}
-            <strong>{short.map(({ cap }) => cap).join(', ')}</strong>: {shortfallLine(short)}. Pick
-            a model that does, or mark {short.length === 1 ? 'it' : 'them'} here to declare that it
-            can.
-          </p>
+          {removed.length > 0 && (
+            <p className={styles.disclosureText}>
+              Unticking <strong>{removed.map(({ cap }) => cap).join(', ')}</strong> takes{' '}
+              {removed.length === 1 ? 'it' : 'them'} from every route on{' '}
+              <strong>{facts.model}</strong>: {shortfallLine(removed)}.
+            </p>
+          )}
+          {undeclared.length > 0 && (
+            <p className={styles.disclosureText}>
+              <strong>{facts.model}</strong> does not declare{' '}
+              <strong>{undeclared.map(({ cap }) => cap).join(', ')}</strong>:{' '}
+              {shortfallLine(undeclared)}. Pick a model that does, or mark{' '}
+              {undeclared.length === 1 ? 'it' : 'them'} here to declare that it can.
+            </p>
+          )}
         </div>
       )}
 
@@ -1111,13 +1265,16 @@ export function RouteEditor({
         </p>
       )}
 
-      {/* Done is what refuses, so its answer sits directly above it, not at
-          the top of the editor. */}
-      {refusal !== '' && (
-        <p className={styles.fieldError} role="alert">
-          {refusal}
-        </p>
-      )}
+      {/* Keep the live region mounted before its text changes. */}
+      <p
+        ref={refusalRef}
+        tabIndex={-1}
+        className={refusal.text === '' ? styles.srOnly : styles.fieldError}
+        role="alert"
+        aria-atomic="true"
+      >
+        {refusal.text}
+      </p>
 
       <div className={styles.editorFooter}>
         {/* Always enabled once something differs: this button IS the

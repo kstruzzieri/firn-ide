@@ -2341,6 +2341,7 @@ describe('route picker floors (wave 4c)', () => {
     capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
     exposedCapabilities: ['chat', 'stream', 'tool_call'],
     routedUseCases: ['agent'],
+    fallbacks: ['reason-role'],
     hasThinkTags: false,
   });
   // agent falls back to reason-role, so the backend lists it among deepseek's routed use cases.
@@ -2370,33 +2371,37 @@ describe('route picker floors (wave 4c)', () => {
     return card;
   };
 
-  it('cannot pick a model a sibling floor refuses, and says which sibling', async () => {
+  it('offers the applied model clean, and names the sibling and its chain once a change breaks it', async () => {
     reload(projection);
     await mountWorkspace();
     await openRoute('reasoning');
 
-    // Keeping deepseek is an override of reason-role's selector, which agent
-    // reaches through its fallback: agent's floor governs it, and the applied
-    // model is short of it. gpt-5-mini is a fork of reasoning alone onto
-    // chat-role's selector — agent stays on reason-role — so it is eligible.
+    // [#311] Keeping deepseek stages nothing, so agent's floor does not govern
+    // it: every card is offered and nothing is refused at open. gpt-5-mini is
+    // a fork of reasoning alone onto chat-role's selector — agent stays on
+    // reason-role — so it is eligible as before.
     expect(screen.getByText('Model — every card below can serve reasoning')).toBeInTheDocument();
     expect(
       grid()
         .getAllByRole('option')
         .map((card) => within(card).getByText(/gpt|deepseek/).textContent)
-    ).toEqual(['gpt-5', 'gpt-5-mini']);
-    expect(screen.getByText(/does not declare/)).toHaveTextContent(
-      'deepseek does not declare tool_call: agent needs tool_call.'
-    );
+    ).toEqual(['gpt-5', 'gpt-5-mini', 'deepseek']);
+    expect(screen.queryByText(/does not declare|takes it from/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /not eligible/ })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /1 model is not eligible/ }));
-    expect(within(cardNamed('deepseek')).getByText('agent needs tool_call')).toBeInTheDocument();
+    // Another card, then the applied one again: nothing to stage.
     await pickModel('gpt-5');
     expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5');
-    expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();
-    // A blocked card is shown for its reason, never chosen: the readout keeps the choice.
     await userEvent.click(cardNamed('deepseek'));
-    expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5');
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('deepseek');
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+
+    // A real removal: agent needs stream and reaches deepseek through its
+    // fallback to reason-role, so the refusal names agent and that chain.
+    await userEvent.click(screen.getByLabelText(/^stream/));
+    expect(screen.getByText(/takes it from/)).toHaveTextContent(
+      'Unticking stream takes it from every route on deepseek: agent (via agent-role → reason-role) needs stream.'
+    );
   });
 });
 

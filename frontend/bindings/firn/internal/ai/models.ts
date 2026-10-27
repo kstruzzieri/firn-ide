@@ -739,7 +739,10 @@ export class ModelFacts {
  * Validation makes every owner on a selector agree, so where present the
  * value is also the selector's.
  * RoutedUseCases lists every use case reaching this role (directly or through
- * a fallback chain); Removable is true when nothing references it.
+ * a fallback chain); Fallbacks is the role's own authored chain, in order,
+ * absent when it has none (#311: the editor names HOW a use case reaches a
+ * model it never routes to directly); Removable is true when nothing
+ * references it.
  * 
  * HasThinkTags/HasSlots are EXISTENCE facts only: a real model retarget drops
  * these authored, model-specific members, so the editor has to disclose the
@@ -771,6 +774,7 @@ export class ModelProjection {
     "capabilityOverride"?: string[];
     "thinkMode": string;
     "routedUseCases": string[];
+    "fallbacks"?: string[];
     "hasThinkTags": boolean;
     "hasSlots": boolean;
     "removable": boolean;
@@ -826,6 +830,7 @@ export class ModelProjection {
         const $$createField10_0 = $$createType3;
         const $$createField11_0 = $$createType3;
         const $$createField13_0 = $$createType3;
+        const $$createField14_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("effectiveCapabilities" in $$parsedSource) {
             $$parsedSource["effectiveCapabilities"] = $$createField8_0($$parsedSource["effectiveCapabilities"]);
@@ -841,6 +846,9 @@ export class ModelProjection {
         }
         if ("routedUseCases" in $$parsedSource) {
             $$parsedSource["routedUseCases"] = $$createField13_0($$parsedSource["routedUseCases"]);
+        }
+        if ("fallbacks" in $$parsedSource) {
+            $$parsedSource["fallbacks"] = $$createField14_0($$parsedSource["fallbacks"]);
         }
         return new ModelProjection($$parsedSource as Partial<ModelProjection>);
     }

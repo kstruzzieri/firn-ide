@@ -279,6 +279,109 @@ func TestProjectionCapabilityOverride(t *testing.T) {
 	}
 }
 
+func TestProjectionFallbacks(t *testing.T) {
+	cfg := projectionConfig()
+	cfg.Models = map[string]config.ModelConfig{
+		"agent-m": {
+			Name: "agent-model", Provider: "hosted", Type: "dense",
+			Capabilities: []string{"chat", "stream", "tool_call"}, Fallbacks: []string{"pro-m", "mimo-m"},
+		},
+		"pro-m":  {Name: "pro-model", Provider: "hosted", Type: "dense"},
+		"mimo-m": {Name: "mimo-model", Provider: "hosted", Type: "moe"},
+	}
+	cfg.Defaults = map[string]string{"agent": "agent-m"}
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	agent, pro := projectedModel(t, p, "agent-m"), projectedModel(t, p, "pro-m")
+	// #311: the fallback chain itself, in authored order, so the editor can
+	// name HOW a use case reaches a model it never routes to directly.
+	if !reflect.DeepEqual(agent.Fallbacks, []string{"pro-m", "mimo-m"}) {
+		t.Fatalf("agent fallbacks = %v", agent.Fallbacks)
+	}
+	if pro.Fallbacks != nil {
+		t.Fatalf("pro fallbacks = %v, want none", pro.Fallbacks)
+	}
+	raw, err := json.Marshal(p.Models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range wire {
+		role := string(m["role"])
+		_, present := m["fallbacks"]
+		if want := role == `"agent-m"`; present != want {
+			t.Fatalf("role %s: fallbacks present=%v, want %v", role, present, want)
+		}
+	}
+	cloned := p.clone()
+	for i := range cloned.Models {
+		if cloned.Models[i].Role == "agent-m" {
+			cloned.Models[i].Fallbacks[0] = "x"
+		}
+	}
+	if got := projectedModel(t, p, "agent-m").Fallbacks; !reflect.DeepEqual(got, []string{"pro-m", "mimo-m"}) {
+		t.Fatalf("clone aliased fallbacks: %v", got)
+	}
+}
+
+func TestProjectionFallbacksSanitized(t *testing.T) {
+	// A fallback naming a role with a bidi override is an unsafe identifier:
+	// the projection is limited, and the projected chain carries the scrubbed
+	// name like every other identifier, so the frontend parser still accepts
+	// the (limited) projection rather than refusing it whole.
+	cfg := projectionConfig()
+	m := cfg.Models["agent-m"]
+	m.Fallbacks = []string{"weird\u202e"}
+	cfg.Models["agent-m"] = m
+	cfg.Models["weird\u202e"] = config.ModelConfig{Name: "weird-model", Provider: "hosted", Type: "dense"}
+	p := buildSettingsProjection(projectionLoaded(cfg), nil)
+	if p.State != "limited" {
+		t.Fatalf("projection state = %q, want limited", p.State)
+	}
+	if got := projectedModel(t, p, "agent-m").Fallbacks; !reflect.DeepEqual(got, []string{"weird\ufffd"}) {
+		t.Fatalf("projected fallbacks = %q, want the scrubbed role name", got)
+	}
+}
+
+// TestTypeDerivedCapabilitiesAreOneTable: the capabilities a model type
+// derives when no explicit list is authored are go-llm's
+// (ResolvedCapabilities with empty Capabilities); the shared fixture is what
+// the TypeScript mirror is tested against, so the frontend can tell a
+// redundant exposure from an asserted override the way assertedCapabilities
+// does.
+func TestTypeDerivedCapabilitiesAreOneTable(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "settings_type_capabilities.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []struct {
+		Type         string   `json:"type"`
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != len(modelFactTypes) {
+		t.Fatalf("fixture has %d rows, want one per model type (%d)", len(rows), len(modelFactTypes))
+	}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		if !modelFactTypes[row.Type] {
+			t.Fatalf("fixture type %q is not a model type", row.Type)
+		}
+		if seen[row.Type] {
+			t.Fatalf("fixture lists type %q twice", row.Type)
+		}
+		seen[row.Type] = true
+		derived := canonicalizeCapabilities(config.ModelConfig{Type: row.Type}.ResolvedCapabilities())
+		if !reflect.DeepEqual(row.Capabilities, derived) {
+			t.Fatalf("type %s: fixture %v, go-llm derives %v", row.Type, row.Capabilities, derived)
+		}
+	}
+}
+
 func TestProjectionUnsafeIdentifierLimited(t *testing.T) {
 	cfg := projectionConfig()
 	m := cfg.Models["agent-m"]

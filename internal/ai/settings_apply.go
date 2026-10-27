@@ -1509,12 +1509,13 @@ func verifyRouteConfirmations(base *config.Config, routed map[string][]string, p
 	return nil
 }
 
-// gateRolesFor mirrors upstream's eligibility gate: the role being changed,
-// plus every role already sharing the target selector. Every validated route
-// change carries a non-empty exposure (validateRouteChange), i.e. an explicit
-// capability override that becomes the selector's persisted truth, so the
-// selector's roles always gate — an override plan by identity, a join by the
-// override it asserts.
+// gateRolesFor is the CONFIRMATION set for one plan: the role being changed,
+// plus every role already sharing the target selector — deliberately the
+// widest set the plan can touch, whether or not its exposure becomes an
+// explicit override (assertedCapabilities), so the user acknowledges every
+// floorless use case the request could reach and the frontend's `affected`
+// can mirror it from the projection alone. The ELIGIBILITY gate is narrower
+// and exact: refuseIneligible.
 func gateRolesFor(base *config.Config, plan routePlan) map[string]bool {
 	roles := map[string]bool{}
 	if plan.role != "" {
@@ -1626,6 +1627,9 @@ func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed
 	// identity, so a use case cannot be both rebound and unbound in one
 	// request, and nothing else can orphan a role born in this batch.
 	for _, change := range stagedChanges(req.Changes, consumed, changeKindRoleRemove) {
+		if result := dropRedundantListBeforeRemoval(doc, change.Role); result != nil {
+			return result
+		}
 		if err := doc.RemoveRole(change.Role); err != nil {
 			return actionDiagnostics(err)
 		}
@@ -1638,19 +1642,94 @@ func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed
 	return nil
 }
 
+// dropRedundantListBeforeRemoval clears, on a role about to be removed, an
+// explicit capability list that owns nothing: siblings on its selector
+// remain, none holds a list, and every one of them resolves exactly that
+// list from its own type once it is gone. go-llm reads an explicit list as
+// selector-wide state and refuses to remove the last role supplying it
+// (selectorStateDrop) while siblings depend on it — siblings a Firn since
+// #311 joined with no list of their own, beside exactly such a redundant
+// one. Cleared under that condition, the list leaves every survivor
+// resolving the same set it did. A list a sibling of another type would
+// resolve differently without is left alone, and so is a role whose slots
+// value no sibling holds (the rewrite clears slots, and the removal guard
+// would otherwise lose that one too): go-llm's refusal stands for both.
+func dropRedundantListBeforeRemoval(doc *config.Document, role string) *SettingsApplyResult {
+	cfg := doc.Config()
+	m, ok := cfg.Models[role]
+	if !ok || len(m.Capabilities) == 0 {
+		return nil
+	}
+	list := canonicalizeCapabilities(m.Capabilities)
+	derived := canonicalizeCapabilities(config.ModelConfig{Type: m.Type}.ResolvedCapabilities())
+	if !slices.Equal(list, derived) {
+		return nil
+	}
+	selector := modelSelector{provider: m.Provider, model: m.Name}
+	survivors, slotsKept := false, m.Slots == 0
+	for other, sibling := range cfg.Models {
+		if other == role || (modelSelector{provider: sibling.Provider, model: sibling.Name}) != selector {
+			continue
+		}
+		if len(sibling.Capabilities) > 0 {
+			return nil
+		}
+		if !slices.Equal(canonicalizeCapabilities(sibling.ResolvedCapabilities()), list) {
+			return nil
+		}
+		if sibling.Slots == m.Slots {
+			slotsKept = true
+		}
+		survivors = true
+	}
+	if !survivors || !slotsKept {
+		return nil
+	}
+	caps, err := provider.ParseCapsStrict(derived)
+	if err != nil {
+		return blockingDiagnostics(Diagnostic{Code: codeInvalidArgument, SubjectKind: "role", SubjectName: role})
+	}
+	if _, err := doc.SetRoleModel(role, config.ModelFacts{
+		Key:           provider.ModelKey{Provider: m.Provider, Model: m.Name},
+		Type:          m.Type,
+		Parameters:    m.Parameters,
+		ContextWindow: m.ContextWindow,
+		Dimensions:    m.Dimensions,
+	}, config.SetRoleModelOpts{
+		Requirements:   floorRequirements(),
+		Caps:           caps,
+		KnownMask:      provider.CanonicalCaps(),
+		ConfirmUnknown: true,
+		ThinkMode:      m.ThinkMode,
+		ThinkTags:      m.ThinkTags,
+	}); err != nil {
+		return actionDiagnostics(err)
+	}
+	return nil
+}
+
 // applyRoutePlans runs the role-level mutations, then exactly one override per
-// selector, then the binds for the roles it created.
+// selector, then the binds for the roles it created. Firn's own eligibility
+// gate (refuseIneligible) runs before each mutation against the document as
+// it stands at that point — the view upstream's gate takes — so a refusal
+// over a Firn floor names the USE CASE whose floor fails (#338, #311).
 func applyRoutePlans(doc *config.Document, plans []routePlan) *SettingsApplyResult {
 	binds := make([][2]string, 0, len(plans))
 	overrides := make([]routePlan, 0, len(plans))
 	overridden := map[modelSelector]bool{}
 	for _, plan := range plans {
 		facts := roleFacts(plan.change)
-		opts, err := roleOptions(plan)
+		cfg := doc.Config()
+		opts, err := roleOptions(cfg, plan)
 		if err != nil {
 			// Unreachable: request validation already requires canonical
 			// capability names from the closed vocabulary.
 			return blockingDiagnostics(Diagnostic{Code: codeInvalidArgument})
+		}
+		if plan.action != routeOverride {
+			if result := refuseIneligible(cfg, plan, opts.Capabilities, opts.Caps, opts.KnownMask); result != nil {
+				return result
+			}
 		}
 		switch plan.action {
 		case routeCreate:
@@ -1681,10 +1760,19 @@ func applyRoutePlans(doc *config.Document, plans []routePlan) *SettingsApplyResu
 		if err != nil {
 			return blockingDiagnostics(Diagnostic{Code: codeInvalidArgument})
 		}
+		// Always the explicit list here, never assertedCapabilities: on a role
+		// that holds a list, nil would CLEAR it (RoleOverrides), not keep it.
+		// On a role holding none this writes the exposed set as a list; one
+		// equal to the derived set owns nothing (assertedCapabilities), so it
+		// widens no later join.
+		explicit := overrideCapabilities(plan.change.ExposedCaps)
+		if result := refuseIneligible(doc.Config(), plan, explicit, caps, known); result != nil {
+			return result
+		}
 		if err := doc.SetRoleOverrides(
 			provider.ModelKey{Provider: plan.selector.provider, Model: plan.selector.model},
 			config.RoleOverrides{
-				Capabilities: overrideCapabilities(plan.change.ExposedCaps),
+				Capabilities: explicit,
 				ThinkMode:    plan.change.ThinkMode,
 			},
 			config.SetRoleOverridesOpts{
@@ -1794,10 +1882,25 @@ func roleFacts(change Change) config.ModelFacts {
 	}
 }
 
-func roleOptions(plan routePlan) (config.SetRoleModelOpts, error) {
+// roleOptions builds upstream's SetRoleModel options for a create, fork or
+// retarget against cfg, the document as it stands when the plan runs. When
+// the exposure is redundant and no override is sent (assertedCapabilities),
+// the eligibility facts are the set the role will actually resolve — the
+// type-derived one, fully known — not the card's declaration: a card that
+// declares less than its type derives would otherwise be refused for a
+// capability the persisted role has.
+func roleOptions(cfg *config.Config, plan routePlan) (config.SetRoleModelOpts, error) {
 	caps, known, err := changeCapabilities(plan.change)
 	if err != nil {
 		return config.SetRoleModelOpts{}, err
+	}
+	asserted := assertedCapabilities(cfg, plan)
+	if asserted == nil {
+		derived := config.ModelConfig{Type: plan.change.ModelFacts.Type}.ResolvedCapabilities()
+		if caps, err = provider.ParseCapsStrict(derived); err != nil {
+			return config.SetRoleModelOpts{}, err
+		}
+		known = provider.CanonicalCaps()
 	}
 	return config.SetRoleModelOpts{
 		Requirements: floorRequirements(),
@@ -1810,9 +1913,132 @@ func roleOptions(plan routePlan) (config.SetRoleModelOpts, error) {
 		// check on the finished document; an INELIGIBLE verdict — an override
 		// that would break a live sibling route — is still refused here.
 		ConfirmUnknown: plan.change.ConfirmUnknown || plan.newRole != "",
-		Capabilities:   overrideCapabilities(plan.change.ExposedCaps),
+		Capabilities:   asserted,
 		ThinkMode:      plan.change.ThinkMode,
 	}, nil
+}
+
+// assertedCapabilities is the explicit, selector-wide capability override a
+// create, fork or retarget carries — or nil when the exposure says nothing
+// the document would not resolve on its own (#311 defect 2): a set equal to
+// what the model type derives, on a selector whose roles hold no list, or
+// hold only that same list. Upstream widens its eligibility gate to every
+// role on the selector exactly when an override is sent, so a redundant one
+// made a sibling's chain use case refuse a route the model can serve
+// (`analysis` on a model `agent` reaches through a fallback chain). A role
+// holding the derived list is what every Firn before this rule left on every
+// move it made, so it cannot count as an owner: nil beside it resolves the
+// same set, upstream evaluates the mutated role against that list anyway
+// (gateRoleEligibility inherits a sibling's override), and explicit lists
+// are only ever compared with each other (selectorPairConflict). A role
+// holding any other list keeps the explicit set coming: a join must agree
+// with it, and the refusal upstream gives is the conflict it is.
+func assertedCapabilities(cfg *config.Config, plan routePlan) []string {
+	derived := canonicalizeCapabilities(config.ModelConfig{Type: plan.change.ModelFacts.Type}.ResolvedCapabilities())
+	if !slices.Equal(canonicalizeCapabilities(plan.change.ExposedCaps), derived) {
+		return overrideCapabilities(plan.change.ExposedCaps)
+	}
+	owner, owned := selectorCapabilityOverrides(cfg)[plan.selector]
+	if !owned {
+		return nil
+	}
+	if !slices.Equal(owner, derived) || (plan.action == routeRetarget && soleListHolder(cfg, plan.role, plan.selector)) {
+		return overrideCapabilities(plan.change.ExposedCaps)
+	}
+	return nil
+}
+
+// soleListHolder reports whether role sits on selector and is the only role
+// there holding an explicit list. A retarget in place (a type change on the
+// same model) that sent nil would take that list with it — SetRoleModel
+// clears what is not re-asserted — and go-llm reads it as selector-wide
+// state the siblings use (selectorStateDrop), so such a retarget sends the
+// list again even when it is the derived one.
+func soleListHolder(cfg *config.Config, role string, selector modelSelector) bool {
+	own, ok := cfg.Models[role]
+	if !ok || len(own.Capabilities) == 0 || (modelSelector{provider: own.Provider, model: own.Name}) != selector {
+		return false
+	}
+	for other, m := range cfg.Models {
+		if other != role && len(m.Capabilities) > 0 && (modelSelector{provider: m.Provider, model: m.Name}) == selector {
+			return false
+		}
+	}
+	return true
+}
+
+// refuseIneligible mirrors upstream's eligibility gate for one plan against
+// cfg, the document as it stands when the plan's mutation runs, and refuses
+// an INELIGIBLE verdict naming the use cases whose Firn floors fail — the
+// subject a routing row can carry (#338). Upstream's own gate runs behind it
+// with the same roles, requirements and capabilities, so for a Firn floor it
+// never fires first; when it does fire — an unknown verdict without its
+// confirmation, a parse error — its role-subject diagnostic maps as before.
+//
+// Roles (gateRoleEligibility, SetRoleOverrides): an override gates every role
+// on the selector; a retarget gates its own role, plus the selector's roles
+// when it asserts an override; a create or fork is a role no chain reaches
+// yet, so only an asserted override gates anything. Capabilities: the
+// asserted override with full knowledge; else an owner's override on the
+// selector (the role a retarget moves is not its own sibling); else the
+// change's own capability facts under their known mask. Use cases: every
+// default whose chain contains a gated role (roleUsage), as aggregateVerdict
+// walks them.
+func refuseIneligible(cfg *config.Config, plan routePlan, asserted []string, caps, known provider.Capability) *SettingsApplyResult {
+	roles := map[string]bool{}
+	var owned []string
+	for role, m := range cfg.Models {
+		if (modelSelector{provider: m.Provider, model: m.Name}) != plan.selector {
+			continue
+		}
+		if plan.action == routeRetarget && role == plan.role {
+			continue
+		}
+		if plan.action == routeOverride || asserted != nil {
+			roles[role] = true
+		}
+		if owned == nil && len(m.Capabilities) > 0 {
+			owned = m.Capabilities
+		}
+	}
+	if plan.action == routeRetarget {
+		roles[plan.role] = true
+	}
+	evalCaps, evalKnown := caps, known
+	if asserted != nil || owned != nil {
+		source := asserted
+		if source == nil {
+			source = owned
+		}
+		parsed, err := provider.ParseCapsStrict(source)
+		if err != nil {
+			return nil // upstream's gate reports the parse error
+		}
+		evalCaps, evalKnown = parsed, provider.CanonicalCaps()
+	}
+	routed, _ := roleUsage(cfg)
+	failing := map[string]bool{}
+	for role := range roles {
+		for _, useCase := range routed[role] {
+			floor, ok := firnUseCaseFloors[useCase]
+			if !ok {
+				continue
+			}
+			if verdict, _ := provider.EvaluateCaps(floor, evalCaps, evalKnown); verdict == provider.CapIneligible {
+				failing[useCase] = true
+			}
+		}
+	}
+	if len(failing) == 0 {
+		return nil
+	}
+	diagnostics := make([]Diagnostic, 0, len(failing))
+	for _, useCase := range slices.Sorted(maps.Keys(failing)) {
+		diagnostics = append(diagnostics, Diagnostic{
+			Code: codeEligibilityIneligible, SubjectKind: "use_case", SubjectName: useCase,
+		})
+	}
+	return blockingDiagnostics(diagnostics...)
 }
 
 func changeCapabilities(change Change) (caps, known provider.Capability, err error) {

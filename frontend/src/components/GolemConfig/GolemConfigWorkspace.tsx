@@ -107,7 +107,8 @@ import {
   SOURCE_PICKER_ID,
 } from './SourcePicker';
 import { ProvidersCard } from './ProvidersCard';
-import { RoutingCard, routingOwnsDiagnostic } from './RoutingCard';
+import { RoutingCard } from './RoutingCard';
+import { routingOwnsDiagnostic } from './routingRows';
 import { StatusText, type StatusTone } from './StatusText';
 
 const STATE_LABEL: Record<SettingsProjection['state'], string> = {
@@ -1875,6 +1876,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   roleRows={projected.roleRows}
                   selectorUseCases={projected.selectorUseCases}
                   routeReach={projected.routeReach}
+                  reachGroups={projected.reachGroups}
                   diagnostics={diagnostics}
                   editable={canEdit}
                   focusRequest={focusRequest}

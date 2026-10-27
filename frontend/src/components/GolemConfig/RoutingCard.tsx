@@ -21,7 +21,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   CAPABILITY_NAMES,
-  compareString,
   type CapabilityName,
   type ModelProjection,
   type ProviderProjection,
@@ -30,7 +29,6 @@ import {
   type ThinkMode,
 } from '../../types/golem';
 import {
-  USE_CASE_FLOORS,
   changeStableID,
   floorShortfalls,
   governedUseCasesOf,
@@ -40,13 +38,16 @@ import {
   probeRouteChange,
   sameModelFacts,
   shortfallLine,
+  withReach,
   stagedRoutes,
   type Change,
   type Draft,
   type RouteChange,
   type RouteReach,
+  type ReachGroup,
   type RouteReachEntry,
   type RowMarkers,
+  routedOnto,
 } from '../../types/golemConfig';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import { listUseCases } from '../../utils/listUseCases';
@@ -56,31 +57,8 @@ import { AssignList, type AssignOption } from './AssignList';
 import { Cell, Staged, Was } from './Cell';
 import styles from './GolemConfig.module.css';
 import { RouteEditor } from './RouteEditor';
+import { routeRowKey, routeUseCases } from './routingRows';
 import { StatusText, type StatusTone } from './StatusText';
-
-/**
- * Editor gate keys. NUL is a Cc rune, so no identifier reaching this surface
- * can collide with one — including the provider names sharing the same set.
- */
-export const routeRowKey = (useCase: string): string => `\u0000route\u0000${useCase}`;
-
-/** Firn's known use cases plus the ones this configuration authors. */
-export function routeUseCases(routes: readonly RouteProjection[]): string[] {
-  const names = new Set<string>([...USE_CASE_FLOORS.keys()]);
-  for (const route of routes) names.add(route.useCase);
-  return [...names].sort(compareString);
-}
-
-/**
- * True while this diagnostic belongs to a route row rather than the page. The
- * workspace calls this to decide what NOT to render above the cards, so both
- * answers come from one rule.
- */
-export const routingOwnsDiagnostic = (
-  routes: readonly RouteProjection[],
-  diagnostic: SettingsDiagnostic
-): boolean =>
-  diagnostic.subjectKind === 'use_case' && routeUseCases(routes).includes(diagnostic.subjectName);
 
 /** What a row paints: the staged intent when there is one, else the applied truth. */
 interface RouteView {
@@ -225,6 +203,8 @@ export interface RoutingCardProps {
   selectorUseCases: ReadonlyMap<string, readonly string[]>;
   /** [W6] Use case → how a staged model change reaches its row (`projectDraft`). */
   routeReach: ReadonlyMap<string, RouteReachEntry>;
+  /** [W6] Every staged selector group (`projectDraft`): a row's refusal is explained from the groups that reach it. */
+  reachGroups: readonly ReachGroup[];
   diagnostics: readonly SettingsDiagnostic[];
   /** False while the document is Limited, Invalid, or otherwise unwritable. */
   editable: boolean;
@@ -248,6 +228,7 @@ export function RoutingCard({
   roleRows,
   selectorUseCases,
   routeReach,
+  reachGroups,
   diagnostics,
   editable,
   focusRequest = null,
@@ -432,7 +413,12 @@ export function RoutingCard({
     routeUseCases(routes).map((useCase) => {
       if (open.has(useCase)) return { useCase, reason: 'editor open' };
       const probe = probeRouteChange(useCase, model, draft.changes);
-      const short = floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe));
+      const short = withReach(
+        floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe)),
+        base,
+        probe.modelFacts,
+        [useCase, ...routedOnto(draft.changes, probe.modelFacts)]
+      );
       return { useCase, reason: shortfallLine(short) };
     });
 
@@ -458,6 +444,38 @@ export function RoutingCard({
     diagnostics.filter(
       (diagnostic) => diagnostic.subjectKind === 'use_case' && diagnostic.subjectName === useCase
     );
+  /**
+   * [#311][#338] The backend refuses an ineligible route on the USE CASE whose
+   * floor fails. On that row, say what fails and how the route reaches the
+   * staged model — the same clause the editor's pre-check and the picker's
+   * blocked card use — from EVERY staged group that GATES this row and falls
+   * short of its floor, not only the one the row's marker names (a route
+   * edited onto an eligible model can still be broken by an override on a
+   * selector it falls back to, and a join that changes nothing anyone can see
+   * still gates the routes its selector's roles reach).
+   */
+  const rowDiagnosticText = (useCase: string, diagnostic: SettingsDiagnostic): string => {
+    const { text } = formatSettingsDiagnostic(
+      diagnostic.code,
+      diagnostic.subjectKind,
+      diagnostic.subjectName
+    );
+    if (diagnostic.code !== 'eligibility_ineligible') return text;
+    const clauses = reachGroups.flatMap((group) => {
+      // Gate membership, not displayed change: a join onto an owned selector
+      // with the owner's own exposure changes nothing anyone can see and still
+      // gates every route the selector's roles reach.
+      if (!group.governed.includes(useCase)) return [];
+      const short = withReach(
+        floorShortfalls(group.staged.exposedCaps, [useCase]),
+        base,
+        { provider: group.provider, model: group.model },
+        group.edited.map((edit) => edit.useCase)
+      );
+      return short.length === 0 ? [] : [shortfallLine(short)];
+    });
+    return clauses.length === 0 ? text : `${text} ${clauses.join('; ')}.`;
+  };
 
   return (
     <section className={styles.card} aria-labelledby="golem-config-routing">
@@ -775,13 +793,7 @@ export function RoutingCard({
                       className={styles.rowDiagnostic}
                       data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
                     >
-                      {
-                        formatSettingsDiagnostic(
-                          diagnostic.code,
-                          diagnostic.subjectKind,
-                          diagnostic.subjectName
-                        ).text
-                      }
+                      {rowDiagnosticText(useCase, diagnostic)}
                     </p>
                   </div>
                 ))}

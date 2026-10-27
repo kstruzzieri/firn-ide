@@ -122,16 +122,17 @@ describe('routeEdit', () => {
     expect(pendingOf(variants.otherRoleOtherCaps, base)).toEqual(['Declares: + tool_call']);
   });
 
-  it('stages Think only while thinking is exposed, but the row holds it raw', () => {
-    // A value left behind an untick is nothing Done would stage: no edit.
-    expect(snapshotOf(variants.inactiveThink, 'stage')).toBe(snapshotOf(base, 'row'));
-    expect(pendingOf(variants.inactiveThink, base)).toEqual([]);
-    // A row holding `auto` behind an unexposed thinking: Done clears it, and
-    // says so before a single edit.
-    expect(pendingOf(base, variants.inactiveThink)).toEqual(['Think mode: cleared (was Auto)']);
-    expect(pendingOf(variants.inactiveThink, variants.inactiveThink)).toEqual([
-      'Think mode: cleared (was Auto)',
-    ]);
+  it('keeps a Think behind an unexposed thinking unless thinking was actually removed', () => {
+    // [#311] go-llm ties think_mode to no capability, so a row can hold `auto`
+    // behind an unexposed thinking. Untouched is untouched: nothing pending.
+    expect(pendingOf(variants.inactiveThink, variants.inactiveThink)).toEqual([]);
+    expect(snapshotOf(variants.inactiveThink, 'stage', variants.inactiveThink)).toBe(
+      snapshotOf(variants.inactiveThink, 'row')
+    );
+    // Neither side exposes thinking, so a differing mode is kept and NAMED (a
+    // model chosen above brings its own authored mode), never read as cleared.
+    expect(pendingOf(variants.inactiveThink, base)).toEqual(['Think mode: Auto (was Default)']);
+    expect(pendingOf(base, variants.inactiveThink)).toEqual(['Think mode: Default (was Auto)']);
   });
 
   it('says what Done clears when thinking is unticked, and what the select reads while it is on', () => {
