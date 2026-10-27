@@ -230,7 +230,7 @@ func TestProjectionCapabilityOverride(t *testing.T) {
 	// The frontend validator refuses a projection whose override differs from
 	// the owner's effective set, so the three-way equality is pinned here,
 	// where it is produced (go-llm's ResolvedCapabilities returns the explicit
-	// list verbatim).
+	// set as written; the projection canonicalizes its order).
 	want := []string{"chat", "tool_call"}
 	if !reflect.DeepEqual(alpha.CapabilityOverride, want) ||
 		!reflect.DeepEqual(alpha.EffectiveCapabilities, want) ||
@@ -257,8 +257,8 @@ func TestProjectionCapabilityOverride(t *testing.T) {
 	for _, m := range wire {
 		role := string(m["role"])
 		_, present := m["capabilityOverride"]
-		if want := role == `"alpha"`; present != want {
-			t.Fatalf("role %s: capabilityOverride present=%v, want %v", role, present, want)
+		if owner := role == `"alpha"`; present != owner {
+			t.Fatalf("role %s: capabilityOverride present=%v, want %v", role, present, owner)
 		}
 	}
 	// Owned by the clone like every other slice: a caller's edit never reaches
