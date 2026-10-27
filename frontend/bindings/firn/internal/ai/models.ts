@@ -728,9 +728,15 @@ export class ModelFacts {
  * ModelName is the provider's model ID — different namespaces, both shown.
  * EffectiveCapabilities/CapabilityFacts.Caps are this model's own canonical
  * ResolvedCapabilities(); ExposedCapabilities is what a selector-sharing
- * mutation would actually apply (selectorCapabilityOverrides). RoutedUseCases
- * lists every use case reaching this role (directly or through a fallback
- * chain); Removable is true when nothing references it.
+ * mutation would actually apply (selectorCapabilityOverrides).
+ * SelectorCapabilityOverride is that override by itself — the selector's
+ * EXPLICIT Capabilities value, which ExposedCapabilities folds into the
+ * declared set — and is absent when no role on the selector sets one (#335):
+ * a route joining the selector must agree with an explicit override
+ * (selectorPairConflict) but conflicts with nothing when the siblings only
+ * derive theirs, and only this field lets the editor tell the two apart.
+ * RoutedUseCases lists every use case reaching this role (directly or through
+ * a fallback chain); Removable is true when nothing references it.
  * 
  * HasThinkTags/HasSlots are EXISTENCE facts only: a real model retarget drops
  * these authored, model-specific members, so the editor has to disclose the
@@ -755,6 +761,11 @@ export class ModelProjection {
     "effectiveCapabilities": string[];
     "capabilityFacts": CapabilityFacts;
     "exposedCapabilities": string[];
+
+    /**
+     * Omitted, never empty: the frontend reads absence as "none".
+     */
+    "selectorCapabilityOverride"?: string[];
     "thinkMode": string;
     "routedUseCases": string[];
     "hasThinkTags": boolean;
@@ -810,7 +821,8 @@ export class ModelProjection {
         const $$createField8_0 = $$createType3;
         const $$createField9_0 = $$createType6;
         const $$createField10_0 = $$createType3;
-        const $$createField12_0 = $$createType3;
+        const $$createField11_0 = $$createType3;
+        const $$createField13_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("effectiveCapabilities" in $$parsedSource) {
             $$parsedSource["effectiveCapabilities"] = $$createField8_0($$parsedSource["effectiveCapabilities"]);
@@ -821,8 +833,11 @@ export class ModelProjection {
         if ("exposedCapabilities" in $$parsedSource) {
             $$parsedSource["exposedCapabilities"] = $$createField10_0($$parsedSource["exposedCapabilities"]);
         }
+        if ("selectorCapabilityOverride" in $$parsedSource) {
+            $$parsedSource["selectorCapabilityOverride"] = $$createField11_0($$parsedSource["selectorCapabilityOverride"]);
+        }
         if ("routedUseCases" in $$parsedSource) {
-            $$parsedSource["routedUseCases"] = $$createField12_0($$parsedSource["routedUseCases"]);
+            $$parsedSource["routedUseCases"] = $$createField13_0($$parsedSource["routedUseCases"]);
         }
         return new ModelProjection($$parsedSource as Partial<ModelProjection>);
     }
