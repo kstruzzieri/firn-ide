@@ -2765,8 +2765,7 @@ func TestApplySettingsRejectsAgentProviderEndpointMadeUnusable(t *testing.T) {
 func writtenModels(t *testing.T, h *applyHarness) map[string]map[string]json.RawMessage {
 	t.Helper()
 	var doc struct {
-		Models   map[string]map[string]json.RawMessage `json:"models"`
-		Defaults map[string]string                     `json:"defaults"`
+		Models map[string]map[string]json.RawMessage `json:"models"`
 	}
 	if err := json.Unmarshal(h.targetBytes(t), &doc); err != nil {
 		t.Fatalf("written target: %v", err)
@@ -2844,9 +2843,12 @@ func TestApplySettingsJoinBeforeSameSelectorRetargetIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A role subject marks go-llm's per-mutation gate (Firn's own request-level
+	// verifySelectorGroups refusal would carry a model subject).
 	if result.Status != "diagnostics" || len(result.Diagnostics) != 1 ||
-		result.Diagnostics[0].Code != codeSelectorConflict {
-		t.Fatalf("result = %+v, want one %s diagnostic", result, codeSelectorConflict)
+		result.Diagnostics[0].Code != codeSelectorConflict ||
+		result.Diagnostics[0].SubjectKind != "role" || !result.Diagnostics[0].Blocking {
+		t.Fatalf("result = %+v, want one blocking role-subject %s diagnostic", result, codeSelectorConflict)
 	}
 	if got := h.targetBytes(t); !bytes.Equal(got, before) {
 		t.Fatal("refused request changed the target")

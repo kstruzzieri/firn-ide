@@ -1978,6 +1978,38 @@ describe('RouteEditor', () => {
     expect(onStage).not.toHaveBeenCalled();
   });
 
+  it('names a shared edited role without the rewrite note: a fork keeps it', async () => {
+    // chat-role routes chat and summarize; summarize is staged away, so the
+    // sibling has no route left to name. Editing chat as a same-selector
+    // declaration FORKS chat-role (it still routes summarize until the binds
+    // phase) rather than rewriting it, so its lock simply holds — no "rewritten
+    // after an earlier change" note, which is for an unshared role overtaken
+    // by an earlier mutation of its group.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+      ],
+      models: [gpt5Owner({ role: 'chat-role', routedUseCases: ['chat', 'summarize'] })],
+      draft: draftWith(routedAway('summarize')),
+    });
+    await openRoute('chat');
+    await declareModel('gpt-5-new');
+    await userEvent.clear(screen.getByLabelText('Model name'));
+    await userEvent.type(screen.getByLabelText('Model name'), 'gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'moe');
+    await userEvent.click(
+      within(
+        screen.getByRole('group', { name: 'Capabilities this model supports' })
+      ).getByLabelText('thinking')
+    );
+    expect(screen.getByText(/already exposes/)).toHaveTextContent(
+      /^role chat-role already exposes chat, stream, tool_call on this model; a route joining it cannot expose a different set\.$/
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
   it('names no departure when a reopened row replaces its staged departure with a same-selector rewrite', async () => {
     // chat was staged away to claude; agent is staged onto gpt-5 with A.
     // Reopening chat and declaring gpt-5 (moe, + thinking) replaces the

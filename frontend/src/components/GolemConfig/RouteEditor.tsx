@@ -484,10 +484,11 @@ export function RouteEditor({
    * [W4-10] The backend applies a request in phases — route plans in
    * stable-id order, then overrides, binds, unassigns, removals — and
    * validates every mutation, so what counts is the selector as it stands
-   * when THIS join runs. A sibling is skipped only when it is gone by then:
-   * its one routed use case has a staged route onto another selector whose
-   * plan sorts before every mutation of the group (below; a retarget rewrites
-   * the role onto the new selector). Everything else stays and counts — a fork keeps the source
+   * when THIS join runs. A sibling is skipped only when its lock is gone or
+   * replaced by then: its one routed use case has a staged route onto
+   * another selector (a departure — the retarget rewrites the role onto the
+   * new selector) or onto this selector with other model facts (a rewrite),
+   * whose plan sorts before every mutation of the group (below). Everything else stays and counts — a fork keeps the source
    * role on the selector, an unassigned route is still bound, and a
    * departure sorting after the join is a transient conflict the backend
    * still refuses — named by the routes it still serves, or as
@@ -589,15 +590,15 @@ export function RouteEditor({
       // Still here, but only because its plan sorts after this join, or after
       // an earlier mutation of the group — say so. departure !== undefined
       // means the sibling's one route is leaving, so names is always empty
-      // then; the edited role's own rewrite is this plan, overtaken by an
-      // earlier change of the group. Either note only ever decorates the
-      // role-fallback name.
+      // then; an UNSHARED edited role's own rewrite is this plan, overtaken by
+      // an earlier change of the group (a shared one is forked and simply
+      // holds). Either note only ever decorates the role-fallback name.
       const note =
         departure !== undefined
           ? compareString(changeStableID(departure), joinId) > 0
             ? ` (its ${departure.useCase} route leaves after this join)`
             : ` (its ${departure.useCase} route leaves after an earlier change in this group)`
-          : sibling.role === role
+          : sibling.role === role && sharedRole.length === 0
             ? ' (rewritten after an earlier change in this group)'
             : '';
       return names.length > 0 ? names : [`role ${sibling.role}${note}`];
