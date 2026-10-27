@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Double-clicking a file tree row opens the file or toggles the folder without
+  highlighting the row's name, and dragging across rows no longer selects
+  their text. The rows never turned text selection off, so a double-click also
+  selected the word under the pointer, which read as an editable name Firn
+  does not have. Keyboard navigation, focus outlines and what a screen reader
+  reads for each row are unchanged. (#462)
 - The file tree and Workspace Views now place a path under the project folder
   in that folder's own path syntax: a backslash separates folders only in a
   Windows project, and a drive root keeps its slash. With a Windows drive root
