@@ -521,7 +521,9 @@ export function RouteEditor({
   const lockedBy = new Set<string>();
   let lockedCaps: CapabilityName[] | undefined;
   if (!isOverride && candidate !== null) {
-    const staged = stagedRoutes(draft.changes);
+    // This row's own staged change is what Done replaces, never a sibling's
+    // departure or rewrite: read the OTHER staged routes.
+    const staged = stagedRoutes(others);
     const unassigned = new Set(
       draft.changes.flatMap((change) => (change.kind === 'route-unassign' ? [change.useCase] : []))
     );
