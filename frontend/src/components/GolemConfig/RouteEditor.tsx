@@ -402,6 +402,21 @@ export function RouteEditor({
   // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
   // waiting for Done, never a committed state, so it must read as unstaged.
   const [baseline] = useState(() => heldSeed(staged, current, models, base, others));
+  /**
+   * [#311] What the selected model ARRIVED with — the exposure the checklist
+   * seeded from (`offeredCaps`) — decides whether an unticked `thinking` is a
+   * removal. The row's baseline cannot: picking the applied model back over a
+   * staged change that exposed `thinking` on another model removes nothing.
+   */
+  const arrival: Seed = {
+    provider,
+    defined,
+    manual,
+    exposed: canonicalCaps(offeredCaps),
+    think,
+    ackUnknown,
+    ackDrops,
+  };
 
   const candidate: RouteChange | null =
     facts === null || capabilityFacts === null
@@ -414,12 +429,12 @@ export function RouteEditor({
           // The checked set, nothing added: what the checklist shows is what is sent.
           exposedCaps: exposed,
           // The select's value while `thinking` is exposed; cleared once a
-          // `thinking` the row had exposed is unticked; kept as held behind a
-          // `thinking` nothing removed ([#311], the same rule the footer reads
-          // through `pendingOf`).
+          // `thinking` the selected model arrived with is unticked; kept as
+          // held behind a `thinking` nothing removed ([#311], the same rule
+          // the footer reads through `pendingOf`).
           thinkMode: effectiveThink(
             { provider, defined, manual, exposed, think, ackUnknown, ackDrops },
-            baseline
+            arrival
           ),
           confirmUnknown: false,
         };
@@ -748,7 +763,7 @@ export function RouteEditor({
       const cached = cache.get(model.role);
       if (cached !== undefined) return cached;
       const probe = probeRouteChange(useCase, cardRole(model), draft.changes);
-      const governedByCard = governedUseCasesOf(base, draft, probe);
+      const governedByCard = governedBy(probe);
       const verdict = {
         required: [...unionFloor(governedByCard)],
         owners: governedByCard.filter((other) => (USE_CASE_FLOORS.get(other) ?? []).length > 0),
@@ -757,7 +772,7 @@ export function RouteEditor({
       cache.set(model.role, verdict);
       return verdict;
     };
-  }, [base, draft, useCase, cardRole]);
+  }, [draft, useCase, cardRole, governedBy]);
 
   // An acknowledgement counts only while its question is on screen — on BOTH
   // sides. submit() sends `confirmDrops` only with drops to confirm and gates
@@ -779,7 +794,7 @@ export function RouteEditor({
    * the two can never disagree. Keith's wave-6 live gate: an edit undone by
    * hand looked no different from a pending one.
    */
-  const pending = pendingOf(now, was);
+  const pending = pendingOf(now, was, arrival);
   const unstaged = pending.length > 0;
   // A conflict or transport rejection marks every retained change Needs review,
   // and Apply stays refused until each is kept, re-staged or discarded. A

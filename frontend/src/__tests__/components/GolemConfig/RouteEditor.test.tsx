@@ -2835,6 +2835,66 @@ describe('RouteEditor', () => {
     expect(onStage).not.toHaveBeenCalled();
   });
 
+  it('restores the applied model over a staged change that exposed thinking, dropping the change', async () => {
+    // [#311] analysis is staged onto gpt-5 with thinking exposed; its applied
+    // model deepseek holds Think auto behind an unexposed thinking and is
+    // reached by agent. Picking deepseek back removes nothing from deepseek:
+    // its held mode is kept, nothing gates agent, and Done drops the staged
+    // change instead of staging an override the backend would refuse.
+    const toGpt5: RouteChange = {
+      kind: 'route',
+      useCase: 'analysis',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: other.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call', 'thinking'],
+      thinkMode: 'auto',
+      confirmUnknown: true,
+    };
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'analysis', role: 'pro-role' },
+      ],
+      models: [
+        model({
+          role: 'agent-role',
+          modelName: 'gpt-5',
+          effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+          capabilityFacts: {
+            caps: ['chat', 'stream', 'tool_call'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'stream', 'tool_call'],
+          routedUseCases: ['agent'],
+          fallbacks: ['pro-role'],
+        }),
+        model({
+          role: 'pro-role',
+          modelName: 'deepseek',
+          effectiveCapabilities: ['chat', 'generate', 'stream'],
+          capabilityFacts: {
+            caps: ['chat', 'generate', 'stream'],
+            knownCaps: [...CAPABILITY_NAMES],
+          },
+          exposedCapabilities: ['chat', 'generate', 'stream'],
+          thinkMode: 'auto',
+          routedUseCases: ['agent', 'analysis'],
+        }),
+        other,
+      ],
+      draft: draftWith(toGpt5),
+    });
+    await openRoute('analysis');
+    expect(screen.getByLabelText(/^thinking/)).toBeChecked();
+    await pickModel('deepseek');
+    expect(screen.queryByText(/does not declare|takes it from/)).not.toBeInTheDocument();
+    await stage();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage.mock.calls[0][0]).toEqual([]);
+    expect(onStage.mock.calls[0][1]).toEqual(['route:analysis']);
+  });
+
   it('re-picks the applied model by the edited role, not by the card representative', async () => {
     // Two roles with identical facts collapse into one card whose
     // representative (a-role, Think '') is not the edited role (pro-role,
@@ -2889,6 +2949,18 @@ describe('RouteEditor', () => {
     expect(screen.queryByRole('button', { name: /not eligible/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
     await pickModel('gpt-5');
+    // The keyboard preview of the applied card reads the same verdict: no
+    // sibling floor, no unchecked required tool_call.
+    const strip = () => screen.getByTestId('model-detail');
+    act(() =>
+      within(screen.getByRole('listbox', { name: /Models/ }))
+        .getByRole('option', { selected: true })
+        .focus()
+    );
+    await userEvent.keyboard('{Home}'); // deepseek — first card in role order
+    expect(strip()).toHaveAttribute('data-state', 'previewing');
+    expect(within(strip()).queryByRole('group', { name: /agent/ })).toBeNull();
+    expect(within(strip()).queryByRole('checkbox', { name: 'tool_call, required' })).toBeNull();
     await pickModel('deepseek');
     expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
