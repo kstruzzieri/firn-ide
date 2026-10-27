@@ -261,3 +261,58 @@ func TestStagedScope_ConfigSourceOutsideProjectIsProtected(t *testing.T) {
 		}
 	}
 }
+
+// On a case-insensitive filesystem the config may be named in another case
+// than git reports; identity still matches it.
+func TestStagedScope_ConfigSourceInAnotherCaseIsProtected(t *testing.T) {
+	top := t.TempDir()
+	bound := filepath.Join(top, "app")
+	if err := os.MkdirAll(bound, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(top, "models.json"), `{"providers":{},"models":{},"defaults":{}}`)
+	variant := filepath.Join(top, "MODELS.json")
+	if _, err := os.Stat(variant); err != nil {
+		t.Skip("case-sensitive filesystem")
+	}
+	t.Setenv("GO_LLM_CONFIG", variant)
+	svc := newStagedGuardService(t)
+	bindStaged(t, svc, bound)
+
+	scope, err := svc.StagedScope(top)
+
+	if err != nil {
+		t.Fatalf("StagedScope: %v", err)
+	}
+	if !scope.Protected("models.json") {
+		t.Error("Protected(models.json) = false for a config named MODELS.json, want true")
+	}
+}
+
+// On a case-insensitive filesystem a project opened at a subfolder through
+// another case still maps git's paths inside it: the subfolder is found by
+// identity and spelled as git reports it.
+func TestStagedScope_SubfolderInAnotherCaseMapsByIdentity(t *testing.T) {
+	outsideConfig(t)
+	top := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(top, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	opened := filepath.Join(top, "APP")
+	if _, err := os.Stat(opened); err != nil {
+		t.Skip("case-sensitive filesystem")
+	}
+	svc := newStagedGuardService(t)
+	bindStaged(t, svc, opened)
+
+	scope, err := svc.StagedScope(top)
+
+	if err != nil {
+		t.Fatalf("StagedScope: %v", err)
+	}
+	assertAllowed(t, scope.Guard, "app/main.go")
+	assertDenied(t, scope.Guard, "app/.env", "README.md", "other/main.go")
+	if !scope.Protected("app/.env") || scope.Protected("app/main.go") {
+		t.Error("Protected must follow the policy inside the subfolder")
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -391,6 +392,11 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 	isConfigSource := func(string) bool { return false }
 	if configPath != "" {
 		configInfo, configErr := filesystem.Lstat(s.fs, configPath)
+		// Windows loads a file ID lazily, by path; SameFile on itself loads
+		// it now, before anything can replace the file.
+		if configErr == nil && !os.SameFile(configInfo, configInfo) {
+			configErr = errors.New("config source identity unavailable")
+		}
 		isConfigSource = func(abs string) bool {
 			if abs == configPath {
 				return true
@@ -400,11 +406,23 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 		}
 	}
 	// toBound maps a top-relative path onto the bound root; ok is false
-	// outside it. The usual case, the project is the git top level, compares
-	// by identity: on a case-insensitive filesystem the bound root keeps the
-	// case the project was opened with while git reports the case on disk.
-	toBound := func(rel string) (string, bool) { return rel, true }
-	if same, sameErr := sameDirectory(s.fs, top, boundRoot); sameErr != nil || !same {
+	// outside it. A bound root at or below the git top level is located by
+	// identity and spelled as git reports it: on a case-insensitive
+	// filesystem the bound root keeps the case the project was opened with
+	// while git reports the case on disk.
+	var toBound func(rel string) (string, bool)
+	switch below, ok := boundBelow(s.fs, top, boundRoot); {
+	case ok && below == "":
+		toBound = func(rel string) (string, bool) { return rel, true }
+	case ok:
+		prefix := below + "/"
+		toBound = func(rel string) (string, bool) {
+			if !strings.HasPrefix(rel, prefix) {
+				return "", false
+			}
+			return rel[len(prefix):], true
+		}
+	default:
 		toBound = func(rel string) (string, bool) {
 			bound, err := filepath.Rel(boundRoot, filepath.Join(top, filepath.FromSlash(rel)))
 			if err != nil || !filepath.IsLocal(bound) {
@@ -434,17 +452,53 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 	}, nil
 }
 
-// sameDirectory reports whether a and b name the same directory.
-func sameDirectory(fsys filesystem.FileSystem, a, b string) (bool, error) {
-	ai, err := filesystem.Lstat(fsys, a)
+// boundBelow returns the bound root's path below top, slash-separated, with
+// each level named as its parent directory lists it, when the bound root is
+// top or lies below it by identity; "" is top itself. A level whose listed
+// name differs by more than case is not found, and ok is false.
+func boundBelow(fsys filesystem.FileSystem, top, bound string) (string, bool) {
+	topInfo, err := filesystem.Lstat(fsys, top)
 	if err != nil {
-		return false, err
+		return "", false
 	}
-	bi, err := filesystem.Lstat(fsys, b)
+	var names []string
+	for dir := bound; ; dir = filepath.Dir(dir) {
+		info, err := filesystem.Lstat(fsys, dir)
+		if err != nil {
+			return "", false
+		}
+		if os.SameFile(info, topInfo) {
+			slices.Reverse(names)
+			return strings.Join(names, "/"), true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		name, ok := listedName(fsys, parent, info)
+		if !ok {
+			return "", false
+		}
+		names = append(names, name)
+	}
+}
+
+// listedName returns the name parent lists for the directory info.
+func listedName(fsys filesystem.FileSystem, parent string, info fs.FileInfo) (string, bool) {
+	entries, err := fsys.ReadDir(parent)
 	if err != nil {
-		return false, err
+		return "", false
 	}
-	return os.SameFile(ai, bi), nil
+	for _, entry := range entries {
+		if !strings.EqualFold(entry.Name(), info.Name()) {
+			continue
+		}
+		listed, err := filesystem.Lstat(fsys, filepath.Join(parent, entry.Name()))
+		if err == nil && os.SameFile(listed, info) {
+			return entry.Name(), true
+		}
+	}
+	return "", false
 }
 
 // stagedPolicy issues the current binding's guard under the binding gate's
