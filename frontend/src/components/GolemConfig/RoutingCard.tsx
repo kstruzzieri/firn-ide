@@ -440,7 +440,8 @@ export function RoutingCard({
       const short = withReach(
         floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe)),
         base,
-        probe.modelFacts
+        probe.modelFacts,
+        [useCase]
       );
       return { useCase, reason: shortfallLine(short) };
     });
@@ -489,10 +490,12 @@ export function RoutingCard({
       // with the owner's own exposure changes nothing anyone can see and still
       // gates every route the selector's roles reach.
       if (!group.governed.includes(useCase)) return [];
-      const short = withReach(floorShortfalls(group.staged.exposedCaps, [useCase]), base, {
-        provider: group.provider,
-        model: group.model,
-      });
+      const short = withReach(
+        floorShortfalls(group.staged.exposedCaps, [useCase]),
+        base,
+        { provider: group.provider, model: group.model },
+        group.edited.map((edit) => edit.useCase)
+      );
       return short.length === 0 ? [] : [shortfallLine(short)];
     });
     return clauses.length === 0 ? text : `${text} ${clauses.join('; ')}.`;

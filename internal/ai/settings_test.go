@@ -363,14 +363,18 @@ func TestTypeDerivedCapabilitiesAreOneTable(t *testing.T) {
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		t.Fatal(err)
 	}
-	types := map[string]bool{"dense": true, "moe": true, "embedding": true}
-	if len(rows) != len(types) {
-		t.Fatalf("fixture has %d rows, want one per model type (%d)", len(rows), len(types))
+	if len(rows) != len(modelFactTypes) {
+		t.Fatalf("fixture has %d rows, want one per model type (%d)", len(rows), len(modelFactTypes))
 	}
+	seen := map[string]bool{}
 	for _, row := range rows {
-		if !types[row.Type] {
+		if !modelFactTypes[row.Type] {
 			t.Fatalf("fixture type %q is not a model type", row.Type)
 		}
+		if seen[row.Type] {
+			t.Fatalf("fixture lists type %q twice", row.Type)
+		}
+		seen[row.Type] = true
 		derived := canonicalizeCapabilities(config.ModelConfig{Type: row.Type}.ResolvedCapabilities())
 		if !reflect.DeepEqual(row.Capabilities, derived) {
 			t.Fatalf("type %s: fixture %v, go-llm derives %v", row.Type, row.Capabilities, derived)

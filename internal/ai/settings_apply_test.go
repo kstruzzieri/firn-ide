@@ -2960,6 +2960,161 @@ func TestApplySettingsForkWithRedundantExposureSendsNoOverride(t *testing.T) {
 	}
 }
 
+// redundantOwnerJSON is chainTargetJSON as an older Firn left it: every role
+// it ever created, forked or retargeted carries the exposed set as an
+// explicit list, here the very set its type derives. Such a selector is
+// "owned" by nothing the document would not resolve on its own.
+var redundantOwnerJSON = strings.NewReplacer(
+	`"mimo-m": {"name": "mimo-model", "provider": "ollama", "type": "moe"}`,
+	`"mimo-m": {"name": "mimo-model", "provider": "ollama", "type": "moe", "capabilities": ["chat", "generate", "stream"]}`,
+	`"chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense"}`,
+	`"chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense", "capabilities": ["chat", "generate", "stream"]}`,
+).Replace(chainTargetJSON)
+
+// TestApplySettingsForkOntoARedundantlyOwnedSelectorSendsNoOverride is #311
+// defect 2 on a document Firn itself wrote: mimo-m carries the explicit list
+// an older Firn put there, equal to what moe derives. That list owns nothing
+// the type does not already resolve, so the fork still asserts no override;
+// an explicit list would widen the gate to mimo-m, which agent's chain
+// reaches, and refuse the move exactly as before the fix.
+func TestApplySettingsForkOntoARedundantlyOwnedSelectorSendsNoOverride(t *testing.T) {
+	if redundantOwnerJSON == chainTargetJSON {
+		t.Fatal("fixture replace did not apply")
+	}
+	h := newApplyHarness(t, redundantOwnerJSON)
+	change := confirmUnknown(
+		routeChange("analysis", "ollama", "mimo-model", "chat", "generate", "stream"),
+		"analysis",
+	)
+	res, err := h.svc.ApplySettings(h.request(t, change))
+	if err != nil {
+		t.Fatalf("ApplySettings(fork): %v", err)
+	}
+	if res.Status != "applied" {
+		t.Fatalf("ApplySettings(fork) = %+v, want applied", res)
+	}
+	models := writtenModels(t, h)
+	if _, explicit := models["analysis-m"]["capabilities"]; explicit {
+		t.Fatalf("forked role carries a redundant capability override: %s", models["analysis-m"]["capabilities"])
+	}
+	if caps, _ := writtenCapabilities(t, models["mimo-m"]); !slices.Equal(caps, []string{"chat", "generate", "stream"}) {
+		t.Fatalf("sibling's own list changed: %v", caps)
+	}
+}
+
+const narrowerOwnerJSON = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "own-m": {"name": "shared-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream"]},
+    "chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense"}
+  },
+  "defaults": {"agent": "agent-m", "analysis": "own-m", "chat": "chat-m"}
+}`
+
+// TestApplySettingsJoinWithDerivedExposureOntoANarrowerOwnerIsRefused: the
+// owner rule has teeth where the owner's list says something. own-m holds
+// chat, stream on shared-model; a join exposing the derived set is an
+// explicit list upstream compares with the owner's (selectorPairConflict)
+// and refuses. Were the derived exposure sent as nil here, the join would
+// land resolving chat, generate, stream beside an owner that holds less.
+func TestApplySettingsJoinWithDerivedExposureOntoANarrowerOwnerIsRefused(t *testing.T) {
+	h := newApplyHarness(t, narrowerOwnerJSON)
+	// analysis, the owner's use case, has no Firn floor: the wide confirmation
+	// set the join carries must name it.
+	join := confirmUnknown(
+		routeChange("chat", "ollama", "shared-model", "chat", "generate", "stream"),
+		"analysis",
+	)
+	res, err := h.svc.ApplySettings(h.request(t, join))
+	if err != nil {
+		t.Fatalf("ApplySettings(join): %v", err)
+	}
+	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 || res.Diagnostics[0].Code != codeSelectorConflict {
+		t.Fatalf("ApplySettings(join) = %+v, want one %s diagnostic", res, codeSelectorConflict)
+	}
+	if _, explicit := writtenModels(t, h)["chat-m"]["capabilities"]; explicit {
+		t.Fatal("refused join still wrote chat-m")
+	}
+}
+
+const ownerMovesAwayJSON = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "ana-m": {"name": "shared-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream"]},
+    "chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense"}
+  },
+  "defaults": {"agent": "agent-m", "analysis": "ana-m", "chat": "chat-m"}
+}`
+
+// TestApplySettingsJoinAfterTheOwnerMovesAwaySendsNoOverride pins that each
+// plan is judged against the document as the plans before it left it, the
+// view upstream takes: route:analysis runs first and moves shared-model's
+// only owner away, so the later route:chat join finds the selector unowned
+// and, with the derived exposure, writes no list. Judged against the
+// original document the join would meet the owner's narrower list, assert
+// the explicit set and write it.
+func TestApplySettingsJoinAfterTheOwnerMovesAwaySendsNoOverride(t *testing.T) {
+	h := newApplyHarness(t, ownerMovesAwayJSON)
+	leave := confirmUnknown(
+		routeChange("analysis", "ollama", "other-model", "chat", "generate", "stream"),
+		"analysis",
+	)
+	// The confirmation set is read from the original document, where ana-m
+	// still sits on shared-model, so the join confirms analysis as well.
+	join := confirmUnknown(
+		routeChange("chat", "ollama", "shared-model", "chat", "generate", "stream"),
+		"analysis",
+	)
+	res, err := h.svc.ApplySettings(h.request(t, leave, join))
+	if err != nil {
+		t.Fatalf("ApplySettings(leave, join): %v", err)
+	}
+	if res.Status != "applied" {
+		t.Fatalf("ApplySettings(leave, join) = %+v, want applied", res)
+	}
+	models := writtenModels(t, h)
+	if caps, explicit := writtenCapabilities(t, models["chat-m"]); explicit {
+		t.Fatalf("join after the owner left still wrote an override: %v", caps)
+	}
+	if string(models["ana-m"]["name"]) != `"other-model"` {
+		t.Fatalf("owner did not move: %s", models["ana-m"]["name"])
+	}
+}
+
+const ownFloorRetargetJSON = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "embed-m": {"name": "embed-model", "provider": "ollama", "type": "embedding"}
+  },
+  "defaults": {"agent": "agent-m", "embedding": "embed-m"}
+}`
+
+// TestApplySettingsRetargetWhoseOwnFloorFailsIsRefusedByUseCase (#338): a
+// retarget gates its own role even when it asserts nothing. embed-m serves
+// embedding alone; moving it onto a dense model with the derived exposure
+// loses embed, and the refusal names the use case, not the role.
+func TestApplySettingsRetargetWhoseOwnFloorFailsIsRefusedByUseCase(t *testing.T) {
+	h := newApplyHarness(t, ownFloorRetargetJSON)
+	res, err := h.svc.ApplySettings(h.request(t,
+		routeChange("embedding", "ollama", "dense-model", "chat", "generate", "stream")))
+	if err != nil {
+		t.Fatalf("ApplySettings(retarget): %v", err)
+	}
+	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+		res.Diagnostics[0].Code != codeEligibilityIneligible ||
+		res.Diagnostics[0].SubjectKind != "use_case" || res.Diagnostics[0].SubjectName != "embedding" {
+		t.Fatalf("ApplySettings(retarget) = %+v, want eligibility_ineligible on use_case embedding", res)
+	}
+}
+
 // TestApplySettingsForkWithNarrowingExposureIsRefusedByUseCase: the same move
 // with an exposure that differs from the derived set IS an explicit override,
 // selector-wide, so `mimo-m`'s chain use case gates it. The refusal names that
@@ -3017,25 +3172,24 @@ func TestApplySettingsOverrideRemovalThatBreaksAChainSiblingIsRefusedByUseCase(t
 	}
 }
 
-// TestApplySettingsOverrideKeepsTheExplicitCapabilities pins the override
-// path against the redundancy rule: keeping the model with the exposure the
-// selector already holds explicitly must write that explicit list again,
-// never nil — SetRoleOverrides reads nil as "clear the override".
+// TestApplySettingsOverrideKeepsTheExplicitCapabilities (#311 acceptance):
+// keeping a model with the list its role already holds writes that list
+// again — here one equal to what the type derives, the only case in which
+// assertedCapabilities answers nil, and nil on SetRoleOverrides CLEARS the
+// override instead of leaving it. The override path never consults it.
 func TestApplySettingsOverrideKeepsTheExplicitCapabilities(t *testing.T) {
-	h := newApplyHarness(t, chainTargetJSON)
-	change := confirmUnknown(
-		routeChange("analysis", "ollama", "deepseek-model", "chat", "stream", "tool_call"),
-		"analysis",
-	)
-	res, err := h.svc.ApplySettings(h.request(t, change))
+	h := newApplyHarness(t, redundantOwnerJSON)
+	res, err := h.svc.ApplySettings(h.request(t,
+		routeChange("chat", "ollama", "chat-model", "chat", "generate", "stream")))
 	if err != nil {
 		t.Fatalf("ApplySettings(override): %v", err)
 	}
 	if res.Status != "applied" {
 		t.Fatalf("ApplySettings(override) = %+v, want applied", res)
 	}
-	if got, _ := writtenCapabilities(t, writtenModels(t, h)["pro-m"]); !slices.Equal(got, []string{"chat", "stream", "tool_call"}) {
-		t.Fatalf("explicit override after a keep = %v", got)
+	got, explicit := writtenCapabilities(t, writtenModels(t, h)["chat-m"])
+	if !explicit || !slices.Equal(got, []string{"chat", "generate", "stream"}) {
+		t.Fatalf("explicit override after a keep = %v (present %v), want it kept", got, explicit)
 	}
 }
 

@@ -390,9 +390,24 @@ export function RouteEditor({
       ? declarationKey(manual.caps)
       : `defined\u0000${provider}\u0000${defined?.modelName ?? ''}`;
   const [seenKey, setSeenKey] = useState(factsKey);
+  /**
+   * [#311] What the selected model ARRIVED with — the exposure the checklist
+   * was seeded from, captured at each seeding rather than re-read from
+   * `offeredCaps` (a hand declaration adopts a staged selector's exposure, not
+   * its declared set; another editor staging onto the selector moves the
+   * authority without re-seeding this checklist). It decides whether an
+   * unticked capability is a removal, and whether an unticked `thinking`
+   * takes a Think with it. The row's baseline cannot: picking the applied
+   * model back over a staged change that exposed `thinking` on another model
+   * removes nothing.
+   */
+  const [arrivalExposed, setArrivalExposed] = useState<CapabilityName[]>(() =>
+    canonicalCaps(offeredCaps)
+  );
   if (factsKey !== seenKey) {
     setSeenKey(factsKey);
     setExposed(canonicalCaps(offeredCaps));
+    setArrivalExposed(canonicalCaps(offeredCaps));
     // A manual join adopts staged values in onManual; ordinary declaration
     // edits still seed from their own capabilities.
     setThink(manual === null ? (authority?.thinkMode ?? defined?.thinkMode ?? '') : '');
@@ -403,17 +418,11 @@ export function RouteEditor({
   // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
   // waiting for Done, never a committed state, so it must read as unstaged.
   const [baseline] = useState(() => heldSeed(staged, current, models, base, others));
-  /**
-   * [#311] What the selected model ARRIVED with — the exposure the checklist
-   * seeded from (`offeredCaps`) — decides whether an unticked `thinking` is a
-   * removal. The row's baseline cannot: picking the applied model back over a
-   * staged change that exposed `thinking` on another model removes nothing.
-   */
   const arrival: Seed = {
     provider,
     defined,
     manual,
-    exposed: canonicalCaps(offeredCaps),
+    exposed: arrivalExposed,
     think,
     ackUnknown,
     ackDrops,
@@ -491,15 +500,16 @@ export function RouteEditor({
   const short =
     candidate === null
       ? []
-      : withReach(floorShortfalls(exposed, governed), base, candidate.modelFacts);
+      : withReach(floorShortfalls(exposed, governed), base, candidate.modelFacts, [useCase]);
   /**
-   * [#311] A shortfall the model DECLARES is one the checklist took away — an
+   * [#311] A shortfall the checklist ARRIVED with is one it took away — an
    * override of the whole selector, said as what it removes and from whom;
-   * one it does not declare keeps the W4-7 copy (pick another, or assert it).
+   * one it never had keeps the W4-7 copy (pick another, or assert it). The
+   * arrival, not the row role's own resolved set: a deriving role on an owned
+   * selector arrives with the owner's folded set.
    */
-  const declared = new Set(capabilityFacts?.caps ?? []);
-  const removed = short.filter(({ cap }) => declared.has(cap));
-  const undeclared = short.filter(({ cap }) => !declared.has(cap));
+  const removed = short.filter(({ cap }) => arrivalExposed.includes(cap));
+  const undeclared = short.filter(({ cap }) => !arrivalExposed.includes(cap));
   const alsoGoverns = governed.filter((other) => other !== useCase);
   // Nothing to apply, nothing to acknowledge: the question is asked only for a
   // change that would be staged.
@@ -585,8 +595,9 @@ export function RouteEditor({
    * lock; overrides run in a later phase and meet nothing here. So a rewrite
    * or a departure counts only when it sorts before every other mutation of
    * the group, not merely before this join.
-   * A sibling any role lists as a fallback is forked too (`fallbacks[role]`,
-   * read from the projection's `fallbacks` since #311), so it is never gone.
+   * A role any role lists as a fallback — a sibling, or the edited role itself
+   * — is forked (`fallbacks[role]`, read from the projection's `fallbacks`
+   * since #311), so its lock is never gone.
    *
    * [#335] A capability override conflicts the same way — selectorPairConflict
    * compares two EXPLICIT sets — and is judged by the same staying rule,
@@ -656,11 +667,14 @@ export function RouteEditor({
       // The route taking the sibling's ONLY use case elsewhere, if there is one.
       const departure = retargetOf(base, staged, sibling);
       // The edited role's own lock is rewritten by THIS plan: gone for it when
-      // nothing else shares the role — and only if no other mutation of the
-      // group runs before it and meets the old lock.
+      // nothing else shares the role and nothing lists it as a fallback (the
+      // backend forks it then, and the lock stays) — and only if no other
+      // mutation of the group runs before it and meets the old lock.
+      const rewritten =
+        sibling.role === role && sharedRole.length === 0 && !isFallbackTarget(base, role);
       const gone =
         sibling.role === role
-          ? sharedRole.length === 0 && runsFirst(joinId)
+          ? rewritten && runsFirst(joinId)
           : departure !== undefined && runsFirst(changeStableID(departure));
       if (gone) return null;
       const names = sibling.routedUseCases.filter(
@@ -680,7 +694,7 @@ export function RouteEditor({
           ? compareString(changeStableID(departure), joinId) > 0
             ? ` (its ${departure.useCase} route leaves after this join)`
             : ` (its ${departure.useCase} route leaves after an earlier change in this group)`
-          : sibling.role === role && sharedRole.length === 0
+          : rewritten
             ? ' (rewritten after an earlier change in this group)'
             : '';
       return names.length > 0 ? names : [`role ${sibling.role}${note}`];
@@ -746,7 +760,8 @@ export function RouteEditor({
       const verdict = withReach(
         floorShortfalls(probe.exposedCaps, governedBy(probe)),
         base,
-        probe.modelFacts
+        probe.modelFacts,
+        [useCase]
       );
       cache.set(model.role, verdict);
       return verdict;
@@ -1052,6 +1067,7 @@ export function RouteEditor({
             ]);
             setManual({ ...next, caps });
             setExposed(canonicalCaps(stagedSelector.exposedCaps));
+            setArrivalExposed(canonicalCaps(stagedSelector.exposedCaps));
             setThink(stagedSelector.thinkMode);
             setAckDrops(false);
             setAckUnknown(false);

@@ -1693,33 +1693,35 @@ function selectorGroups(
 
 /**
  * [#311] Whether a join's exposure becomes an explicit, selector-wide override
- * in the request — the backend's `assertedCapabilities`, mirrored: yes when a
- * role on the selector still owns one when the join runs (the backend always
- * sends the explicit list there, since nil would leave the new role resolving
- * the type defaults under a folded override), or when the exposure is not
- * what the model type derives. Only an asserted override widens upstream's
- * eligibility gate to the selector's other roles. Ownership is read as the
- * backend reads it, at the join's place in stable-id order: an owner whose
- * only route a staged retarget moves away BEFORE the join is gone by then; one
- * leaving only AFTER it still counts.
+ * in the request — the backend's `assertedCapabilities`, mirrored: no when the
+ * exposure is what the model type derives and every role on the selector
+ * holds no list, or holds that same derived list (what every earlier Firn
+ * wrote on every move, which owns nothing the type does not resolve); yes
+ * otherwise. Only an asserted override widens upstream's eligibility gate to
+ * the selector's other roles. Ownership is read as the backend reads it, at
+ * the join's place in stable-id order: an owner whose only route a staged
+ * retarget moves away BEFORE the join is gone by then; one leaving only AFTER
+ * it still counts.
  */
 const assertsOverride = (
   base: DraftBaseProjection,
   staged: ReadonlyMap<string, RouteChange>,
   change: RouteChange
 ): boolean => {
+  const derived = TYPE_DERIVED_CAPABILITIES[change.modelFacts.type];
+  if (!sameCaps(change.exposedCaps, derived)) return true;
   const joinId = changeStableID(change);
-  const owned = base.models.some((model) => {
+  return base.models.some((model) => {
     if (
       model.provider !== change.modelFacts.provider ||
       model.modelName !== change.modelFacts.model ||
-      model.capabilityOverride === undefined
+      model.capabilityOverride === undefined ||
+      sameCaps(model.capabilityOverride, derived)
     )
       return false;
     const departure = retargetOf(base, staged, model);
     return departure === undefined || compareString(changeStableID(departure), joinId) >= 0;
   });
-  return owned || !sameCaps(change.exposedCaps, TYPE_DERIVED_CAPABILITIES[change.modelFacts.type]);
 };
 
 /**
@@ -1779,11 +1781,11 @@ export const sameCaps = (a: readonly CapabilityName[], b: readonly CapabilityNam
  * Ceilings, named rather than drawn: a SOURCE selector left by a retarget can
  * change its remaining roles' projected exposure when the leaver carried the
  * selector's only explicit override (`capabilityOverride` names the owner
- * since #335, but reach stays a DESTINATION report); a fallback role forked
- * by an unrouted referrer (`fallbacks[role]`) is invisible here as in
- * `selectorGroups`; reasserting an identical override can change EFFECTIVE
- * caps without changing the projection, which is outside the definition of
- * reach.
+ * since #335, but reach stays a DESTINATION report); reasserting an identical
+ * override can change EFFECTIVE caps without changing the projection, which
+ * is outside the definition of reach. A fallback role forked by an unrouted
+ * referrer (`fallbacks[role]`) stays on its selector here as in
+ * `selectorGroups`, since #311 `retargetOf` reads the projection's `fallbacks`.
  */
 function reachGroupsOf(
   base: DraftBaseProjection,
@@ -2269,16 +2271,20 @@ export function reachOf(
  * selector attached, so every line that names the use case can also say how
  * it gets there — the one code path for the editor's notice and refusal, the
  * picker's blocked card, the Assign list's reason and a refusal the backend
- * returns on that use case's row.
+ * returns on that use case's row. `routed` names the use cases the change
+ * itself routes onto the selector: after it they run there directly, so the
+ * chain their applied role has today is not how they reach it.
  */
 export const withReach = (
   short: readonly FloorShortfall[],
   base: DraftBaseProjection,
-  selector: { readonly provider: string; readonly model: string }
+  selector: { readonly provider: string; readonly model: string },
+  routed: readonly string[] = []
 ): FloorShortfall[] =>
   short.map((entry) => {
     const via = new Map<string, readonly string[]>();
     for (const useCase of entry.useCases) {
+      if (routed.includes(useCase)) continue;
       const path = reachOf(base, useCase, selector);
       if (path.length > 1) via.set(useCase, path);
     }

@@ -55,6 +55,8 @@ import {
   type DraftBaseProjection,
   type DraftEvent,
   type RouteChange,
+  reachOf,
+  withReach,
 } from '../../types/golemConfig';
 
 const corpusDir = path.resolve(
@@ -1058,6 +1060,7 @@ describe('type-derived capabilities', () => {
     // differs from this set (on a selector no role owns); the reducer must
     // widen the governed set under the same rule.
     expect(Object.keys(TYPE_DERIVED_CAPABILITIES)).toHaveLength(rows.length);
+    expect(new Set(rows.map((row) => row.type)).size).toBe(rows.length);
     for (const row of rows) {
       expect(TYPE_DERIVED_CAPABILITIES[row.type]).toEqual(row.capabilities);
     }
@@ -1126,11 +1129,44 @@ describe('governed set under the asserted-override rule (#311)', () => {
   });
 
   it('widens to an owned selector even when the exposure equals the owner set', () => {
-    // A join onto an owner's selector always carries the explicit list (the
-    // backend never sends nil there), so upstream gates every role on it.
+    // The owner's set is not the derived one, so a join exposing it carries
+    // the explicit list (the backend sends nil only beside a role holding the
+    // derived list, or none), and upstream gates every role on the selector.
     const probe = probeRouteChange('analysis', owner);
     expect(probe.exposedCaps).toEqual(OWNED);
     expect(governedUseCasesOf(base, draft, probe)).toEqual(['analysis', 'agent']);
+  });
+
+  it('does not count a role holding the list the join type derives, the one every earlier Firn wrote', () => {
+    // Firn before #311 wrote the exposed set as an explicit list on every
+    // move, so a selector it ever moved onto reads as owned by the derived
+    // set. The backend sends nil beside such a list (the role resolves the
+    // same set either way), so the join governs itself alone. A role holding
+    // any other list, or an exposure other than the derived one, still widens.
+    const written = modelRow({ ...mimo, capabilityOverride: DERIVED });
+    const writtenBase: DraftBaseProjection = { ...base, models: [owner, pro, written] };
+    const probe = probeRouteChange('analysis', written);
+    expect(probe.exposedCaps).toEqual(DERIVED);
+    expect(governedUseCasesOf(writtenBase, draft, probe)).toEqual(['analysis']);
+    expect(affectedUseCases(writtenBase, draft, probe)).toEqual(['analysis', 'agent']);
+
+    const NARROW: CapabilityName[] = ['chat', 'stream'];
+    const narrower = modelRow({
+      ...mimo,
+      effectiveCapabilities: NARROW,
+      capabilityFacts: { caps: NARROW, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: NARROW,
+      capabilityOverride: NARROW,
+    });
+    const narrowerBase: DraftBaseProjection = { ...base, models: [owner, pro, narrower] };
+    expect(governedUseCasesOf(narrowerBase, draft, { ...probe, exposedCaps: DERIVED })).toEqual([
+      'analysis',
+      'agent',
+    ]);
+    expect(governedUseCasesOf(writtenBase, draft, { ...probe, exposedCaps: NARROW })).toEqual([
+      'analysis',
+      'agent',
+    ]);
   });
 
   it('governs every route on the selector for an override, changed or not', () => {
@@ -2259,5 +2295,53 @@ describe('reach (wave 6): what a staged model change reaches, by projected confi
     );
     expect(groupOf(staying, 'gpt-5').think).toBe('auto');
     expect(groupOf(staying, 'gpt-5').sameModel).toEqual(['agent']);
+  });
+});
+
+describe('reachOf (#311)', () => {
+  // a falls back to b then c; b to d; c back to a (a cycle) and to d. d is on
+  // selector X. The shortest chain wins, ties in authored order, and a cycle
+  // terminates; an unrouted use case reaches nothing and a direct route has
+  // no "via".
+  const X = { provider: 'hosted', model: 'x-model' };
+  const row = (role: string, modelName: string, fallbacks?: string[]): ModelProjection =>
+    modelRow({
+      role,
+      modelName,
+      routedUseCases: [],
+      ...(fallbacks === undefined ? {} : { fallbacks }),
+    });
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'agent', role: 'a' },
+      { useCase: 'chat', role: 'd' },
+    ],
+    models: [
+      row('a', 'a-model', ['b', 'c']),
+      row('b', 'b-model', ['d']),
+      row('c', 'c-model', ['a', 'd']),
+      row('d', 'x-model'),
+    ],
+  };
+
+  it('finds the shortest chain in authored order and terminates on a cycle', () => {
+    expect(reachOf(base, 'agent', X)).toEqual(['a', 'b', 'd']);
+  });
+
+  it('reaches nothing for an unrouted use case, and attaches no via to a direct route', () => {
+    expect(reachOf(base, 'planning', X)).toEqual([]);
+    expect(reachOf(base, 'chat', X)).toEqual(['d']);
+    expect(withReach([{ cap: 'tool_call', useCases: ['chat'] }], base, X)[0].via).toBeUndefined();
+  });
+
+  it('attaches no chain to a use case the change itself routes onto the selector', () => {
+    // Promoting a fallback model to the use case's own: after the change it
+    // runs there directly, so its applied chain is not how it gets there.
+    expect(
+      withReach([{ cap: 'tool_call', useCases: ['agent'] }], base, X)[0].via?.get('agent')
+    ).toEqual(['a', 'b', 'd']);
+    expect(
+      withReach([{ cap: 'tool_call', useCases: ['agent'] }], base, X, ['agent'])[0].via
+    ).toBeUndefined();
   });
 });

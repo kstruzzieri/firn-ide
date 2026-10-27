@@ -1691,8 +1691,11 @@ func applyRoutePlans(doc *config.Document, plans []routePlan) *SettingsApplyResu
 		if err != nil {
 			return blockingDiagnostics(Diagnostic{Code: codeInvalidArgument})
 		}
-		// Always the explicit list here: nil would CLEAR an override the
-		// selector already holds (RoleOverrides), never leave it as it is.
+		// Always the explicit list here, never assertedCapabilities: on a role
+		// that holds a list, nil would CLEAR it (RoleOverrides), not keep it.
+		// On a role holding none this writes the exposed set as a list; one
+		// equal to the derived set owns nothing (assertedCapabilities), so it
+		// widens no later join.
 		explicit := overrideCapabilities(plan.change.ExposedCaps)
 		if result := refuseIneligible(doc.Config(), plan, explicit, caps, known); result != nil {
 			return result
@@ -1849,18 +1852,22 @@ func roleOptions(cfg *config.Config, plan routePlan) (config.SetRoleModelOpts, e
 // assertedCapabilities is the explicit, selector-wide capability override a
 // create, fork or retarget carries — or nil when the exposure says nothing
 // the document would not resolve on its own (#311 defect 2): a set equal to
-// what the model type derives, on a selector no role overrides. Upstream
-// widens its eligibility gate to every role on the selector exactly when an
-// override is sent, so a redundant one made a sibling's chain use case refuse
-// a route the model can serve (`analysis` on a model `agent` reaches through
-// a fallback chain). A selector with an owner always gets the explicit list:
-// a join must agree with the owner (selectorPairConflict), and a nil would
-// leave the new role resolving the type defaults while every row shows it
-// the folded override.
+// what the model type derives, on a selector whose roles hold no list, or
+// hold only that same list. Upstream widens its eligibility gate to every
+// role on the selector exactly when an override is sent, so a redundant one
+// made a sibling's chain use case refuse a route the model can serve
+// (`analysis` on a model `agent` reaches through a fallback chain). A role
+// holding the derived list is what every Firn before this rule left on every
+// move it made, so it cannot count as an owner: nil beside it resolves the
+// same set, upstream evaluates the mutated role against that list anyway
+// (gateRoleEligibility inherits a sibling's override), and explicit lists
+// are only ever compared with each other (selectorPairConflict). A role
+// holding any other list keeps the explicit set coming: a join must agree
+// with it, and the refusal upstream gives is the conflict it is.
 func assertedCapabilities(cfg *config.Config, plan routePlan) []string {
-	if _, owned := selectorCapabilityOverrides(cfg)[plan.selector]; !owned {
-		derived := config.ModelConfig{Type: plan.change.ModelFacts.Type}.ResolvedCapabilities()
-		if slices.Equal(canonicalizeCapabilities(plan.change.ExposedCaps), canonicalizeCapabilities(derived)) {
+	derived := canonicalizeCapabilities(config.ModelConfig{Type: plan.change.ModelFacts.Type}.ResolvedCapabilities())
+	if owner, owned := selectorCapabilityOverrides(cfg)[plan.selector]; !owned || slices.Equal(owner, derived) {
+		if slices.Equal(canonicalizeCapabilities(plan.change.ExposedCaps), derived) {
 			return nil
 		}
 	}

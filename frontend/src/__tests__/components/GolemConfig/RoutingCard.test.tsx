@@ -1067,6 +1067,41 @@ describe('Defined models — Assign (wave 4d)', () => {
     expect(p.onStage.mock.calls[0][0][0].useCase).toBe('chat');
   });
 
+  it('names the chain in a reason when a use case reaches the model through a fallback', async () => {
+    // [#311] agent runs on agent-role and falls back to mid-role, a second
+    // role on spare-m. Joining chat onto spare-m with its own set (not what
+    // dense derives) is an override that gates mid-role, which agent
+    // reaches: the reason says so, and how.
+    const p = props();
+    const agentRole: ModelProjection = {
+      ...model,
+      role: 'agent-role',
+      modelName: 'agent-model',
+      effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+      capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: ['chat', 'stream', 'tool_call'],
+      routedUseCases: ['agent'],
+      fallbacks: ['mid-role'],
+    };
+    const mid: ModelProjection = {
+      ...spare,
+      role: 'mid-role',
+      routedUseCases: ['agent'],
+      removable: false,
+    };
+    render(
+      <RoutingCard
+        {...p}
+        routes={[...p.routes, { useCase: 'agent', role: 'agent-role' }]}
+        models={[model, agentRole, mid, spare]}
+      />
+    );
+    await userEvent.click(assign());
+    expect(
+      within(optionNamed('chat')).getByText('agent (via agent-role → mid-role) needs tool_call')
+    ).toBeInTheDocument();
+  });
+
   it('walks the list with the arrows, closes on Escape and returns focus to Assign', async () => {
     const user = userEvent.setup();
     // jsdom has no layout: the reveal is asserted through a spy on the setup

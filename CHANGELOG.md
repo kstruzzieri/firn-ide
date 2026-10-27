@@ -52,8 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cloud-coder → cloud-pro) needs tool_call"). Moving a route onto another
   model with the capabilities that model's type already implies no longer
   sends a redundant capability override, which was what widened Golem's
-  eligibility check to the model's other routes; a different exposure is
-  still an explicit override and is checked as one. (#311)
+  eligibility check to the model's other routes; a route already on that
+  model carrying the same implied set as an explicit list (what every earlier
+  Firn wrote on every move) does not bring that check back either. A
+  different exposure, or a route there holding a different list, is still an
+  explicit override and is checked as one. (#311)
 - A refusal from Golem's eligibility check now names the use case whose
   requirement fails ("use case embedding"), on that use case's row, instead
   of a role name no row carries (`embed-m`, or a generated `analysis-m`).
