@@ -212,10 +212,21 @@ func (r *golemRunner) Close() error {
 // validated target using the public constructors only — no router, no health
 // probe, no Models call, no network I/O. The returned transport is host-owned
 // and hardened so nothing can silently change the consented destination:
-// environment proxies are ignored and provider redirects are never followed.
+// environment proxies are ignored, provider redirects are never followed, and
+// a "localhost" host dials loopback without asking the resolver.
 func buildProvider(target providerTarget, userAgent string) (provider.Provider, *http.Transport, error) {
-	transport := baseTransport()
+	return buildProviderOn(baseTransport(), target, userAgent)
+}
+
+// buildProviderOn is buildProvider over a given base transport, which it
+// hardens in place and returns as the provider's owned transport. A test hands
+// it a transport whose dialer answers names its own way.
+func buildProviderOn(transport *http.Transport, target providerTarget, userAgent string) (provider.Provider, *http.Transport, error) {
 	transport.Proxy = nil
+	// Either TLS dial hook replaces DialContext for https connections, and
+	// with it the loopback dial below.
+	transport.DialTLSContext = nil
+	transport.DialTLS = nil //nolint:staticcheck // deprecated, and still bypasses DialContext when set
 	transport.DialContext = loopbackDialContext(transport.DialContext)
 	client := &http.Client{
 		Transport: transport,
@@ -255,9 +266,14 @@ var localhostIPs = []string{"127.0.0.1", "::1"}
 // the requested port, one after another, and never consults the resolver;
 // every other host reaches dial unchanged. The endpoint host is the only host
 // the transport ever dials, with no proxy and no redirects, so this is the
-// whole of a local destination's dial policy. The attempts run in sequence
-// rather than racing as go-llm's guard does: a loopback connect is refused or
-// accepted at once.
+// whole of a local destination's dial policy.
+//
+// ponytail: the attempts run in sequence rather than racing as go-llm's
+// dialLoopback does, since a loopback connect is normally refused or accepted
+// at once. The ceiling: a dropped SYN (a packet filter, a full accept queue)
+// holds the ::1 attempt until the base dialer gives up, 30 seconds for
+// http.DefaultTransport's, within the request's own timeout. Race the
+// attempts the way dialLoopback does if that ever bites.
 func loopbackDialContext(dial func(context.Context, string, string) (net.Conn, error)) func(context.Context, string, string) (net.Conn, error) {
 	if dial == nil {
 		dial = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext
@@ -277,16 +293,17 @@ func loopbackDialContext(dial func(context.Context, string, string) (net.Conn, e
 				return conn, nil
 			}
 			errs = append(errs, err)
+			if ctx.Err() != nil {
+				break // the request is canceled or out of time: no later attempt can connect
+			}
 		}
 		return nil, errors.Join(errs...)
 	}
 }
 
 // baseTransport returns the transport buildProvider hardens: a private copy
-// of http.DefaultTransport, so the hardening never touches shared state. A
-// variable so a test can stand in a transport whose dialer resolves names
-// elsewhere.
-var baseTransport = func() *http.Transport {
+// of http.DefaultTransport, so the hardening never touches shared state.
+func baseTransport() *http.Transport {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
 		return transport.Clone()
 	}
