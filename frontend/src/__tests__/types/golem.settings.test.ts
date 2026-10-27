@@ -87,19 +87,17 @@ describe('parseSettingsProjection', () => {
     expect(p.providers[0].classification).toBe('remote');
   });
 
-  it('reads a selector capability override back, and an absent one as none', () => {
-    // #335: the projection names the selector's EXPLICIT override beside the
-    // folded exposure, so the editor can tell an override from declared caps.
-    expect(parseSettingsProjection(validProjection()).models[0].selectorCapabilityOverride).toBe(
-      undefined
-    );
+  it('reads a capability override back, and an absent one as none', () => {
+    // #335: the projection names the role's EXPLICIT override beside the
+    // folded exposure, so the editor can tell an owner from a deriving sibling.
+    expect(parseSettingsProjection(validProjection()).models[0].capabilityOverride).toBe(undefined);
     const value = validProjection();
-    (value.models as Record<string, unknown>[])[0].selectorCapabilityOverride = [
+    (value.models as Record<string, unknown>[])[0].capabilityOverride = [
       'chat',
       'stream',
       'tool_call',
     ];
-    expect(parseSettingsProjection(value).models[0].selectorCapabilityOverride).toEqual([
+    expect(parseSettingsProjection(value).models[0].capabilityOverride).toEqual([
       'chat',
       'stream',
       'tool_call',
@@ -248,21 +246,21 @@ describe('parseSettingsProjection', () => {
     [
       // The producer folds an override into exposedCapabilities, so a
       // projection whose two disagree was not produced by it.
-      'a selector override that is not the exposed set',
+      'a capability override that is not the exposed set',
       (v: Record<string, unknown>) => {
-        (v.models as Record<string, unknown>[])[0].selectorCapabilityOverride = ['chat', 'stream'];
+        (v.models as Record<string, unknown>[])[0].capabilityOverride = ['chat', 'stream'];
       },
     ],
     [
-      'an empty selector override',
+      'an empty capability override',
       (v: Record<string, unknown>) => {
-        (v.models as Record<string, unknown>[])[0].selectorCapabilityOverride = [];
+        (v.models as Record<string, unknown>[])[0].capabilityOverride = [];
       },
     ],
     [
-      'a non-canonical selector override',
+      'a non-canonical capability override',
       (v: Record<string, unknown>) => {
-        (v.models as Record<string, unknown>[])[0].selectorCapabilityOverride = [
+        (v.models as Record<string, unknown>[])[0].capabilityOverride = [
           'stream',
           'chat',
           'tool_call',
@@ -270,9 +268,9 @@ describe('parseSettingsProjection', () => {
       },
     ],
     [
-      'a null selector override',
+      'a null capability override',
       (v: Record<string, unknown>) => {
-        (v.models as Record<string, unknown>[])[0].selectorCapabilityOverride = null;
+        (v.models as Record<string, unknown>[])[0].capabilityOverride = null;
       },
     ],
     [

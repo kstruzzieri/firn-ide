@@ -189,12 +189,15 @@ type RouteProjection struct {
 // EffectiveCapabilities/CapabilityFacts.Caps are this model's own canonical
 // ResolvedCapabilities(); ExposedCapabilities is what a selector-sharing
 // mutation would actually apply (selectorCapabilityOverrides).
-// SelectorCapabilityOverride is that override by itself — the selector's
-// EXPLICIT Capabilities value, which ExposedCapabilities folds into the
-// declared set — and is absent when no role on the selector sets one (#335):
-// a route joining the selector must agree with an explicit override
-// (selectorPairConflict) but conflicts with nothing when the siblings only
-// derive theirs, and only this field lets the editor tell the two apart.
+// CapabilityOverride is THIS role's own explicit Capabilities value, canonical,
+// absent for a role that derives its set from its type (#335). It is per role,
+// like ThinkMode, because ownership is what the editor's pre-check needs: a
+// route joining the selector must agree with an explicit override
+// (selectorPairConflict compares explicit sets only) for as long as a role
+// that OWNS one is still on the selector, and a deriving sibling locks
+// nothing — even while ExposedCapabilities shows it the folded override.
+// Validation makes every owner on a selector agree, so where present the
+// value is also the selector's.
 // RoutedUseCases lists every use case reaching this role (directly or through
 // a fallback chain); Removable is true when nothing references it.
 //
@@ -221,12 +224,12 @@ type ModelProjection struct {
 	CapabilityFacts       CapabilityFacts `json:"capabilityFacts"`
 	ExposedCapabilities   []string        `json:"exposedCapabilities"`
 	// Omitted, never empty: the frontend reads absence as "none".
-	SelectorCapabilityOverride []string `json:"selectorCapabilityOverride,omitempty"`
-	ThinkMode                  string   `json:"thinkMode"`
-	RoutedUseCases             []string `json:"routedUseCases"`
-	HasThinkTags               bool     `json:"hasThinkTags"`
-	HasSlots                   bool     `json:"hasSlots"`
-	Removable                  bool     `json:"removable"`
+	CapabilityOverride []string `json:"capabilityOverride,omitempty"`
+	ThinkMode          string   `json:"thinkMode"`
+	RoutedUseCases     []string `json:"routedUseCases"`
+	HasThinkTags       bool     `json:"hasThinkTags"`
+	HasSlots           bool     `json:"hasSlots"`
+	Removable          bool     `json:"removable"`
 }
 
 // clone deep-copies every slice a projection owns. Settings() and
@@ -243,7 +246,7 @@ func (p SettingsProjection) clone() SettingsProjection {
 		m := &out.Models[i]
 		m.EffectiveCapabilities = slices.Clone(m.EffectiveCapabilities)
 		m.ExposedCapabilities = slices.Clone(m.ExposedCapabilities)
-		m.SelectorCapabilityOverride = slices.Clone(m.SelectorCapabilityOverride)
+		m.CapabilityOverride = slices.Clone(m.CapabilityOverride)
 		m.RoutedUseCases = slices.Clone(m.RoutedUseCases)
 		m.CapabilityFacts.Caps = slices.Clone(m.CapabilityFacts.Caps)
 		m.CapabilityFacts.KnownCaps = slices.Clone(m.CapabilityFacts.KnownCaps)
@@ -564,12 +567,14 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 	routed, referenced := roleUsage(cfg)
 	for role, m := range cfg.Models {
 		effective := canonicalizeCapabilities(m.ResolvedCapabilities())
-		var exposed, selectorOverride []string
+		var exposed, owned []string
 		if override, ok := overrides[modelSelector{provider: m.Provider, model: m.Name}]; ok {
 			exposed = append([]string{}, override...)
-			selectorOverride = append([]string{}, override...)
 		} else {
 			exposed = append([]string{}, effective...)
+		}
+		if len(m.Capabilities) > 0 {
+			owned = canonicalizeCapabilities(m.Capabilities)
 		}
 		p.Models = append(p.Models, ModelProjection{
 			Role: role, ModelName: m.Name, Provider: m.Provider, Type: m.Type,
@@ -580,7 +585,7 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 				Caps:      append([]string{}, effective...),
 				KnownCaps: append([]string{}, provider.CanonicalCapabilityNames...),
 			},
-			ExposedCapabilities: exposed, SelectorCapabilityOverride: selectorOverride,
+			ExposedCapabilities: exposed, CapabilityOverride: owned,
 			ThinkMode:      m.ThinkMode,
 			RoutedUseCases: append([]string{}, routed[role]...),
 			HasThinkTags:   m.ThinkTags != nil,

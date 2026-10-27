@@ -729,12 +729,15 @@ export class ModelFacts {
  * EffectiveCapabilities/CapabilityFacts.Caps are this model's own canonical
  * ResolvedCapabilities(); ExposedCapabilities is what a selector-sharing
  * mutation would actually apply (selectorCapabilityOverrides).
- * SelectorCapabilityOverride is that override by itself — the selector's
- * EXPLICIT Capabilities value, which ExposedCapabilities folds into the
- * declared set — and is absent when no role on the selector sets one (#335):
- * a route joining the selector must agree with an explicit override
- * (selectorPairConflict) but conflicts with nothing when the siblings only
- * derive theirs, and only this field lets the editor tell the two apart.
+ * CapabilityOverride is THIS role's own explicit Capabilities value, canonical,
+ * absent for a role that derives its set from its type (#335). It is per role,
+ * like ThinkMode, because ownership is what the editor's pre-check needs: a
+ * route joining the selector must agree with an explicit override
+ * (selectorPairConflict compares explicit sets only) for as long as a role
+ * that OWNS one is still on the selector, and a deriving sibling locks
+ * nothing — even while ExposedCapabilities shows it the folded override.
+ * Validation makes every owner on a selector agree, so where present the
+ * value is also the selector's.
  * RoutedUseCases lists every use case reaching this role (directly or through
  * a fallback chain); Removable is true when nothing references it.
  * 
@@ -765,7 +768,7 @@ export class ModelProjection {
     /**
      * Omitted, never empty: the frontend reads absence as "none".
      */
-    "selectorCapabilityOverride"?: string[];
+    "capabilityOverride"?: string[];
     "thinkMode": string;
     "routedUseCases": string[];
     "hasThinkTags": boolean;
@@ -833,8 +836,8 @@ export class ModelProjection {
         if ("exposedCapabilities" in $$parsedSource) {
             $$parsedSource["exposedCapabilities"] = $$createField10_0($$parsedSource["exposedCapabilities"]);
         }
-        if ("selectorCapabilityOverride" in $$parsedSource) {
-            $$parsedSource["selectorCapabilityOverride"] = $$createField11_0($$parsedSource["selectorCapabilityOverride"]);
+        if ("capabilityOverride" in $$parsedSource) {
+            $$parsedSource["capabilityOverride"] = $$createField11_0($$parsedSource["capabilityOverride"]);
         }
         if ("routedUseCases" in $$parsedSource) {
             $$parsedSource["routedUseCases"] = $$createField13_0($$parsedSource["routedUseCases"]);

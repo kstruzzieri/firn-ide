@@ -626,11 +626,13 @@ export interface ModelProjection {
   capabilityFacts: CapabilityFacts;
   exposedCapabilities: CapabilityName[];
   /**
-   * The selector's EXPLICIT capability override, which `exposedCapabilities`
-   * folds into the declared set; absent when no role on the selector sets one
-   * (#335). Equals `exposedCapabilities` whenever present.
+   * This role's own EXPLICIT capability override (#335); absent for a role
+   * that derives its set from its type, even on a selector another role
+   * overrides — `exposedCapabilities` shows the folded override either way.
+   * Per role, like `thinkMode`, because the editor's pre-check needs to know
+   * which siblings OWN the lock. Equals `exposedCapabilities` whenever present.
    */
-  selectorCapabilityOverride?: CapabilityName[];
+  capabilityOverride?: CapabilityName[];
   thinkMode: ThinkMode;
   routedUseCases: string[];
   /** Existence facts only — a retarget drops these, the values never cross. */
@@ -922,7 +924,7 @@ function readModel(value: unknown): ModelProjection | null {
       'effectiveCapabilities',
       'capabilityFacts',
       'exposedCapabilities',
-      'selectorCapabilityOverride',
+      'capabilityOverride',
       'thinkMode',
       'routedUseCases',
       'hasThinkTags',
@@ -998,12 +1000,10 @@ function readModel(value: unknown): ModelProjection | null {
   )
     return null;
 
-  let selectorCapabilityOverride: CapabilityName[] | undefined;
-  if (hasPresentKey(value, 'selectorCapabilityOverride')) {
-    const override = readCappedArray(
-      value.selectorCapabilityOverride,
-      CAPABILITY_NAMES.length,
-      (cap) => (isOneOf(cap, CAPABILITY_NAMES) ? cap : null)
+  let capabilityOverride: CapabilityName[] | undefined;
+  if (hasPresentKey(value, 'capabilityOverride')) {
+    const override = readCappedArray(value.capabilityOverride, CAPABILITY_NAMES.length, (cap) =>
+      isOneOf(cap, CAPABILITY_NAMES) ? cap : null
     );
     // The producer folds the override into exposedCapabilities and omits the
     // key rather than sending an empty list, so a projection whose two
@@ -1015,7 +1015,7 @@ function readModel(value: unknown): ModelProjection | null {
       override.some((cap, index) => cap !== exposedCapabilities[index])
     )
       return null;
-    selectorCapabilityOverride = override;
+    capabilityOverride = override;
   }
 
   return {
@@ -1030,7 +1030,7 @@ function readModel(value: unknown): ModelProjection | null {
     effectiveCapabilities,
     capabilityFacts,
     exposedCapabilities,
-    ...(selectorCapabilityOverride === undefined ? {} : { selectorCapabilityOverride }),
+    ...(capabilityOverride === undefined ? {} : { capabilityOverride }),
     thinkMode,
     routedUseCases,
     hasThinkTags,

@@ -502,9 +502,11 @@ export function RouteEditor({
    *
    * [#335] A capability override conflicts the same way — selectorPairConflict
    * compares two EXPLICIT sets — and is judged by the same staying rule,
-   * against the sibling's `selectorCapabilityOverride`: a sibling that only
-   * derives its set locks nothing, and the projection folds the one override
-   * a selector can hold onto every role on it, so the lock is one set.
+   * against each sibling's own `capabilityOverride`: only a sibling that OWNS
+   * an override locks the join, and only while it stays, so an owner the draft
+   * retargets away before this join unlocks the selector even when a deriving
+   * sibling (whose `exposedCapabilities` still shows the folded override)
+   * remains. Owners on one selector agree (validation), so the lock is one set.
    */
   const conflictsByMode = new Map<ThinkMode, Set<string>>();
   const lockedBy = new Set<string>();
@@ -550,8 +552,8 @@ export function RouteEditor({
         sibling.thinkMode !== '' &&
         sibling.thinkMode !== candidate.thinkMode;
       const capsDiffer =
-        sibling.selectorCapabilityOverride !== undefined &&
-        !sameCaps(sibling.selectorCapabilityOverride, candidate.exposedCaps);
+        sibling.capabilityOverride !== undefined &&
+        !sameCaps(sibling.capabilityOverride, candidate.exposedCaps);
       if (!thinkDiffers && !capsDiffer) continue;
       const names = staying(sibling);
       if (names === null) continue;
@@ -561,7 +563,7 @@ export function RouteEditor({
         conflictsByMode.set(sibling.thinkMode, held);
       }
       if (capsDiffer) {
-        lockedCaps = sibling.selectorCapabilityOverride;
+        lockedCaps = sibling.capabilityOverride;
         for (const name of names) lockedBy.add(name);
       }
     }
