@@ -1451,7 +1451,7 @@ export interface ProjectedDraft {
    * exposure. Sorted. Wider than what changes — a fork leaves the source
    * role's other use cases as they are — so this feeds the
    * unknown-requirements acknowledgement and the values a routing row paints,
-   * never a floor or a row marker (those read `routeReach`).
+   * never a floor (`governedUseCases`) or a row marker (the reach groups).
    */
   selectorUseCases: Map<string, string[]>;
   /**
@@ -1460,7 +1460,7 @@ export interface ProjectedDraft {
    * on the target selector serve under the same override-or-asserted-exposure
    * condition. Sorted. The current role counts only when it sits on that
    * selector. This is the eligibility set: what the picker's floors must
-   * read. What the change alters is its reach group (`reachGroupFor`).
+   * read. What a route edit alters is its reach (`editReachFor`).
    */
   governedUseCases: Map<string, string[]>;
 }
@@ -1796,6 +1796,71 @@ const assertsOverride = (
 };
 
 /**
+ * [#307] Whether the staged route changes onto `selector` write an explicit
+ * capability list there: an override (SetRoleOverrides is selector-wide), or
+ * a join that asserts one at its place in stable-id order (`assertsOverride`),
+ * judged on the group's coalesced exposure. The same rule as `selectorGroups`'
+ * `gates` (keep the two in step). Only then do the roles already on the
+ * selector take the group's exposure: a join the backend sends without a list
+ * leaves them deriving their own.
+ */
+const writesSelectorCaps = (
+  base: DraftBaseProjection,
+  changes: readonly Change[],
+  selector: { readonly provider: string; readonly model: string }
+): boolean => {
+  const authority = selectorAuthority(
+    { provider: selector.provider, modelName: selector.model },
+    changes
+  );
+  if (authority === undefined) return false;
+  if (overridesSelector(base, changes, selector)) return true;
+  const staged = stagedRoutes(changes);
+  return changes.some(
+    (change) =>
+      change.kind === 'route' &&
+      change.modelFacts.provider === selector.provider &&
+      change.modelFacts.model === selector.model &&
+      assertsOverride(base, staged, { ...change, exposedCaps: authority.exposedCaps })
+  );
+};
+
+/** What a role on a selector shows: its exposure and its Think mode. */
+interface RoleValues {
+  exposed: readonly CapabilityName[];
+  think: ThinkMode;
+}
+
+/**
+ * [#307] What each role on `selector` shows once `changes` are applied, as
+ * projected configuration: the group's exposure when the group writes a list
+ * there (`writesSelectorCaps`), its Think when it overrides the selector
+ * (only SetRoleOverrides writes Think beyond the joining role), else the
+ * role's applied values.
+ */
+const selectorValuesOf = (
+  base: DraftBaseProjection,
+  changes: readonly Change[],
+  selector: { readonly provider: string; readonly model: string }
+): ((role: ModelProjection) => RoleValues) => {
+  const authority = selectorAuthority(
+    { provider: selector.provider, modelName: selector.model },
+    changes
+  );
+  const writes = writesSelectorCaps(base, changes, selector);
+  const thinks = authority !== undefined && overridesSelector(base, changes, selector);
+  return (role) => ({
+    exposed: writes && authority !== undefined ? authority.exposedCaps : role.exposedCapabilities,
+    think: thinks && authority !== undefined ? authority.thinkMode : role.thinkMode,
+  });
+};
+
+const appliedValues = (role: ModelProjection): RoleValues => ({
+  exposed: role.exposedCapabilities,
+  think: role.thinkMode,
+});
+
+/**
  * One staged change rebuilt from its selector's authority. Written out member
  * by member rather than spread, so a stale `confirmUnknownUseCases` from an
  * earlier staging cannot survive into the request.
@@ -1861,7 +1926,8 @@ export const sameCaps = (a: readonly CapabilityName[], b: readonly CapabilityNam
 function reachGroupsOf(
   base: DraftBaseProjection,
   changes: readonly Change[],
-  groups: ReadonlyMap<string, SelectorGroup>
+  groups: ReadonlyMap<string, SelectorGroup>,
+  before: (role: ModelProjection) => RoleValues = appliedValues
 ): ReachGroup[] {
   const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
   const modelOf = new Map(base.models.map((model) => [model.role, model]));
@@ -1879,32 +1945,35 @@ function reachGroupsOf(
     const { provider, model } = authority.modelFacts;
     const onSelector = (candidate: ModelProjection | undefined): boolean =>
       candidate !== undefined && candidate.provider === provider && candidate.modelName === model;
-    const override = overridesSelector(base, group.changes, { provider, model });
     const rolesOn = base.models.filter(
       (candidate) => onSelector(candidate) && retargetOf(base, staged, candidate) === undefined
     );
+    // [#307] A role changes when what it shows after the draft differs from
+    // `before` (the applied values, or for the editor the rest of the draft):
+    // its exposure only when the group writes a list onto the selector, its
+    // Think only through an override.
+    const after = selectorValuesOf(base, changes, { provider, model });
     const changed = rolesOn.filter(
       (role) =>
-        !sameCaps(role.exposedCapabilities, authority.exposedCaps) ||
-        (override && role.thinkMode !== authority.thinkMode)
+        !sameCaps(before(role).exposed, after(role).exposed) ||
+        before(role).think !== after(role).think
     );
     /** What changes for THESE roles: caps as a union, Think when any of them differs. */
     const deltaOver = (roles: readonly ModelProjection[]): ReachDelta => {
       const added = new Set<CapabilityName>();
       const removed = new Set<CapabilityName>();
       for (const role of roles) {
-        for (const cap of authority.exposedCaps)
-          if (!role.exposedCapabilities.includes(cap)) added.add(cap);
-        for (const cap of role.exposedCapabilities)
-          if (!authority.exposedCaps.includes(cap)) removed.add(cap);
+        const was = before(role).exposed;
+        const now = after(role).exposed;
+        for (const cap of now) if (!was.includes(cap)) added.add(cap);
+        for (const cap of was) if (!now.includes(cap)) removed.add(cap);
       }
       return {
         addedCaps: canonicalCapList([...added]),
         removedCaps: canonicalCapList([...removed]),
-        think:
-          override && roles.some((role) => role.thinkMode !== authority.thinkMode)
-            ? authority.thinkMode
-            : null,
+        think: roles.some((role) => before(role).think !== after(role).think)
+          ? authority.thinkMode
+          : null,
       };
     };
     const delta = deltaOver(changed);
@@ -2228,7 +2297,7 @@ export function affectedUseCases(
  * Every use case `change` would GOVERN, the changed one first, then the rest
  * sorted: `projectDraft`'s `governedUseCases` for its selector group. The
  * eligibility set — what the picker's floors and the exposure checklist's
- * required caps read. Not what the change alters: that is `reachGroupFor`.
+ * required caps read. Not what the change alters: that is `editReachFor`.
  */
 export function governedUseCasesOf(
   base: DraftBaseProjection,
@@ -2241,18 +2310,58 @@ export function governedUseCasesOf(
   );
 }
 
+/** What staging one route change alters on its selector (`editReachFor`). */
+export interface EditReachGroup {
+  /**
+   * The selector's reach group with the change staged, its roles compared with
+   * what the rest of the draft already gives them: `sameModel` and `fallback`
+   * hold the routes whose own values or fallback change, `affectedRoles` the
+   * roles that route nothing. `edited` still lists every route staged onto it.
+   */
+  group: ReachGroup;
+  /** Whether the other routes staged onto the selector change: Done gives them this change's values. */
+  peersChange: boolean;
+}
+
 /**
- * [#307] What `change` would ALTER: the reach group of its selector once it is
- * staged over the draft — the routes, fallback routes and defined roles whose
- * projected values change, the same data the row markers read. Narrower than
- * the governed set, which also gates routes the change leaves as they are.
+ * [#307] What staging `change` over `draft` alters on its selector, measured
+ * from the draft as it stands WITHOUT it: Done replaces this route's own
+ * staging and makes it the selector group's latest change, whose values the
+ * group takes. The same reach the row markers read (`reachGroupsOf`), with the
+ * rest of the draft rather than the applied document as the baseline, so a
+ * route another staged change already moved is named only if this one moves
+ * it again, and one this change moves back is named too. Undefined only for a
+ * change the probe does not group (never for a route change).
  */
-export const reachGroupFor = (
+export function editReachFor(
   base: DraftBaseProjection,
   draft: Draft,
   change: RouteChange
-): ReachGroup | undefined =>
-  probeProjection(base, draft, change).routeReach.get(change.useCase)?.group;
+): EditReachGroup | undefined {
+  const selector = { provider: change.modelFacts.provider, model: change.modelFacts.model };
+  const id = changeStableID(change);
+  const others = draft.changes.filter((staged) => changeStableID(staged) !== id);
+  const probe = stageChange(draft, change, new KeyVault(new Map())).changes;
+  const key = selectorKey(selector.provider, selector.model);
+  const selectorGroup = selectorGroups(base, probe).get(key);
+  if (selectorGroup === undefined) return undefined;
+  const [group] = reachGroupsOf(
+    base,
+    probe,
+    new Map([[key, selectorGroup]]),
+    selectorValuesOf(base, others, selector)
+  );
+  const held = selectorAuthority(
+    { provider: selector.provider, modelName: selector.model },
+    others
+  );
+  return {
+    group,
+    peersChange:
+      held !== undefined &&
+      (!sameCaps(held.exposedCaps, change.exposedCaps) || held.thinkMode !== change.thinkMode),
+  };
+}
 
 /**
  * The change the editor would stage for a defined model before any exposure

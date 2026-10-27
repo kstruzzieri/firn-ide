@@ -12,7 +12,7 @@ import { CAPABILITY_NAMES, type CapabilityName, type ModelProjection } from '../
 import {
   cleanDraft,
   KeyVault,
-  reachGroupFor,
+  editReachFor,
   stageChange,
   type DraftBaseProjection,
   type RouteChange,
@@ -311,18 +311,29 @@ describe('card helpers', () => {
       thinkMode: '',
       confirmUnknown: false,
     });
-    const draft = stageChange(
-      cleanDraft('0'.repeat(64)),
-      join('analysis'),
-      new KeyVault(new Map())
-    );
-    expect(editReachOf(reachGroupFor(base, draft, join('chat')), 'chat')).toEqual({
+    const clean = cleanDraft('0'.repeat(64));
+    // Alone on gpt-5, chat's join writes its list to both roles.
+    expect(editReachOf(editReachFor(base, clean, join('chat')), 'chat')).toEqual({
+      model: 'gpt-5',
+      uses: ['agent'],
+      fallsBack: ['planning'],
+      definedAs: ['spare-role'],
+    });
+    // analysis staged onto gpt-5 first with another exposure: chat's values
+    // become the group's, so analysis changes with it and is named.
+    const peer = { ...join('analysis'), exposedCaps: ['chat', 'stream'] as CapabilityName[] };
+    const draft = stageChange(clean, peer, new KeyVault(new Map()));
+    expect(editReachOf(editReachFor(base, draft, join('chat')), 'chat')).toEqual({
+      model: 'gpt-5',
       uses: ['agent', 'analysis'],
       fallsBack: ['planning'],
       definedAs: ['spare-role'],
     });
+    // The same values as the peer's change nothing the draft does not already show.
+    const same = stageChange(clean, join('analysis'), new KeyVault(new Map()));
+    expect(editReachOf(editReachFor(base, same, join('chat')), 'chat')).toBeUndefined();
     // Nothing projected, nothing reached.
-    expect(editReachOf(undefined, 'chat')).toEqual({ uses: [], fallsBack: [], definedAs: [] });
+    expect(editReachOf(undefined, 'chat')).toBeUndefined();
   });
   it('abilitiesLine joins with spaces and never reads empty', () => {
     expect(abilitiesLine(['tool_call', 'chat', 'stream'])).toBe('tool_call chat stream');

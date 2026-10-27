@@ -853,7 +853,7 @@ describe('RouteEditor', () => {
     expect(screen.queryByText(/belong to/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByLabelText(/^generate/));
     expect(screen.getByText(/belong to/)).toHaveTextContent(
-      'agent also uses gpt-5. The abilities above belong to the model, so they change there too; Think applies to this route only.'
+      'agent also uses gpt-5. The abilities above belong to the model, so the change reaches them too; Think applies to this route only.'
     );
   });
 
@@ -891,11 +891,13 @@ describe('RouteEditor', () => {
     const { onStage } = renderRouting({ routes, models, draft: draftWith(override) });
     await openRoute('chat');
     await pickModel('gpt-5');
-    expect(screen.getByText(/belong to/)).toHaveTextContent(
-      'agent also uses gpt-5. The abilities and Think mode above belong to the model, so they change there too.'
-    );
-
+    // [#307] The pick arrives with the override's values, so agent is left as
+    // the draft already shows it; a Think of chat's own reaches agent too.
+    expect(screen.queryByText(/belong to/)).not.toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
+    expect(screen.getByText(/belong to/)).toHaveTextContent(
+      'agent also uses gpt-5. The abilities and Think mode above belong to the model, so the change reaches them too.'
+    );
     await stage();
     const staged = onStage.mock.calls[0][0][0];
     // What Apply sends: the join is the group's latest change, so its Think is
@@ -951,7 +953,7 @@ describe('RouteEditor', () => {
     // [#307] The reach sentence waits for a change to the model's values.
     await userEvent.click(screen.getByLabelText(/^generate/));
     expect(screen.getByText(/belong to/)).toHaveTextContent(
-      'agent also uses gpt-5-mini. The abilities above belong to the model, so they change there too; Think applies to this route only.'
+      'agent also uses gpt-5-mini. The abilities above belong to the model, so the change reaches them too; Think applies to this route only.'
     );
   });
 
@@ -993,7 +995,7 @@ describe('RouteEditor', () => {
     await userEvent.click(screen.getByLabelText(/^generate/));
     // Two peers: the clause lists them after this route, one conjunction.
     expect(screen.getByText(/belong to/)).toHaveTextContent(
-      'analysis, planning and summarize also use gpt-5. The abilities above belong to the model, so they change there too; Think applies to this route, analysis and planning.'
+      'analysis, planning and summarize also use gpt-5. The abilities above belong to the model, so the change reaches them too; Think applies to this route, analysis and planning.'
     );
 
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
@@ -3372,8 +3374,8 @@ describe('RouteEditor', () => {
         { useCase: 'summarize', role: 'chat-role' },
         { useCase: 'agent', role: 'agent-role' },
       ],
-      // agent is already on gpt-5: joining that selector governs agent, so the
-      // reach sentence joins the notice; the fork of chat-role never reaches summarize.
+      // agent is already on gpt-5: a change to that model's values reaches agent,
+      // so the reach sentence joins the notice; the fork of chat-role never reaches summarize.
       models: [shared, { ...other, role: 'agent-role', routedUseCases: ['agent'] }],
     });
     await openRoute('chat');
@@ -3398,7 +3400,7 @@ describe('RouteEditor', () => {
     await userEvent.click(screen.getByLabelText(/^thinking/));
     expect(screen.getByText(/run on/).closest('[data-tone]')).toBe(merged);
     expect(within(merged).getByText(/belong to/)).toHaveTextContent(
-      'summarize also uses gpt-5-mini. The abilities and Think mode above belong to the model, so they change there too.'
+      'summarize also uses gpt-5-mini. The abilities and Think mode above belong to the model, so the change reaches them too.'
     );
     expect(merged.querySelectorAll('p')).toHaveLength(2);
     await userEvent.click(screen.getByLabelText(/^thinking/));
@@ -3411,7 +3413,7 @@ describe('RouteEditor', () => {
     expect(merged.querySelectorAll('p')).toHaveLength(1);
     await userEvent.click(screen.getByLabelText(/^generate/));
     expect(within(merged).getByText(/belong to/)).toHaveTextContent(
-      'agent also uses gpt-5. The abilities above belong to the model, so they change there too; Think applies to this route only.'
+      'agent also uses gpt-5. The abilities above belong to the model, so the change reaches them too; Think applies to this route only.'
     );
     expect(merged.querySelectorAll('p')).toHaveLength(2);
     expect(screen.getByText(/Firn has/).closest('div')).toHaveAttribute('data-tone', 'caution');
@@ -4449,8 +4451,9 @@ describe('RouteEditor reach sentence (#307, #349)', () => {
     capabilityFacts: { caps: list, knownCaps: [...CAPABILITY_NAMES] },
     exposedCapabilities: list,
   });
-  /** The caution notice's second paragraph, the one about the chosen model. */
-  const reachSentence = () => screen.queryByText(/belong to/);
+  /** The open editor's sentence about the chosen model (a routing row may say "belong to" too). */
+  const reachSentence = (useCase: string) =>
+    within(screen.getByRole('group', { name: `Route ${useCase}` })).queryByText(/belong to/);
 
   it('says the routes reaching the chosen model through a fallback fall back to it, by name', async () => {
     // The #307 reproduction: five use cases run on cloud-pro, whose chain
@@ -4484,18 +4487,19 @@ describe('RouteEditor reach sentence (#307, #349)', () => {
       'analysis, agent, chat, completion and reasoning run on deepseek-v4-pro. Picking a different model here changes analysis only; agent, chat, completion and reasoning keep deepseek-v4-pro.'
     );
     // Picking the model changes nothing on it, so nothing else is reached.
-    expect(reachSentence()).not.toBeInTheDocument();
+    expect(reachSentence('analysis')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText(/^tool_call/));
-    expect(reachSentence()).toHaveTextContent(
-      'agent, chat, completion and reasoning fall back to mimo-v2.5. The abilities above belong to the model, so they change there too; Think applies to this route only.'
+    expect(reachSentence('analysis')).toHaveTextContent(
+      'agent, chat, completion and reasoning fall back to mimo-v2.5. The abilities above belong to the model, so the change reaches them too; Think applies to this route only.'
     );
   });
 
-  it('names who uses the chosen model and who falls back to it, and only once something changes for them', async () => {
-    // agent runs on gpt-5 and planning reaches it through planning-role's
-    // fallback. chat joining gpt-5 with the exposure agent already has is
-    // checked against both floors but changes neither route.
+  it('names who uses the chosen model, who falls back to it and what is defined on it, once something changes for them', async () => {
+    // agent runs on gpt-5, planning reaches it through planning-role's
+    // fallback, and spare-role is defined on it routing nothing. chat joining
+    // gpt-5 with the exposure agent already has is checked against both
+    // floors but changes neither route nor the role.
     renderRouting({
       routes: [
         { useCase: 'chat', role: 'chat-role' },
@@ -4511,6 +4515,12 @@ describe('RouteEditor reach sentence (#307, #349)', () => {
           routedUseCases: ['agent', 'planning'],
         }),
         model({
+          role: 'spare-role',
+          modelName: 'gpt-5',
+          ...caps(['chat', 'stream', 'tool_call', 'thinking']),
+          routedUseCases: [],
+        }),
+        model({
           role: 'planning-role',
           modelName: 'gpt-4',
           ...caps(['chat', 'stream', 'tool_call']),
@@ -4521,11 +4531,33 @@ describe('RouteEditor reach sentence (#307, #349)', () => {
     });
     await openRoute('chat');
     await pickModel('gpt-5');
-    expect(reachSentence()).not.toBeInTheDocument();
+    expect(reachSentence('chat')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText(/^generate/));
-    expect(reachSentence()).toHaveTextContent(
-      'agent also uses gpt-5, and planning falls back to it. The abilities above belong to the model, so they change there too; Think applies to this route only.'
+    expect(reachSentence('chat')).toHaveTextContent(
+      'agent also uses gpt-5, planning falls back to it, and it is defined as spare-role. The abilities above belong to the model, so the change reaches them too; Think applies to this route only.'
+    );
+  });
+
+  it('keeps Think on this route when a join reaches only a role defined on the model', async () => {
+    // spare-role routes nothing. A join writes Think to its own role alone,
+    // so the sentence must not say Think changes for spare-role.
+    renderRouting({
+      models: [
+        model(),
+        model({
+          role: 'spare-role',
+          modelName: 'gpt-5',
+          ...caps(['chat', 'stream', 'tool_call', 'thinking']),
+          routedUseCases: [],
+        }),
+      ],
+    });
+    await openRoute('chat');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText(/^generate/));
+    expect(reachSentence('chat')).toHaveTextContent(
+      'gpt-5 is also defined as spare-role. The abilities above belong to the model, so the change reaches them too; Think applies to this route only.'
     );
   });
 
@@ -4548,8 +4580,8 @@ describe('RouteEditor reach sentence (#307, #349)', () => {
     expect(screen.queryByText(/defined as/)).not.toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
-    expect(reachSentence()).toHaveTextContent(
-      'gemma4:31b is also defined as agent and judge. The abilities and Think mode above belong to the model, so they change there too.'
+    expect(reachSentence('chat')).toHaveTextContent(
+      'gemma4:31b is also defined as agent and judge. The abilities and Think mode above belong to the model, so the change reaches them too.'
     );
 
     // The roles named are the ones the Defined models list marks.

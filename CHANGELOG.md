@@ -36,11 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   may not mention them. When every staged file is withheld, no request is sent
   and the draft in the message box is kept. (#384)
 - The route editor in Golem Configuration names the defined models an edit
-  rewrites. A change to a model's capabilities or Think mode reaches every
-  role on that model, including roles no use case routes to, and those roles
-  showed as Modified in the Defined models list only after Done. The editor's
-  notice now names them beforehand ("gemma4:31b is also defined as agent and
-  judge"), the same roles the list marks. (#349)
+  rewrites. Changing the capabilities or Think mode of the model a route
+  already uses reaches every role defined on that model, including roles no
+  use case routes to, and those roles showed as Modified in the Defined models
+  list only after Done. The editor's notice now names them beforehand
+  ("gemma4:31b is also defined as critic and judge"), the same roles the list
+  marks. (#349)
 
 ### Fixed
 
@@ -100,9 +101,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   route Golem checks the edit against, so picking a model with the
   capabilities its routes already had said its abilities change for them too,
   and a route that keeps its own model and only falls back to the chosen one
-  read as both keeping and changing the model. The notice now appears once the
-  edit changes something for another route and lists the routes the routing
-  rows mark, which already marked only routes whose values change. (#307)
+  read as both keeping and changing the model. That sentence now appears only
+  once the edit changes something for another route or role, measured from
+  what the draft already shows, so a route already staged onto the model with
+  the same values is not named again. Moving a route onto a model with the
+  capabilities its type implies, which writes no capability list there, also
+  no longer marks that model's other routes and defined roles Modified when
+  they derive a different set from their own type. (#307)
 - The file tree and Workspace Views now place a path under the project folder
   in that folder's own path syntax: a backslash separates folders only in a
   Windows project, and a drive root keeps its slash. With a Windows drive root
