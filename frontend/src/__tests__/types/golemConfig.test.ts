@@ -2712,7 +2712,12 @@ describe('reach of a route edit, not its gate (#307)', () => {
         { useCase: 'planning', role: 'planning-role' },
       ],
       models: [
-        onGpt5({ role: 'agent-role', capabilityOverride: OWN, routedUseCases: ['agent'] }),
+        onGpt5({
+          role: 'agent-role',
+          effectiveCapabilities: OWN,
+          capabilityOverride: OWN,
+          routedUseCases: ['agent'],
+        }),
         modelRow(),
         onGpt5({ role: 'planning-role', routedUseCases: ['planning'] }),
       ],
@@ -2738,6 +2743,50 @@ describe('reach of a route edit, not its gate (#307)', () => {
     expect(
       projectDraft(leaving, stage([{ ...join, exposedCaps: OWN }])).routeRows.get('planning')
     ).toBeUndefined();
+  });
+
+  it('derives a role retyped in place from its new type once the model has no list left', () => {
+    // Codex round 3: analysis-role (dense) and summary-role (embedding) both
+    // hold embed on shared-model. analysis is retyped in place to embedding
+    // without a list (the other holder still holds embed), then summarize
+    // leaves. After Apply analysis-role derives embed from its NEW type: no
+    // capability changes on the model.
+    const EMBED: CapabilityName[] = ['embed'];
+    const holder = (role: string, type: ModelType, useCase: string) =>
+      modelRow({
+        role,
+        modelName: 'shared-model',
+        type,
+        effectiveCapabilities: EMBED,
+        capabilityFacts: { caps: EMBED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: EMBED,
+        capabilityOverride: EMBED,
+        routedUseCases: [useCase],
+      });
+    const twoHolders: DraftBaseProjection = {
+      routes: [
+        { useCase: 'analysis', role: 'analysis-role' },
+        { useCase: 'summarize', role: 'summary-role' },
+      ],
+      models: [
+        holder('analysis-role', 'dense', 'analysis'),
+        holder('summary-role', 'embedding', 'summarize'),
+      ],
+    };
+    const retype = routeChange({
+      useCase: 'analysis',
+      modelFacts: { provider: 'hosted', model: 'shared-model', type: 'embedding' },
+      capabilityFacts: { caps: EMBED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: EMBED,
+    });
+    const departure = routeChange({
+      useCase: 'summarize',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+    });
+    const group = projectDraft(twoHolders, stage([retype, departure])).reachGroups.find(
+      (candidate) => candidate.model === 'shared-model'
+    );
+    expect(group).toMatchObject({ addedCaps: [], removedCaps: [], sameModel: [] });
   });
 
   it('measures the edit from the rest of the draft, not from the applied document', () => {

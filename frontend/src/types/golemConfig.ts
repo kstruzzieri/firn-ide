@@ -1844,7 +1844,9 @@ const AFTER_EVERY_CHANGE = '\u{10FFFF}';
  * role's applied values — except that once the route plans have taken the
  * selector's last explicit list away (its only holder retargeted off it), a
  * role derives its own set from its type, as the backend's projection then
- * resolves it.
+ * resolves it: the staged type for a role retargeted in place on the
+ * selector (it routes only that use case and nothing falls back to it, so
+ * SetRoleModel rewrites it), its applied type otherwise.
  */
 const selectorValuesOf = (
   base: DraftBaseProjection,
@@ -1857,6 +1859,17 @@ const selectorValuesOf = (
   );
   const writes = writesSelectorCaps(base, changes, selector);
   const thinks = authority !== undefined && overridesSelector(base, changes, selector);
+  const staged = stagedRoutes(changes);
+  const typeOf = (role: ModelProjection): ModelType => {
+    if (role.routedUseCases.length > 1 || isFallbackTarget(base, role.role)) return role.type;
+    const useCase = base.routes.find((route) => route.role === role.role)?.useCase;
+    const change = useCase === undefined ? undefined : staged.get(useCase);
+    return change !== undefined &&
+      change.modelFacts.provider === selector.provider &&
+      change.modelFacts.model === selector.model
+      ? change.modelFacts.type
+      : role.type;
+  };
   const orphaned =
     !writes &&
     base.models.some(
@@ -1865,19 +1878,14 @@ const selectorValuesOf = (
         model.modelName === selector.model &&
         model.capabilityOverride !== undefined
     ) &&
-    listHoldersAt(
-      base,
-      stagedRoutes(changes),
-      selector,
-      authority?.exposedCaps ?? [],
-      AFTER_EVERY_CHANGE
-    ).size === 0;
+    listHoldersAt(base, staged, selector, authority?.exposedCaps ?? [], AFTER_EVERY_CHANGE).size ===
+      0;
   return (role) => ({
     exposed:
       writes && authority !== undefined
         ? authority.exposedCaps
         : orphaned
-          ? TYPE_DERIVED_CAPABILITIES[role.type]
+          ? TYPE_DERIVED_CAPABILITIES[typeOf(role)]
           : role.exposedCapabilities,
     think: thinks && authority !== undefined ? authority.thinkMode : role.thinkMode,
   });
