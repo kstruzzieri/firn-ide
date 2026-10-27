@@ -1886,6 +1886,98 @@ describe('RouteEditor', () => {
     expect(onStage).not.toHaveBeenCalled();
   });
 
+  it('keeps the edited owner lock when an earlier join meets it before this rewrite', async () => {
+    // chat-role is the sole owner of set A on gpt-5 and routes chat alone.
+    // agent is already staged onto gpt-5 with A (route:agent). Editing chat as
+    // a same-selector dense -> moe retarget that adds thinking rewrites the
+    // owner — but only at route:chat; the agent join runs first with the
+    // coalesced widened set and meets A. The edited role's own exemption
+    // must respect the group's order too.
+    const agentJoin: RouteChange = {
+      kind: 'route',
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: { caps: OWNED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: OWNED,
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [
+        model({ role: 'agent-role', modelName: 'gpt-5-mini', routedUseCases: ['agent'] }),
+        gpt5Owner({ role: 'chat-role', routedUseCases: ['chat'] }),
+      ],
+      draft: draftWith(agentJoin),
+    });
+    await openRoute('chat');
+    await declareModel('gpt-5-new');
+    await userEvent.clear(screen.getByLabelText('Model name'));
+    await userEvent.type(screen.getByLabelText('Model name'), 'gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'moe');
+    await userEvent.click(
+      within(
+        screen.getByRole('group', { name: 'Capabilities this model supports' })
+      ).getByLabelText('thinking')
+    );
+    expect(screen.getByText(/already exposes/)).toHaveTextContent(
+      'role chat-role already exposes chat, stream, tool_call on this model; a route joining it cannot expose a different set.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it('keeps the edited owner Think when an earlier join meets it before this rewrite', async () => {
+    // The Think half of the same case: chat-role holds Think auto with
+    // thinking exposed; agent is staged onto gpt-5 with the same values.
+    // Rewriting chat on the same selector to Think always lands after the
+    // agent join, which meets auto.
+    const withThinking: CapabilityName[] = [...OWNED, 'thinking'];
+    const agentJoin: RouteChange = {
+      kind: 'route',
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: { caps: withThinking, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: withThinking,
+      thinkMode: 'auto',
+      confirmUnknown: false,
+    };
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [
+        model({ role: 'agent-role', modelName: 'gpt-5-mini', routedUseCases: ['agent'] }),
+        gpt5Owner({
+          role: 'chat-role',
+          routedUseCases: ['chat'],
+          effectiveCapabilities: withThinking,
+          capabilityFacts: { caps: withThinking, knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: withThinking,
+          capabilityOverride: withThinking,
+          thinkMode: 'auto',
+        }),
+      ],
+      draft: draftWith(agentJoin),
+    });
+    await openRoute('chat');
+    await declareModel('gpt-5-new');
+    await userEvent.clear(screen.getByLabelText('Model name'));
+    await userEvent.type(screen.getByLabelText('Model name'), 'gpt-5');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'moe');
+    expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
+    await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
+    expect(screen.getByText(/already sets Think/)).toHaveTextContent(
+      'role chat-role already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
   it('unlocks the selector when its only owner leaves, though a deriving sibling stays', async () => {
     // The owner (agent-role) is retargeted away before this join; spare-role
     // stays but only DERIVES its set — its exposure still shows the folded

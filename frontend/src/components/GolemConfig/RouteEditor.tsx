@@ -492,7 +492,9 @@ export function RouteEditor({
    * departure sorting after the join is a transient conflict the backend
    * still refuses — named by the routes it still serves, or as
    * `role <name>` when none is left to name (an unrouted role never leaves).
-   * The edited role counts only when shared (this route is leaving it).
+   * The edited role counts only when shared (this route is leaving it), or
+   * when an earlier mutation of the group meets its lock before this plan
+   * rewrites it.
    * A sibling's own staged override lands in the overrides phase, after every
    * join, so its APPLIED Think is what this join meets — even while the row
    * already paints the staged one.
@@ -566,9 +568,12 @@ export function RouteEditor({
       const leaving = leavingRoutes(base, staged, sibling);
       // The route taking the sibling's ONLY use case elsewhere, if there is one.
       const departure = retargetOf(base, staged, sibling);
+      // The edited role's own lock is rewritten by THIS plan: gone for it when
+      // nothing else shares the role — and only if no other mutation of the
+      // group runs before it and meets the old lock.
       const gone =
         sibling.role === role
-          ? sharedRole.length === 0
+          ? sharedRole.length === 0 && runsFirst(joinId)
           : departure !== undefined && runsFirst(changeStableID(departure));
       if (gone) return null;
       const names = sibling.routedUseCases.filter(
