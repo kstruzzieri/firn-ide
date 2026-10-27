@@ -728,22 +728,22 @@ func TestGenerateStaged_ChecksRenamedDestinationAgainstProtectedSources(t *testi
 	assertWithheld(t, request, []string{"renamed-secret"}, []string{"config.txt"})
 }
 
-// A deleted protected file is no index entry, so the copy check never sees
-// it; the main listing covers it instead, because git's rename pass pairs
-// every new file with a deleted source before its copy pass weighs a closer
-// modified one. This pins that: a second copy of a renamed .env is withheld
-// even though an allowed modified file resembles it more.
+// A deleted protected file is no index entry, so the copy check takes it from
+// the listing. Here an exact rename consumes the deleted .env, so git's copy
+// pass pairs a second, edited copy with a closer allowed file; the copy check
+// still pairs it with .env and withholds it.
 func TestGenerateStaged_ChecksNewFileAgainstDeletedProtectedSource(t *testing.T) {
 	requireGit(t)
 	dir := initRepo(t)
 	lines := "a=1\nb=2\nc=3\nd=4\ne=5\nf=6\ng=7\nh=8\n"
+	more := "P1=1\nP2=2\nP3=3\nP4=4\nP5=5\nP6=6\n"
 	writeFile(t, dir, ".env", lines+"TOKEN=deleted-secret\n")
-	writeFile(t, dir, "template.txt", lines+"PLACE=1\nQ=2\n")
+	writeFile(t, dir, "template.txt", lines+more+"PLACE=1\nQ=2\n")
 	gitCmd(t, dir, "add", ".")
 	gitCmd(t, dir, "commit", "-m", "env and template")
 	gitCmd(t, dir, "mv", ".env", "config.txt")
-	writeFile(t, dir, "template.txt", lines+"PLACE=1\nQ=3\n")
-	writeFile(t, dir, "second.txt", lines+"PLACE=1\nQ=2\nTOKEN=deleted-secret\n")
+	writeFile(t, dir, "template.txt", lines+more+"PLACE=1\nQ=3\n")
+	writeFile(t, dir, "second.txt", lines+more+"PLACE=1\nQ=2\nTOKEN=deleted-secret\n")
 	gitCmd(t, dir, "add", "template.txt", "second.txt")
 	provider := gittest.Start(t, "chore: rework config", nil)
 	gen := NewMessageGenerator()
@@ -758,4 +758,49 @@ func TestGenerateStaged_ChecksNewFileAgainstDeletedProtectedSource(t *testing.T)
 		t.Errorf("Withheld = %q, want .env -> second.txt", result.Withheld)
 	}
 	assertWithheld(t, readRequest(t, provider), []string{"deleted-secret"}, []string{"second.txt", "config.txt"})
+}
+
+// The recheck asks the policy afresh: an unmodified file that becomes
+// protected between the two listings turns a staged copy of it into a
+// withheld copy, and nothing is sent.
+func TestGenerateStaged_RecheckSeesNewlyProtectedCopySource(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "copy.md", "hello\n") // an exact copy of the committed README.md
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "copy.md", "main.go")
+	noRuntime(t)
+	// Both listings ask the same questions, so a full run (which then fails
+	// at the missing runtime) is counted and README.md turns protected from
+	// the second listing on.
+	var calls atomic.Int32
+	gen := NewMessageGenerator()
+	source := func(protectedAfter int32) func(string) (StagedScope, error) {
+		return func(string) (StagedScope, error) {
+			return StagedScope{
+				Guard: func(path string, _ bool) error {
+					if path == "README.md" && calls.Load() > protectedAfter {
+						return errors.New("protected")
+					}
+					return nil
+				},
+				Protected: func(path string) bool {
+					return calls.Add(1) > protectedAfter && path == "README.md"
+				},
+			}, nil
+		}
+	}
+	gen.SetScopeSource(source(1 << 30))
+	if _, err := gen.GenerateStaged(ctx(), NewService(), dir); err == nil || errors.Is(err, errStagedChangesMoved) {
+		t.Fatalf("counting run error = %v, want the missing-runtime failure", err)
+	}
+	firstListing := calls.Load() / 2
+	calls.Store(0)
+	gen.SetScopeSource(source(firstListing))
+
+	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if !errors.Is(err, errStagedChangesMoved) {
+		t.Fatalf("GenerateStaged() error = %v, want errStagedChangesMoved", err)
+	}
 }

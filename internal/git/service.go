@@ -343,7 +343,7 @@ func (s *Service) StagedChanges(ctx context.Context, dir string, copySource func
 	return s.markCopiesFrom(ctx, root, changes, copySource)
 }
 
-// markCopiesFrom re-pairs each staged new file with the unmodified index
+// markCopiesFrom re-pairs each staged new file with the unmodified or deleted
 // file copySource reports that git finds it a copy of, so the caller sees the
 // protected side; a new file the main listing paired with an allowed file is
 // checked too. git considers unmodified files as sources only under
@@ -367,8 +367,19 @@ func (s *Service) markCopiesFrom(ctx context.Context, root string, changes []Sta
 	if err != nil {
 		return nil, err
 	}
+	// A deleted file is no index entry: take deleted protected paths from the
+	// listing, where a rename may already have consumed one as its source.
+	paths := strings.Split(index, "\x00")
+	for _, change := range changes {
+		switch change.Status {
+		case 'D':
+			paths = append(paths, change.Path)
+		case 'R':
+			paths = append(paths, change.OldPath)
+		}
+	}
 	var sources []string
-	for _, path := range strings.Split(index, "\x00") {
+	for _, path := range paths {
 		if path != "" && copySource(path) {
 			sources = append(sources, ":(top,literal)"+path)
 		}

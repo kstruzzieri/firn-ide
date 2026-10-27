@@ -142,10 +142,20 @@ func TestStagedScope_MapsGitTopLevelOntoBoundRoot(t *testing.T) {
 		}
 		assertAllowed(t, scope.Guard, "app/main.go")
 		assertDenied(t, scope.Guard, "app/private/data.csv", "other/main.go", "README.md")
-		// Outside the open project is withheld but protects no content, so it
-		// is no copy source.
-		if !scope.Protected("app/private/data.csv") || scope.Protected("other/main.go") || scope.Protected("README.md") {
-			t.Error("Protected must hold for a protected path inside the project only")
+		// Outside the open project is withheld, but only a path the immutable
+		// floor names is protected there, and so a copy source; the
+		// manifest's rules describe the project alone.
+		for path, want := range map[string]bool{
+			"app/private/data.csv": true,
+			".env":                 true,
+			"certs/server.key":     true,
+			"other/main.go":        false,
+			"README.md":            false,
+			"private/data.csv":     false,
+		} {
+			if got := scope.Protected(path); got != want {
+				t.Errorf("Protected(%q) = %v, want %v", path, got, want)
+			}
 		}
 	})
 	t.Run("bound above the top level", func(t *testing.T) {

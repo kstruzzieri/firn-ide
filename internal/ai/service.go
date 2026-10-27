@@ -349,8 +349,8 @@ func (s *Service) DestinationPolicy() provider.DestinationPolicy {
 type StagedScope struct {
 	// Guard denies a path that may not reach the model.
 	Guard agenttools.ScopeGuard
-	// Protected reports a path inside the open project that the policy
-	// denies, as opposed to one outside it.
+	// Protected reports a path whose content the policy protects: inside the
+	// open project the full policy, outside it the floor alone.
 	Protected func(path string) bool
 	// ConfigPath is the go-llm config source Guard protects.
 	ConfigPath string
@@ -408,9 +408,13 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 			}
 			return guard(bound, write)
 		},
+		// Outside the bound root only the floor applies: manifest rules
+		// describe the project alone.
 		Protected: func(rel string) bool {
-			bound, ok := toBound(rel)
-			return ok && guard(bound, false) != nil
+			if bound, ok := toBound(rel); ok {
+				return guard(bound, false) != nil
+			}
+			return floorDenies(rel)
 		},
 		ConfigPath: configPath,
 	}, nil

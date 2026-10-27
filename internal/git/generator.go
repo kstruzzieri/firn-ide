@@ -54,7 +54,8 @@ type StagedScope struct {
 	Guard agenttools.ScopeGuard
 	// Protected reports a path whose content the policy protects, as opposed
 	// to one Guard denies only for lying outside the open project. Unmodified
-	// protected files are checked as copy sources; nil checks none.
+	// and deleted protected files are checked as copy sources; nil checks
+	// none.
 	Protected func(path string) bool
 	// ConfigPath is the go-llm config source Guard protects, which the runtime
 	// then loads; "" lets go-llm discover its own.
@@ -98,8 +99,7 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 		}
 	}
 	guard, configPath := scope.Guard, scope.ConfigPath
-	protected := memoize(scope.Protected)
-	changes, err := svc.StagedChanges(ctx, dir, protected)
+	changes, err := svc.StagedChanges(ctx, dir, memoize(scope.Protected))
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
@@ -120,7 +120,8 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 	// ponytail: a re-list, not an index snapshot, so an index changed and
 	// changed back between the two listings goes unseen; copying the index
 	// for GIT_INDEX_FILE would close it if that ever matters.
-	again, err := svc.StagedChanges(ctx, dir, protected)
+	// A fresh cache, so the recheck sees a source the policy protected since.
+	again, err := svc.StagedChanges(ctx, dir, memoize(scope.Protected))
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
@@ -134,8 +135,8 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 	return result, nil
 }
 
-// memoize caches protected's answers for one generation: the copy check asks
-// about every tracked file, twice. nil stays nil.
+// memoize caches protected's answers for one listing, which asks about some
+// paths more than once. nil stays nil.
 func memoize(protected func(string) bool) func(string) bool {
 	if protected == nil {
 		return nil
