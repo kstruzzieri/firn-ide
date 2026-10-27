@@ -282,10 +282,27 @@ type StagedChange struct {
 // be checked as one change.
 var ErrRenameDetectionLimited = errors.New("too many files for git to pair renames and copies, so they cannot be checked against the AI policy; write this message by hand")
 
-// maxPathspecBytes bounds the pathspec arguments of one git command, so the
-// command line stays under Windows' 32,767-character limit with room for the
-// fixed arguments. Bytes overcount UTF-16 units, so the bound is safe.
-const maxPathspecBytes = 24 << 10
+// ErrTooManyWithheld reports more withheld paths than one git command line
+// can exclude.
+var ErrTooManyWithheld = errors.New("too many withheld files to leave out of one git command; unstage some, or write this message by hand")
+
+// ErrPathTooLong reports a staged path too long to pass to git in one copy
+// check.
+var ErrPathTooLong = errors.New("a staged path is too long to check against the AI policy; write this message by hand")
+
+// copyCheckBatchBytes bounds the pathspecs of one copy-check command: half
+// for protected sources, half for additions. Bytes overcount UTF-16 units, so
+// two halves plus the fixed arguments stay under Windows' 32,767-character
+// command line.
+const copyCheckBatchBytes = 12 << 10
+
+// maxCopyCheckRuns bounds the git commands one copy check may run.
+const maxCopyCheckRuns = 64
+
+// maxExcludeBytes bounds the exclude pathspecs of the one diff command, which
+// cannot be split: Windows caps a command line at 32,767 characters, Unix
+// systems allow far more.
+var maxExcludeBytes = map[bool]int{true: 24 << 10, false: 256 << 10}[runtime.GOOS == "windows"]
 
 // limitWarnings are the stderr warnings git prints when diff.renameLimit cut
 // rename or copy detection short: "inexact" before git 2.48, "exhaustive"
@@ -326,18 +343,20 @@ func (s *Service) StagedChanges(ctx context.Context, dir string, copySource func
 	return s.markCopiesFrom(ctx, root, changes, copySource)
 }
 
-// markCopiesFrom turns each addition that git pairs as a copy of an
-// unmodified index file copySource reports into that copy. git considers
-// unmodified files as sources only under --find-copies-harder, which past
-// diff.renameLimit falls back to modified sources alone, so the check runs
-// with just those files and the additions as pathspecs, in batches that fit
-// one command line.
+// markCopiesFrom re-pairs each staged new file with the unmodified index
+// file copySource reports that git finds it a copy of, so the caller sees the
+// protected side; a new file the main listing paired with an allowed file is
+// checked too. git considers unmodified files as sources only under
+// --find-copies-harder, which past diff.renameLimit falls back to modified
+// sources alone, so the check runs with just those files and the new files as
+// pathspecs, in batches that fit one command line.
 func (s *Service) markCopiesFrom(ctx context.Context, root string, changes []StagedChange, copySource func(string) bool) ([]StagedChange, error) {
-	added := map[string]int{}
+	created := map[string]int{}
 	var dests []string
 	for i, change := range changes {
-		if change.Status == 'A' && !copySource(change.Path) {
-			added[change.Path] = i
+		isNew := change.Status == 'A' || change.Status == 'C' || change.Status == 'R'
+		if isNew && !copySource(change.Path) && (change.OldPath == "" || !copySource(change.OldPath)) {
+			created[change.Path] = i
 			dests = append(dests, ":(top,literal)"+change.Path)
 		}
 	}
@@ -349,45 +368,78 @@ func (s *Service) markCopiesFrom(ctx context.Context, root string, changes []Sta
 		return nil, err
 	}
 	var sources []string
-	size := 0
 	for _, path := range strings.Split(index, "\x00") {
 		if path != "" && copySource(path) {
 			sources = append(sources, ":(top,literal)"+path)
-			size += len(path) + 18
 		}
 	}
 	if len(sources) == 0 {
 		return changes, nil
 	}
-	if size > maxPathspecBytes/2 {
+	sourceBatches, err := batchPathspecs(sources)
+	if err != nil {
+		return nil, err
+	}
+	destBatches, err := batchPathspecs(dests)
+	if err != nil {
+		return nil, err
+	}
+	if len(sourceBatches)*len(destBatches) > maxCopyCheckRuns {
 		return nil, ErrRenameDetectionLimited
 	}
-	for len(dests) > 0 {
-		batch, used := append([]string(nil), sources...), size
-		for len(dests) > 0 && used+len(dests[0])+3 <= maxPathspecBytes {
-			batch = append(batch, dests[0])
-			used += len(dests[0]) + 3
-			dests = dests[1:]
-		}
-		args := append([]string{"diff", "--cached", "-M", "-C", "-C", "--name-status", "-z", "--"}, batch...)
-		out, warnings, err := s.runEnv(ctx, root, pathspecEnv, args...)
-		if err != nil {
-			return nil, err
-		}
-		if limited(warnings) {
-			return nil, ErrRenameDetectionLimited
-		}
-		found, err := parseNameStatus(out)
-		if err != nil {
-			return nil, err
-		}
-		for _, copied := range found {
-			if i, ok := added[copied.Path]; ok && copied.OldPath != "" {
+	var deleted []StagedChange
+	for _, sourceBatch := range sourceBatches {
+		for _, destBatch := range destBatches {
+			args := append(append([]string{"diff", "--cached", "-M", "-C", "-C", "--name-status", "-z", "--"}, sourceBatch...), destBatch...)
+			out, warnings, err := s.runEnv(ctx, root, pathspecEnv, args...)
+			if err != nil {
+				return nil, err
+			}
+			if limited(warnings) {
+				return nil, ErrRenameDetectionLimited
+			}
+			found, err := parseNameStatus(out)
+			if err != nil {
+				return nil, err
+			}
+			for _, copied := range found {
+				i, ok := created[copied.Path]
+				if !ok || copied.OldPath == "" || !copySource(copied.OldPath) {
+					continue
+				}
+				if changes[i].Status == 'R' {
+					// The rename's old side was deleted; keep that deletion listed.
+					deleted = append(deleted, StagedChange{Status: 'D', Path: changes[i].OldPath})
+				}
 				changes[i] = copied
+				delete(created, copied.Path)
 			}
 		}
 	}
-	return changes, nil
+	return append(changes, deleted...), nil
+}
+
+// batchPathspecs splits pathspecs into batches of at most copyCheckBatchBytes
+// each, counting three bytes per argument for the separator and quoting. A
+// pathspec that cannot fit a batch on its own returns ErrPathTooLong, so every
+// batch fits and splitting always progresses.
+func batchPathspecs(pathspecs []string) ([][]string, error) {
+	var batches [][]string
+	var batch []string
+	size := 0
+	for _, spec := range pathspecs {
+		cost := len(spec) + 3
+		if cost > copyCheckBatchBytes {
+			return nil, ErrPathTooLong
+		}
+		if size+cost > copyCheckBatchBytes {
+			batches = append(batches, batch)
+			batch, size = nil, 0
+		}
+		batch = append(batch, spec)
+		size += cost
+	}
+	return append(batches, batch), nil
 }
 
 // parseNameStatus decodes `--name-status -z` output: a status token, NUL, the
@@ -431,8 +483,9 @@ var pathspecEnv = []string{
 // StagedDiff returns the unified diff of the index against HEAD minus exclude,
 // repo-relative paths taken literally, as input for commit-message generation
 // (#384). Excluding rather than naming what may be sent keeps the command line
-// short whatever is staged, and an excluded path stays out even when it sits
-// under a directory staged at another path's name. External diff drivers,
+// as short as the withheld list, and an excluded path stays out even when it
+// sits under a directory staged at another path's name. More exclusions than
+// one command line holds return ErrTooManyWithheld. External diff drivers,
 // textconv filters and submodule expansion are off, so repository config
 // cannot add content from paths the caller never checked.
 func (s *Service) StagedDiff(ctx context.Context, dir string, exclude []string) (string, error) {
@@ -441,8 +494,13 @@ func (s *Service) StagedDiff(ctx context.Context, dir string, exclude []string) 
 		return "", err
 	}
 	args := []string{"diff", "--cached", "-M", "--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short", "--", ":(top)"}
+	size := 0
 	for _, path := range exclude {
-		args = append(args, ":(top,literal,exclude)"+path)
+		spec := ":(top,literal,exclude)" + path
+		if size += len(spec) + 3; size > maxExcludeBytes {
+			return "", ErrTooManyWithheld
+		}
+		args = append(args, spec)
 	}
 	out, _, err := s.runEnv(ctx, root, pathspecEnv, args...)
 	return out, err

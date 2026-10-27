@@ -44,7 +44,21 @@ var (
 // scope policy for staged paths.
 type MessageGenerator struct {
 	destinationPolicy func() provider.DestinationPolicy
-	scopeGuard        func(repoRoot string) (agenttools.ScopeGuard, string, error)
+	scopeSource       func(repoRoot string) (StagedScope, error)
+}
+
+// StagedScope decides which staged paths of one git working tree may reach
+// the model (#384). Paths are relative to the git top level.
+type StagedScope struct {
+	// Guard denies a path that may not reach the model.
+	Guard agenttools.ScopeGuard
+	// Protected reports a path whose content the policy protects, as opposed
+	// to one Guard denies only for lying outside the open project. Unmodified
+	// protected files are checked as copy sources; nil checks none.
+	Protected func(path string) bool
+	// ConfigPath is the go-llm config source Guard protects, which the runtime
+	// then loads; "" lets go-llm discover its own.
+	ConfigPath string
 }
 
 func NewMessageGenerator() *MessageGenerator { return &MessageGenerator{} }
@@ -58,14 +72,12 @@ type CommitMessageResult struct {
 	Withheld []string `json:"withheld"`
 }
 
-// SetScopeGuardSource injects what decides which staged paths may reach the
-// model (#384): for the git working tree at repoRoot, Golem chat's scope
-// guard over paths relative to it, and the go-llm config source that guard
-// protects, which the runtime is then pinned to ("" lets go-llm discover its
-// own). An error stops generation before any request. Nil (the default)
-// withholds every path, as a detached policy does in chat.
-func (g *MessageGenerator) SetScopeGuardSource(src func(repoRoot string) (agenttools.ScopeGuard, string, error)) {
-	g.scopeGuard = src
+// SetScopeSource injects what decides which staged paths may reach the model
+// for the git working tree at repoRoot. An error stops generation before any
+// request. Nil (the default) withholds every path, as a detached policy does
+// in chat.
+func (g *MessageGenerator) SetScopeSource(src func(repoRoot string) (StagedScope, error)) {
+	g.scopeSource = src
 }
 
 // GenerateStaged lists what is staged in dir's repository, withholds every
@@ -79,15 +91,15 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
-	guard := agenttools.ScopeGuard(func(string, bool) error { return errors.New("no AI scope policy") })
-	configPath := ""
-	if g.scopeGuard != nil {
-		if guard, configPath, err = g.scopeGuard(root); err != nil {
+	scope := StagedScope{Guard: func(string, bool) error { return errors.New("no AI scope policy") }}
+	if g.scopeSource != nil {
+		if scope, err = g.scopeSource(root); err != nil {
 			return CommitMessageResult{}, err
 		}
 	}
-	denied := func(path string) bool { return guard(path, false) != nil }
-	changes, err := svc.StagedChanges(ctx, dir, denied)
+	guard, configPath := scope.Guard, scope.ConfigPath
+	protected := memoize(scope.Protected)
+	changes, err := svc.StagedChanges(ctx, dir, protected)
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
@@ -108,7 +120,7 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 	// ponytail: a re-list, not an index snapshot, so an index changed and
 	// changed back between the two listings goes unseen; copying the index
 	// for GIT_INDEX_FILE would close it if that ever matters.
-	again, err := svc.StagedChanges(ctx, dir, denied)
+	again, err := svc.StagedChanges(ctx, dir, protected)
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
@@ -120,6 +132,23 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 		return CommitMessageResult{}, err
 	}
 	return result, nil
+}
+
+// memoize caches protected's answers for one generation: the copy check asks
+// about every tracked file, twice. nil stays nil.
+func memoize(protected func(string) bool) func(string) bool {
+	if protected == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	return func(path string) bool {
+		answer, ok := seen[path]
+		if !ok {
+			answer = protected(path)
+			seen[path] = answer
+		}
+		return answer
+	}
 }
 
 // partitionStaged applies guard to each staged change. allowed holds every

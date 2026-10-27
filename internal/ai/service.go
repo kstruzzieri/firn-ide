@@ -343,50 +343,77 @@ func (s *Service) DestinationPolicy() provider.DestinationPolicy {
 	return s.consent.DestinationPolicy()
 }
 
-// StagedPathGuard returns what commit-message generation applies to the staged
-// paths of the git working tree at gitRoot (#384): the bound repository's own
-// chat policy, as a guard over paths relative to gitRoot, and the go-llm
-// config source that policy now protects, for the runtime to load. One policy
-// instance serves both features, so they cannot drift: the floor, the
-// manifests (reloaded here, so an edit applies without a watcher event), and
-// the config source as discovery finds it now, not as a cached snapshot
-// recorded it. The guard reads live policy state, so it denies everything
-// once the repository is unbound or replaced, and it denies a staged path
-// outside the bound root, which chat cannot see either. No bound repository,
-// a closing service, or a config source that cannot be resolved or protected
-// is an error, and generation sends nothing.
-func (s *Service) StagedPathGuard(gitRoot string) (agenttools.ScopeGuard, string, error) {
+// StagedScope is what commit-message generation applies to the staged paths
+// of one git working tree, relative to its top level. It mirrors git.StagedScope
+// field for field, so the app converts one to the other.
+type StagedScope struct {
+	// Guard denies a path that may not reach the model.
+	Guard agenttools.ScopeGuard
+	// Protected reports a path inside the open project that the policy
+	// denies, as opposed to one outside it.
+	Protected func(path string) bool
+	// ConfigPath is the go-llm config source Guard protects.
+	ConfigPath string
+}
+
+// StagedScope returns the scope commit-message generation applies to the git
+// working tree at gitRoot (#384): the bound repository's own chat policy, over
+// paths relative to gitRoot, and the go-llm config source that policy now
+// protects, for the runtime to load. One policy instance serves both features,
+// so they cannot drift: the floor, the manifests (reloaded here, so an edit
+// applies without a watcher event), and the config source as discovery finds
+// it now, not as a cached snapshot recorded it. The guard reads live policy
+// state, so it denies everything once the repository is unbound or replaced,
+// and it denies a staged path outside the bound root, which chat cannot see
+// either. No bound repository, a closing service, or a config source that
+// cannot be resolved or protected is an error, and generation sends nothing.
+func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 	top, err := filepath.EvalSymlinks(gitRoot)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: canonicalizing the repository: %w", ErrWorkspaceUnavailable, err)
+		return StagedScope{}, fmt.Errorf("%w: canonicalizing the repository: %w", ErrWorkspaceUnavailable, err)
 	}
 	// ponytail: "" means discovery found no file, and golem.New then
 	// discovers again; a config created and staged between the two is not
 	// protected. go-llm has no option to pin "no config".
 	configPath, err := currentConfigSource()
 	if err != nil {
-		return nil, "", err
+		return StagedScope{}, err
 	}
 	guard, boundRoot, warningsChanged, err := s.stagedPolicy(configPath)
 	if warningsChanged {
 		s.emit(EventGolemStatusChanged, nil)
 	}
 	if err != nil {
-		return nil, "", err
+		return StagedScope{}, err
 	}
-	// The usual case: the project is the git top level. Compared by identity,
-	// because on a case-insensitive filesystem the bound root keeps the case
-	// the project was opened with while git reports the case on disk.
-	if same, sameErr := sameDirectory(s.fs, top, boundRoot); sameErr == nil && same {
-		return guard, configPath, nil
-	}
-	return func(rel string, write bool) error {
-		bound, err := filepath.Rel(boundRoot, filepath.Join(top, filepath.FromSlash(rel)))
-		if err != nil || !filepath.IsLocal(bound) {
-			return errPolicyDenied
+	// toBound maps a top-relative path onto the bound root; ok is false
+	// outside it. The usual case, the project is the git top level, compares
+	// by identity: on a case-insensitive filesystem the bound root keeps the
+	// case the project was opened with while git reports the case on disk.
+	toBound := func(rel string) (string, bool) { return rel, true }
+	if same, sameErr := sameDirectory(s.fs, top, boundRoot); sameErr != nil || !same {
+		toBound = func(rel string) (string, bool) {
+			bound, err := filepath.Rel(boundRoot, filepath.Join(top, filepath.FromSlash(rel)))
+			if err != nil || !filepath.IsLocal(bound) {
+				return "", false
+			}
+			return filepath.ToSlash(bound), true
 		}
-		return guard(filepath.ToSlash(bound), write)
-	}, configPath, nil
+	}
+	return StagedScope{
+		Guard: func(rel string, write bool) error {
+			bound, ok := toBound(rel)
+			if !ok {
+				return errPolicyDenied
+			}
+			return guard(bound, write)
+		},
+		Protected: func(rel string) bool {
+			bound, ok := toBound(rel)
+			return ok && guard(bound, false) != nil
+		},
+		ConfigPath: configPath,
+	}, nil
 }
 
 // sameDirectory reports whether a and b name the same directory.

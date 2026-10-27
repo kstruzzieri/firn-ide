@@ -58,10 +58,10 @@ func assertAllowed(t *testing.T, guard func(string, bool) error, paths ...string
 	}
 }
 
-// StagedPathGuard is the bound repository's own chat policy: the floor, the
+// StagedScope is the bound repository's own chat policy: the floor, the
 // manifest rules read now (no watcher event needed), and the go-llm config
 // source as discovery finds it now, which the runtime is pinned to (#384).
-func TestStagedPathGuard_AppliesTheBoundChatPolicy(t *testing.T) {
+func TestStagedScope_AppliesTheBoundChatPolicy(t *testing.T) {
 	root := t.TempDir()
 	config := filepath.Join(root, "models.json")
 	t.Setenv("GO_LLM_CONFIG", config) // missing when the snapshot is cached
@@ -71,54 +71,62 @@ func TestStagedPathGuard_AppliesTheBoundChatPolicy(t *testing.T) {
 	writeFile(t, config, `{"providers":{},"models":{},"defaults":{}}`)
 	writeFile(t, filepath.Join(root, "ai-kit.yaml"), "sensitive_paths:\n  - fixtures/private/**\n")
 
-	guard, configPath, err := svc.StagedPathGuard(root)
+	scope, err := svc.StagedScope(root)
 
 	if err != nil {
-		t.Fatalf("StagedPathGuard: %v", err)
+		t.Fatalf("StagedScope: %v", err)
 	}
-	if configPath != canonical(t, config) {
-		t.Errorf("config path = %q, want %q", configPath, canonical(t, config))
+	if scope.ConfigPath != canonical(t, config) {
+		t.Errorf("config path = %q, want %q", scope.ConfigPath, canonical(t, config))
 	}
-	assertDenied(t, guard, ".env", "keys/deploy.pem", "fixtures/private/customers.csv", "models.json")
-	assertAllowed(t, guard, "main.go", "fixtures/public/data.csv")
+	assertDenied(t, scope.Guard, ".env", "keys/deploy.pem", "fixtures/private/customers.csv", "models.json")
+	assertAllowed(t, scope.Guard, "main.go", "fixtures/public/data.csv")
+	for _, path := range []string{".env", "fixtures/private/customers.csv"} {
+		if !scope.Protected(path) {
+			t.Errorf("Protected(%q) = false, want true", path)
+		}
+	}
+	if scope.Protected("main.go") {
+		t.Error("Protected(main.go) = true, want false")
+	}
 }
 
-func TestStagedPathGuard_NoBindingIsAnError(t *testing.T) {
+func TestStagedScope_NoBindingIsAnError(t *testing.T) {
 	outsideConfig(t)
 	svc := newStagedGuardService(t)
 
-	if _, _, err := svc.StagedPathGuard(t.TempDir()); !errors.Is(err, errPolicyDetached) {
-		t.Fatalf("StagedPathGuard without a bound repository = %v, want errPolicyDetached", err)
+	if _, err := svc.StagedScope(t.TempDir()); !errors.Is(err, errPolicyDetached) {
+		t.Fatalf("StagedScope without a bound repository = %v, want errPolicyDetached", err)
 	}
 }
 
-func TestStagedPathGuard_IssuedGuardDeniesAfterUnbindOrSwitch(t *testing.T) {
+func TestStagedScope_IssuedGuardDeniesAfterUnbindOrSwitch(t *testing.T) {
 	outsideConfig(t)
 	svc := newStagedGuardService(t)
 	root := t.TempDir()
 	bindStaged(t, svc, root)
-	guard, _, err := svc.StagedPathGuard(root)
+	scope, err := svc.StagedScope(root)
 	if err != nil {
-		t.Fatalf("StagedPathGuard: %v", err)
+		t.Fatalf("StagedScope: %v", err)
 	}
-	assertAllowed(t, guard, "main.go")
+	assertAllowed(t, scope.Guard, "main.go")
 
 	bindStaged(t, svc, t.TempDir())
-	assertDenied(t, guard, "main.go")
+	assertDenied(t, scope.Guard, "main.go")
 
 	bindStaged(t, svc, root)
-	guard, _, err = svc.StagedPathGuard(root)
+	scope, err = svc.StagedScope(root)
 	if err != nil {
-		t.Fatalf("StagedPathGuard after rebind: %v", err)
+		t.Fatalf("StagedScope after rebind: %v", err)
 	}
 	svc.UnbindRepository()
-	assertDenied(t, guard, "main.go")
+	assertDenied(t, scope.Guard, "main.go")
 }
 
 // The bound repository may sit below or above the git top level. Paths are
 // mapped onto the bound root, and a staged path outside it is denied, because
 // chat cannot see it either.
-func TestStagedPathGuard_MapsGitTopLevelOntoBoundRoot(t *testing.T) {
+func TestStagedScope_MapsGitTopLevelOntoBoundRoot(t *testing.T) {
 	outsideConfig(t)
 	t.Run("bound below the top level", func(t *testing.T) {
 		top := t.TempDir()
@@ -127,13 +135,18 @@ func TestStagedPathGuard_MapsGitTopLevelOntoBoundRoot(t *testing.T) {
 		svc := newStagedGuardService(t)
 		bindStaged(t, svc, bound)
 
-		guard, _, err := svc.StagedPathGuard(top)
+		scope, err := svc.StagedScope(top)
 
 		if err != nil {
-			t.Fatalf("StagedPathGuard: %v", err)
+			t.Fatalf("StagedScope: %v", err)
 		}
-		assertAllowed(t, guard, "app/main.go")
-		assertDenied(t, guard, "app/private/data.csv", "other/main.go", "README.md")
+		assertAllowed(t, scope.Guard, "app/main.go")
+		assertDenied(t, scope.Guard, "app/private/data.csv", "other/main.go", "README.md")
+		// Outside the open project is withheld but protects no content, so it
+		// is no copy source.
+		if !scope.Protected("app/private/data.csv") || scope.Protected("other/main.go") || scope.Protected("README.md") {
+			t.Error("Protected must hold for a protected path inside the project only")
+		}
 	})
 	t.Run("bound above the top level", func(t *testing.T) {
 		bound := t.TempDir()
@@ -145,31 +158,31 @@ func TestStagedPathGuard_MapsGitTopLevelOntoBoundRoot(t *testing.T) {
 		svc := newStagedGuardService(t)
 		bindStaged(t, svc, bound)
 
-		guard, _, err := svc.StagedPathGuard(top)
+		scope, err := svc.StagedScope(top)
 
 		if err != nil {
-			t.Fatalf("StagedPathGuard: %v", err)
+			t.Fatalf("StagedScope: %v", err)
 		}
-		assertAllowed(t, guard, "main.go")
-		assertDenied(t, guard, "private/data.csv", ".env")
+		assertAllowed(t, scope.Guard, "main.go")
+		assertDenied(t, scope.Guard, "private/data.csv", ".env")
 	})
 }
 
-func TestStagedPathGuard_UnresolvableConfigIsAnError(t *testing.T) {
+func TestStagedScope_UnresolvableConfigIsAnError(t *testing.T) {
 	outsideConfig(t)
 	svc := newStagedGuardService(t)
 	root := t.TempDir()
 	bindStaged(t, svc, root)
 	t.Setenv("GO_LLM_CONFIG", t.TempDir()) // a directory, not a config file
 
-	_, _, err := svc.StagedPathGuard(root)
+	_, err := svc.StagedScope(root)
 
 	if !errors.Is(err, ErrAgentConfigInvalid) {
-		t.Fatalf("StagedPathGuard error = %v, want ErrAgentConfigInvalid", err)
+		t.Fatalf("StagedScope error = %v, want ErrAgentConfigInvalid", err)
 	}
 }
 
-func TestStagedPathGuard_ClosedServiceIsAnError(t *testing.T) {
+func TestStagedScope_ClosedServiceIsAnError(t *testing.T) {
 	outsideConfig(t)
 	svc := NewService(context.Background(), filesystem.NewOS(), "", nil, "")
 	root := t.TempDir()
@@ -180,14 +193,14 @@ func TestStagedPathGuard_ClosedServiceIsAnError(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if _, _, err := svc.StagedPathGuard(root); !errors.Is(err, errServiceClosing) {
-		t.Fatalf("StagedPathGuard on a closed service = %v, want errServiceClosing", err)
+	if _, err := svc.StagedScope(root); !errors.Is(err, errServiceClosing) {
+		t.Fatalf("StagedScope on a closed service = %v, want errServiceClosing", err)
 	}
 }
 
 // On a case-insensitive filesystem a project opened through a differently
 // cased path is the same directory git reports, so paths map one to one.
-func TestStagedPathGuard_SameDirectoryInAnotherCaseMapsDirectly(t *testing.T) {
+func TestStagedScope_SameDirectoryInAnotherCaseMapsDirectly(t *testing.T) {
 	outsideConfig(t)
 	top := filepath.Join(t.TempDir(), "Repo")
 	if err := os.MkdirAll(top, 0o755); err != nil {
@@ -200,11 +213,11 @@ func TestStagedPathGuard_SameDirectoryInAnotherCaseMapsDirectly(t *testing.T) {
 	svc := newStagedGuardService(t)
 	bindStaged(t, svc, lower)
 
-	guard, _, err := svc.StagedPathGuard(top)
+	scope, err := svc.StagedScope(top)
 
 	if err != nil {
-		t.Fatalf("StagedPathGuard: %v", err)
+		t.Fatalf("StagedScope: %v", err)
 	}
-	assertAllowed(t, guard, "main.go")
-	assertDenied(t, guard, ".env")
+	assertAllowed(t, scope.Guard, "main.go")
+	assertDenied(t, scope.Guard, ".env")
 }

@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -779,4 +780,32 @@ func countWhere(files []FileChange, pred func(FileChange) bool) int {
 		}
 	}
 	return n
+}
+
+func TestBatchPathspecs(t *testing.T) {
+	spec := strings.Repeat("x", 1000)
+	specs := make([]string, 30) // 30 * 1003 bytes: three batches of 12 KiB
+	for i := range specs {
+		specs[i] = spec
+	}
+
+	batches, err := batchPathspecs(specs)
+
+	if err != nil || len(batches) != 3 {
+		t.Fatalf("batchPathspecs() = %d batches, %v, want 3", len(batches), err)
+	}
+	total := 0
+	for _, batch := range batches {
+		total += len(batch)
+		if size := len(batch) * (len(spec) + 3); size > copyCheckBatchBytes {
+			t.Errorf("batch of %d bytes exceeds %d", size, copyCheckBatchBytes)
+		}
+	}
+	if total != len(specs) {
+		t.Errorf("batches hold %d pathspecs, want %d", total, len(specs))
+	}
+
+	if _, err := batchPathspecs([]string{strings.Repeat("x", copyCheckBatchBytes)}); !errors.Is(err, ErrPathTooLong) {
+		t.Errorf("batchPathspecs(oversized) error = %v, want ErrPathTooLong", err)
+	}
 }

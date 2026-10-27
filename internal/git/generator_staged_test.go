@@ -10,8 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
+	"time"
 
 	"firn/internal/ai"
 	"firn/internal/filesystem"
@@ -22,8 +21,9 @@ import (
 // the repository's own manifests, so these tests exercise the same matching
 // (#384: one policy for both paths).
 func chatPolicy(gen *MessageGenerator) {
-	gen.SetScopeGuardSource(func(repoRoot string) (agenttools.ScopeGuard, string, error) {
-		return ai.LoadScopePolicy(filesystem.NewOS(), repoRoot).Guard(""), "", nil
+	gen.SetScopeSource(func(repoRoot string) (StagedScope, error) {
+		guard := ai.LoadScopePolicy(filesystem.NewOS(), repoRoot).Guard("")
+		return StagedScope{Guard: guard, Protected: func(path string) bool { return guard(path, false) != nil }}, nil
 	})
 }
 
@@ -48,7 +48,12 @@ type providerRequest struct {
 
 func readRequest(t *testing.T, provider *gittest.Provider) providerRequest {
 	t.Helper()
-	body := <-provider.Requests
+	var body []byte
+	select {
+	case body = <-provider.Requests:
+	case <-time.After(30 * time.Second):
+		t.Fatal("no request reached the provider")
+	}
 	var decoded struct {
 		Messages []struct {
 			Role    string `json:"role"`
@@ -428,8 +433,8 @@ func TestGenerateStaged_PinsRuntimeToGuardedConfig(t *testing.T) {
 	pinned := os.Getenv("GO_LLM_CONFIG")
 	noRuntime(t)
 	gen := NewMessageGenerator()
-	gen.SetScopeGuardSource(func(repoRoot string) (agenttools.ScopeGuard, string, error) {
-		return ai.LoadScopePolicy(filesystem.NewOS(), repoRoot).Guard(""), pinned, nil
+	gen.SetScopeSource(func(repoRoot string) (StagedScope, error) {
+		return StagedScope{Guard: ai.LoadScopePolicy(filesystem.NewOS(), repoRoot).Guard(""), ConfigPath: pinned}, nil
 	})
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
@@ -449,8 +454,8 @@ func TestGenerateStaged_GuardSourceErrorMakesNoRequest(t *testing.T) {
 	gitCmd(t, dir, "add", "main.go")
 	noRuntime(t)
 	gen := NewMessageGenerator()
-	gen.SetScopeGuardSource(func(string) (agenttools.ScopeGuard, string, error) {
-		return nil, "", errors.New("reopen the repository")
+	gen.SetScopeSource(func(string) (StagedScope, error) {
+		return StagedScope{}, errors.New("reopen the repository")
 	})
 
 	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
@@ -473,21 +478,21 @@ func TestGenerateStaged_PolicyChangeBeforeSendMakesNoRequest(t *testing.T) {
 	// policy denies from the second pass on.
 	var calls atomic.Int32
 	gen := NewMessageGenerator()
-	gen.SetScopeGuardSource(func(string) (agenttools.ScopeGuard, string, error) {
-		return func(string, bool) error { calls.Add(1); return nil }, "", nil
+	gen.SetScopeSource(func(string) (StagedScope, error) {
+		return StagedScope{Guard: func(string, bool) error { calls.Add(1); return nil }}, nil
 	})
 	if _, err := gen.GenerateStaged(ctx(), NewService(), dir); err == nil || errors.Is(err, errStagedChangesMoved) {
 		t.Fatalf("counting run error = %v, want the missing-runtime failure", err)
 	}
 	firstPass := calls.Load() / 2
 	calls.Store(0)
-	gen.SetScopeGuardSource(func(string) (agenttools.ScopeGuard, string, error) {
-		return func(string, bool) error {
+	gen.SetScopeSource(func(string) (StagedScope, error) {
+		return StagedScope{Guard: func(string, bool) error {
 			if calls.Add(1) > firstPass {
 				return errors.New("detached")
 			}
 			return nil
-		}, "", nil
+		}}, nil
 	})
 
 	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
@@ -508,14 +513,14 @@ func TestGenerateStaged_IndexChangeBeforeSendMakesNoRequest(t *testing.T) {
 	noRuntime(t)
 	var staged atomic.Bool
 	gen := NewMessageGenerator()
-	gen.SetScopeGuardSource(func(repoRoot string) (agenttools.ScopeGuard, string, error) {
+	gen.SetScopeSource(func(repoRoot string) (StagedScope, error) {
 		guard := ai.LoadScopePolicy(filesystem.NewOS(), repoRoot).Guard("")
-		return func(rel string, write bool) error {
+		return StagedScope{Guard: func(rel string, write bool) error {
 			if staged.CompareAndSwap(false, true) {
 				gitCmd(t, dir, "add", "late.txt")
 			}
 			return guard(rel, write)
-		}, "", nil
+		}}, nil
 	})
 
 	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
@@ -632,4 +637,125 @@ func TestGenerateStaged_FindsProtectedCopyAcrossBatches(t *testing.T) {
 		t.Errorf("Withheld = %q", result.Withheld)
 	}
 	assertWithheld(t, readRequest(t, provider), []string{"batched-copy"}, []string{"settings.txt"})
+}
+
+// A new file the main listing already pairs with an allowed modified file is
+// still checked against protected sources: an exact copy of a protected file
+// is withheld whatever else happens to resemble it.
+func TestGenerateStaged_ChecksPairedDestinationAgainstProtectedSources(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	lines := "a: 1\nb: 2\nc: 3\nd: 4\ne: 5\nf: 6\ng: 7\nh: 8\ni: 9\n"
+	writeFile(t, dir, "ai-kit.yaml", "sensitive_paths:\n  - config/production.yaml\n")
+	writeFile(t, dir, "config/production.yaml", lines+"token: paired-secret\n")
+	writeFile(t, dir, "config/staging.yaml", lines+"token: staging\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "configs")
+	writeFile(t, dir, "config/staging.yaml", lines+"token: staging-2\n")
+	writeFile(t, dir, "config/production.backup.yaml", lines+"token: paired-secret\n")
+	gitCmd(t, dir, "add", "config")
+	provider := gittest.Start(t, "chore: configs", nil)
+	gen := NewMessageGenerator()
+	chatPolicy(gen)
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil {
+		t.Fatalf("GenerateStaged() error = %v", err)
+	}
+	if !slices.Equal(result.Withheld, []string{"config/production.yaml -> config/production.backup.yaml"}) {
+		t.Errorf("Withheld = %q", result.Withheld)
+	}
+	assertWithheld(t, readRequest(t, provider), []string{"paired-secret"}, []string{"production.backup.yaml"})
+}
+
+// Hundreds of protected tracked files are checked as copy sources in batches,
+// not refused.
+func TestGenerateStaged_ManyProtectedTrackedFilesStillGenerate(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "ai-kit.yaml", "sensitive_paths:\n  - data/**\n")
+	for i := range 600 {
+		writeFile(t, dir, fmt.Sprintf("data/customers/record-%04d.csv", i), fmt.Sprintf("row,%d\n", i))
+	}
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "data")
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "main.go")
+	provider := gittest.Start(t, "feat: add main", nil)
+	gen := NewMessageGenerator()
+	chatPolicy(gen)
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil || result.Message != "feat: add main" {
+		t.Fatalf("GenerateStaged() = %+v, %v, want a message", result, err)
+	}
+	if len(provider.Requests) != 1 {
+		t.Errorf("provider requests = %d, want 1", len(provider.Requests))
+	}
+}
+
+// A new file the main listing pairs as a rename of an allowed deleted file is
+// re-paired with the protected file it copies; the deletion stays listed.
+func TestGenerateStaged_ChecksRenamedDestinationAgainstProtectedSources(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	lines := "a=1\nb=2\nc=3\nd=4\ne=5\nf=6\ng=7\nh=8\ni=9\n"
+	writeFile(t, dir, ".env", lines+"API_TOKEN=renamed-secret\n")
+	writeFile(t, dir, "template.txt", lines+"API_TOKEN=placeholder\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "env and template")
+	gitCmd(t, dir, "rm", "-q", "template.txt")
+	writeFile(t, dir, "config.txt", lines+"API_TOKEN=renamed-secret\n")
+	gitCmd(t, dir, "add", "config.txt")
+	provider := gittest.Start(t, "chore: drop template", nil)
+	gen := NewMessageGenerator()
+	chatPolicy(gen)
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil {
+		t.Fatalf("GenerateStaged() error = %v", err)
+	}
+	if !slices.Equal(result.Withheld, []string{".env -> config.txt"}) {
+		t.Errorf("Withheld = %q", result.Withheld)
+	}
+	request := readRequest(t, provider)
+	if !strings.Contains(request.user, "deleted file") || !strings.Contains(request.user, "template.txt") {
+		t.Errorf("prompt lacks the template deletion:\n%s", request.user)
+	}
+	assertWithheld(t, request, []string{"renamed-secret"}, []string{"config.txt"})
+}
+
+// A deleted protected file is no index entry, so the copy check never sees
+// it; the main listing covers it instead, because git's rename pass pairs
+// every new file with a deleted source before its copy pass weighs a closer
+// modified one. This pins that: a second copy of a renamed .env is withheld
+// even though an allowed modified file resembles it more.
+func TestGenerateStaged_ChecksNewFileAgainstDeletedProtectedSource(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	lines := "a=1\nb=2\nc=3\nd=4\ne=5\nf=6\ng=7\nh=8\n"
+	writeFile(t, dir, ".env", lines+"TOKEN=deleted-secret\n")
+	writeFile(t, dir, "template.txt", lines+"PLACE=1\nQ=2\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "env and template")
+	gitCmd(t, dir, "mv", ".env", "config.txt")
+	writeFile(t, dir, "template.txt", lines+"PLACE=1\nQ=3\n")
+	writeFile(t, dir, "second.txt", lines+"PLACE=1\nQ=2\nTOKEN=deleted-secret\n")
+	gitCmd(t, dir, "add", "template.txt", "second.txt")
+	provider := gittest.Start(t, "chore: rework config", nil)
+	gen := NewMessageGenerator()
+	chatPolicy(gen)
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil {
+		t.Fatalf("GenerateStaged() error = %v", err)
+	}
+	if !slices.Contains(result.Withheld, ".env -> second.txt") {
+		t.Errorf("Withheld = %q, want .env -> second.txt", result.Withheld)
+	}
+	assertWithheld(t, readRequest(t, provider), []string{"deleted-secret"}, []string{"second.txt", "config.txt"})
 }
