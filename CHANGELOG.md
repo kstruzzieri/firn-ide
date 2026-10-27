@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files under the message box, on this machine only, so you know the message
   may not mention them. When every staged file is withheld, no request is sent
   and the draft in the message box is kept. (#384)
+- The route editor in Golem Configuration names the defined models an edit
+  rewrites. A change to a model's capabilities or Think mode reaches every
+  role on that model, including roles no use case routes to, and those roles
+  showed as Modified in the Defined models list only after Done. The editor's
+  notice now names them beforehand ("gemma4:31b is also defined as agent and
+  judge"), the same roles the list marks. (#349)
 
 ### Fixed
 
@@ -88,6 +94,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change to the model in the same Apply; otherwise the notice still names
   the route or role that holds the lock. The settings projection names each
   role's explicit override for this (`capabilityOverride`). (#335)
+- The route editor's notice in Golem Configuration about the chosen model
+  names only the routes the edit changes, and says how each reaches the model
+  ("agent also uses gpt-5, and planning falls back to it"). It listed every
+  route Golem checks the edit against, so picking a model with the
+  capabilities its routes already had said its abilities change for them too,
+  and a route that keeps its own model and only falls back to the chosen one
+  read as both keeping and changing the model. The notice now appears once the
+  edit changes something for another route and lists the routes the routing
+  rows mark, which already marked only routes whose values change. (#307)
 - The file tree and Workspace Views now place a path under the project folder
   in that folder's own path syntax: a backslash separates folders only in a
   Windows project, and a drive root keeps its slash. With a Windows drive root
