@@ -1449,8 +1449,9 @@ export interface ProjectedDraft {
    * (`gateRolesFor`): the ones its current role serves, plus the ones the
    * target selector's roles serve when the change overrides or asserts
    * exposure. Sorted. Wider than what changes — a fork leaves the source
-   * role's other use cases as they are — so this feeds row markers and the
-   * unknown-requirements acknowledgement, never a floor.
+   * role's other use cases as they are — so this feeds the
+   * unknown-requirements acknowledgement and the values a routing row paints,
+   * never a floor or a row marker (those read `routeReach`).
    */
   selectorUseCases: Map<string, string[]>;
   /**
@@ -1458,8 +1459,8 @@ export interface ProjectedDraft {
    * `gateRoleEligibility`): the changed one, plus the ones the roles already
    * on the target selector serve under the same override-or-asserted-exposure
    * condition. Sorted. The current role counts only when it sits on that
-   * selector. This is the eligibility set: what the picker's floors and the
-   * editor's caution notice must read.
+   * selector. This is the eligibility set: what the picker's floors must
+   * read. What the change alters is its reach group (`reachGroupFor`).
    */
   governedUseCases: Map<string, string[]>;
 }
@@ -2226,8 +2227,8 @@ export function affectedUseCases(
 /**
  * Every use case `change` would GOVERN, the changed one first, then the rest
  * sorted: `projectDraft`'s `governedUseCases` for its selector group. The
- * eligibility set — what the picker's floors, the exposure checklist's
- * required caps and the caution notice read.
+ * eligibility set — what the picker's floors and the exposure checklist's
+ * required caps read. Not what the change alters: that is `reachGroupFor`.
  */
 export function governedUseCasesOf(
   base: DraftBaseProjection,
@@ -2239,6 +2240,19 @@ export function governedUseCasesOf(
     probeProjection(base, draft, change).governedUseCases.get(change.useCase)
   );
 }
+
+/**
+ * [#307] What `change` would ALTER: the reach group of its selector once it is
+ * staged over the draft — the routes, fallback routes and defined roles whose
+ * projected values change, the same data the row markers read. Narrower than
+ * the governed set, which also gates routes the change leaves as they are.
+ */
+export const reachGroupFor = (
+  base: DraftBaseProjection,
+  draft: Draft,
+  change: RouteChange
+): ReachGroup | undefined =>
+  probeProjection(base, draft, change).routeReach.get(change.useCase)?.group;
 
 /**
  * The change the editor would stage for a defined model before any exposure

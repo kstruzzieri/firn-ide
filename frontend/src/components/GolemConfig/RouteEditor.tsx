@@ -27,7 +27,8 @@
  * change is projected through `projectDraft`, the same reducer whose
  * normalization Apply sends, so the disclosures and the request cannot
  * disagree. The backend re-derives both sets independently and refuses an
- * omission or an extra.
+ * omission or an extra. The reach sentence reads the same projection's reach
+ * group, the one the row markers read, so it names what the rows will mark.
  */
 
 import {
@@ -62,6 +63,7 @@ import {
   modelFactsOf,
   overridesSelector,
   probeRouteChange,
+  reachGroupFor,
   retargetOf,
   sameCaps,
   sameModelFacts,
@@ -89,8 +91,10 @@ import {
   abilitiesLine,
   effectiveThink,
   THINK_LABEL,
+  editReachOf,
   pendingOf,
   usedByOf,
+  type EditReach,
   type ManualModel,
   type Seed,
 } from './routeEdit';
@@ -128,6 +132,40 @@ const boldList = (names: readonly string[]): ReactNode =>
       <strong>{name}</strong>
     </Fragment>
   ));
+
+/**
+ * [#307][#349] Who else the chosen model's values reach, by how: "agent also
+ * uses gpt-5, planning falls back to it, and it is also defined as judge".
+ * The model is named where it first appears; a fallback is never "uses".
+ */
+const reachClauses = (reach: EditReach, model: string): ReactNode => {
+  const clauses: ReactNode[] = [];
+  const subject = (): ReactNode => (clauses.length === 0 ? <strong>{model}</strong> : 'it');
+  if (reach.uses.length > 0)
+    clauses.push(
+      <>
+        {boldList(reach.uses)} also {agrees(reach.uses, 'uses', 'use')} {subject()}
+      </>
+    );
+  if (reach.fallsBack.length > 0)
+    clauses.push(
+      <>
+        {boldList(reach.fallsBack)} {agrees(reach.fallsBack, 'falls', 'fall')} back to {subject()}
+      </>
+    );
+  if (reach.definedAs.length > 0)
+    clauses.push(
+      <>
+        {subject()} is also defined as {boldList(reach.definedAs)}
+      </>
+    );
+  return clauses.map((clause, index) => (
+    <Fragment key={index}>
+      {index === 0 ? '' : index === clauses.length - 1 ? ', and ' : ', '}
+      {clause}
+    </Fragment>
+  ));
+};
 
 /**
  * Amendment 13 copy, one clause per hidden fact the current model carries.
@@ -503,9 +541,9 @@ export function RouteEditor({
    * Two sets from the same reducer Apply sends through, the edited use case
    * first (§4.5). `affected` is what the backend asks the user to CONFIRM —
    * it feeds the unknown-requirements acknowledgement. `governed` is what the
-   * change actually gates: the floors, the required caps and the caution
-   * notice read it, because a fork leaves the source role's other use cases
-   * exactly as they are.
+   * change actually gates: the floors and the required caps read it, because
+   * a fork leaves the source role's other use cases exactly as they are. What
+   * the change ALTERS is narrower again (`reach`, below).
    */
   const affected =
     candidate === null || unchanged(candidate)
@@ -532,7 +570,17 @@ export function RouteEditor({
    */
   const removed = short.filter(({ cap }) => arrivalExposed.includes(cap));
   const undeclared = short.filter(({ cap }) => !arrivalExposed.includes(cap));
-  const alsoGoverns = governed.filter((other) => other !== useCase);
+  /**
+   * [#307][#349] Who else this edit CHANGES: the probe's reach, the data the
+   * row markers and the Defined models list read — never the governed set,
+   * which also gates routes whose values stay as they are. A change that
+   * stages nothing reaches nothing.
+   */
+  const reach = editReachOf(
+    candidate === null || unchanged(candidate) ? undefined : reachGroupFor(base, draft, candidate),
+    useCase
+  );
+  const reaches = reach.uses.length + reach.fallsBack.length + reach.definedAs.length > 0;
   // Nothing to apply, nothing to acknowledge: the question is asked only for a
   // change that would be staged.
   const unknownUseCases =
@@ -570,9 +618,13 @@ export function RouteEditor({
   );
   const thinkEverywhere =
     isOverride || (candidate !== null && overridesSelector(base, others, candidate.modelFacts));
-  const thinkReach = thinkEverywhere
-    ? alsoGoverns
-    : alsoGoverns.filter((other) => peers.has(other));
+  /** Without an override Think reaches the staged peers alone, never a fallback or a defined role. */
+  const thinkReach = reach.uses.filter((other) => peers.has(other));
+  const thinkEveryReach =
+    thinkEverywhere ||
+    (thinkReach.length === reach.uses.length &&
+      reach.fallsBack.length === 0 &&
+      reach.definedAs.length === 0);
 
   /**
    * What a real retarget would drop. An override drops nothing, and a
@@ -1104,12 +1156,13 @@ export function RouteEditor({
         }}
       />
 
-      {/* One notice for one fact: this model is shared. Two sentences with two
-          subjects — the fork is about the model the row HOLDS (siblings keep
-          it); the reach is about the model chosen ABOVE (its abilities and
-          Think belong to it and reach every route on it: [W4-8]/[W5-2]/[W5-4],
+      {/* One notice for one fact: this model is shared. Two paragraphs with two
+          subjects, each naming its model — the fork is about the model the row
+          HOLDS (siblings keep it); the reach is about the model chosen ABOVE
+          (its abilities and Think belong to it and change for whatever uses
+          it, falls back to it or is defined on it: [W4-8]/[W5-2]/[W5-4],
           Think reaching the applied siblings only through an override). */}
-      {(current !== null && assignedSiblings.length > 0) || alsoGoverns.length > 0 ? (
+      {(current !== null && assignedSiblings.length > 0) || reaches ? (
         <div className={styles.disclosure} data-tone="caution">
           {current !== null && assignedSiblings.length > 0 && (
             <p className={styles.disclosureText}>
@@ -1119,18 +1172,17 @@ export function RouteEditor({
               {current.modelName}.
             </p>
           )}
-          {alsoGoverns.length > 0 && (
+          {reaches && (
             <p className={styles.disclosureText}>
-              {thinkReach.length === alsoGoverns.length ? (
+              {reachClauses(reach, candidate?.modelFacts.model ?? '')}.{' '}
+              {thinkEveryReach ? (
                 <>
-                  The abilities and Think mode above belong to{' '}
-                  <strong>the model chosen above</strong> and change for {boldList(alsoGoverns)}{' '}
-                  too.
+                  The abilities and Think mode above belong to the model, so they change there too.
                 </>
               ) : (
                 <>
-                  The abilities above belong to <strong>the model chosen above</strong> and change
-                  for {boldList(alsoGoverns)} too; Think applies to this route
+                  The abilities above belong to the model, so they change there too; Think applies
+                  to this route
                   {thinkReach.length === 0 ? (
                     ' only'
                   ) : thinkReach.length === 1 ? (

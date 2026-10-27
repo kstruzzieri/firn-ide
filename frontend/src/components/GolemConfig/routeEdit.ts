@@ -18,7 +18,7 @@ import {
   type RouteProjection,
   type ThinkMode,
 } from '../../types/golem';
-import { modelFactsOf } from '../../types/golemConfig';
+import { modelFactsOf, type ReachGroup } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
 
 /** A hand-declared model: authoritative facts, not detected ones (§4.4). */
@@ -88,6 +88,36 @@ export const usedByOf = (routes: readonly RouteProjection[], roles: readonly str
   [
     ...new Set(routes.filter((route) => roles.includes(route.role)).map((route) => route.useCase)),
   ].sort(compareString);
+
+/** Who else a route edit's values reach, by how they reach the model. Sorted. */
+export interface EditReach {
+  /** Routes that run on the model: other routes staged onto it, applied routes whose role on it changes. */
+  uses: string[];
+  /** Routes that reach a changed role on the model only through a fallback chain. */
+  fallsBack: string[];
+  /** Roles on the model that route nothing (the Defined models list) whose values change. */
+  definedAs: string[];
+}
+
+/**
+ * [#307][#349] `usedByOf`'s counterpart for the editor's reach sentence: who
+ * else an edit to `useCase` changes, read from the probe's reach group
+ * (`reachGroupFor`), the data the row markers and the Defined models list
+ * read, so the notice names what those rows will mark and nothing they will
+ * not. `definedAs` is the selector's unrouted roles a selector-wide write
+ * rewrites, which no route row shows.
+ */
+export const editReachOf = (group: ReachGroup | undefined, useCase: string): EditReach => ({
+  uses:
+    group === undefined
+      ? []
+      : [
+          ...group.edited.map((edit) => edit.useCase).filter((other) => other !== useCase),
+          ...group.sameModel,
+        ].sort(compareString),
+  fallsBack: group?.fallback ?? [],
+  definedAs: group?.affectedRoles ?? [],
+});
 
 /** A card's abilities as one line; the line never reads empty. */
 export const abilitiesLine = (caps: readonly CapabilityName[]): string =>
