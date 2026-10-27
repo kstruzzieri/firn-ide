@@ -1924,7 +1924,7 @@ describe('RouteEditor', () => {
       ).getByLabelText('thinking')
     );
     expect(screen.getByText(/already exposes/)).toHaveTextContent(
-      'role chat-role already exposes chat, stream, tool_call on this model; a route joining it cannot expose a different set.'
+      'role chat-role (rewritten after an earlier change in this group) already exposes chat, stream, tool_call on this model; a route joining it cannot expose a different set.'
     );
     await stage();
     expect(onStage).not.toHaveBeenCalled();
@@ -1972,7 +1972,7 @@ describe('RouteEditor', () => {
     expect(screen.getByLabelText('Think mode')).toHaveValue('auto');
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
     expect(screen.getByText(/already sets Think/)).toHaveTextContent(
-      'role chat-role already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
+      'role chat-role (rewritten after an earlier change in this group) already sets Think to auto on this model; a route joining it cannot set a different Think mode.'
     );
     await stage();
     expect(onStage).not.toHaveBeenCalled();
@@ -2013,8 +2013,10 @@ describe('RouteEditor', () => {
         screen.getByRole('group', { name: 'Capabilities this model supports' })
       ).getByLabelText('thinking')
     );
+    // The edited role's own rewrite is overtaken by the agent join: said as
+    // such, never as a departure.
     expect(screen.getByText(/already exposes/)).toHaveTextContent(
-      /^role chat-role already exposes chat, stream, tool_call on this model; a route joining it cannot expose a different set\.$/
+      /^role chat-role \(rewritten after an earlier change in this group\) already exposes chat, stream, tool_call on this model; a route joining it cannot expose a different set\.$/
     );
     await stage();
     expect(onStage).not.toHaveBeenCalled();

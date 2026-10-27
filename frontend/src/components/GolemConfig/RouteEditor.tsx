@@ -486,8 +486,8 @@ export function RouteEditor({
    * validates every mutation, so what counts is the selector as it stands
    * when THIS join runs. A sibling is skipped only when it is gone by then:
    * its one routed use case has a staged route onto another selector whose
-   * plan sorts before this one (a retarget rewrites the role onto the new
-   * selector). Everything else stays and counts — a fork keeps the source
+   * plan sorts before every mutation of the group (below; a retarget rewrites
+   * the role onto the new selector). Everything else stays and counts — a fork keeps the source
    * role on the selector, an unassigned route is still bound, and a
    * departure sorting after the join is a transient conflict the backend
    * still refuses — named by the routes it still serves, or as
@@ -525,7 +525,7 @@ export function RouteEditor({
     // departure or rewrite: read the OTHER staged routes.
     const staged = stagedRoutes(others);
     const unassigned = new Set(
-      draft.changes.flatMap((change) => (change.kind === 'route-unassign' ? [change.useCase] : []))
+      others.flatMap((change) => (change.kind === 'route-unassign' ? [change.useCase] : []))
     );
     const joinId = changeStableID(candidate);
     // The stable ids of every mutation of this selector group that runs in
@@ -560,6 +560,8 @@ export function RouteEditor({
       // mutation of the group that runs after it.
       if (
         rewrite !== undefined &&
+        rewrite.modelFacts.provider === sibling.provider &&
+        rewrite.modelFacts.model === sibling.modelName &&
         !sameModelFacts(sibling, rewrite.modelFacts) &&
         base.routes.some(
           (route) => route.useCase === rewrite.useCase && route.role === sibling.role
@@ -587,14 +589,18 @@ export function RouteEditor({
       // Still here, but only because its plan sorts after this join, or after
       // an earlier mutation of the group — say so. departure !== undefined
       // means the sibling's one route is leaving, so names is always empty
-      // then — the note only ever decorates the role-fallback name.
-      const departureNote =
-        departure === undefined
-          ? ''
-          : compareString(changeStableID(departure), joinId) > 0
+      // then; the edited role's own rewrite is this plan, overtaken by an
+      // earlier change of the group. Either note only ever decorates the
+      // role-fallback name.
+      const note =
+        departure !== undefined
+          ? compareString(changeStableID(departure), joinId) > 0
             ? ` (its ${departure.useCase} route leaves after this join)`
-            : ` (its ${departure.useCase} route leaves after an earlier change in this group)`;
-      return names.length > 0 ? names : [`role ${sibling.role}${departureNote}`];
+            : ` (its ${departure.useCase} route leaves after an earlier change in this group)`
+          : sibling.role === role
+            ? ' (rewritten after an earlier change in this group)'
+            : '';
+      return names.length > 0 ? names : [`role ${sibling.role}${note}`];
     };
     for (const sibling of base.models) {
       if (

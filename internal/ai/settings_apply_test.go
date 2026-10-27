@@ -2760,6 +2760,36 @@ func TestApplySettingsRejectsAgentProviderEndpointMadeUnusable(t *testing.T) {
 	}
 }
 
+// writtenModels parses the target the harness wrote, as raw JSON objects, so a
+// test can assert on the PRESENCE of a key and not only its value.
+func writtenModels(t *testing.T, h *applyHarness) map[string]map[string]json.RawMessage {
+	t.Helper()
+	var doc struct {
+		Models   map[string]map[string]json.RawMessage `json:"models"`
+		Defaults map[string]string                     `json:"defaults"`
+	}
+	if err := json.Unmarshal(h.targetBytes(t), &doc); err != nil {
+		t.Fatalf("written target: %v", err)
+	}
+	return doc.Models
+}
+
+// writtenCapabilities decodes a written role's `capabilities`; (nil, false)
+// when the key is absent — the file is pretty-printed, so compare values,
+// never bytes.
+func writtenCapabilities(t *testing.T, role map[string]json.RawMessage) ([]string, bool) {
+	t.Helper()
+	raw, ok := role["capabilities"]
+	if !ok {
+		return nil, false
+	}
+	var caps []string
+	if err := json.Unmarshal(raw, &caps); err != nil {
+		t.Fatalf("written capabilities %s: %v", raw, err)
+	}
+	return caps, true
+}
+
 func TestApplySettingsSameSelectorRetargetBeforeJoin(t *testing.T) {
 	h := newApplyHarness(t, `{
 		"providers": {"hosted": {"base_url": "http://localhost:11434"}},
@@ -2778,6 +2808,48 @@ func TestApplySettingsSameSelectorRetargetBeforeJoin(t *testing.T) {
 	}
 	if result.Status != "applied" {
 		t.Fatalf("result = %+v, want applied", result)
+	}
+	// The rewrite replaced the owner's set rather than merely not conflicting:
+	// both roles now carry the joined set, and the owner's type moved.
+	models := writtenModels(t, h)
+	if string(models["agent-role"]["type"]) != `"moe"` {
+		t.Fatalf("owner type = %s, want moe", models["agent-role"]["type"])
+	}
+	for _, role := range []string{"agent-role", "chat-role"} {
+		if caps, _ := writtenCapabilities(t, models[role]); !slices.Equal(caps, []string{"chat", "stream", "tool_call", "thinking"}) {
+			t.Fatalf("%s capabilities = %v", role, caps)
+		}
+	}
+}
+
+// TestApplySettingsJoinBeforeSameSelectorRetargetIsRefused is the negative
+// control the editor's pre-check mirrors: when the join sorts BEFORE the
+// owner's same-selector retarget (route:agent before route:chat), it writes
+// the joined set while the owner still holds the old one, and go-llm's
+// per-mutation gate refuses the document (selector_conflict).
+func TestApplySettingsJoinBeforeSameSelectorRetargetIsRefused(t *testing.T) {
+	h := newApplyHarness(t, `{
+		"providers": {"hosted": {"base_url": "http://localhost:11434"}},
+		"models": {
+			"chat-role": {"name": "gpt-5", "provider": "hosted", "type": "dense", "capabilities": ["chat", "stream", "tool_call"]},
+			"agent-role": {"name": "gpt-5-mini", "provider": "hosted", "type": "dense", "capabilities": ["chat", "stream", "tool_call"]}
+		},
+		"defaults": {"agent": "agent-role", "chat": "chat-role"}
+	}`)
+	before := h.targetBytes(t)
+	join := routeChange("agent", "hosted", "gpt-5", "chat", "stream", "tool_call", "thinking")
+	retarget := routeChange("chat", "hosted", "gpt-5", "chat", "stream", "tool_call", "thinking")
+	retarget.ModelFacts.Type = "moe"
+	result, err := h.svc.ApplySettings(h.request(t, join, retarget))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "diagnostics" || len(result.Diagnostics) != 1 ||
+		result.Diagnostics[0].Code != codeSelectorConflict {
+		t.Fatalf("result = %+v, want one %s diagnostic", result, codeSelectorConflict)
+	}
+	if got := h.targetBytes(t); !bytes.Equal(got, before) {
+		t.Fatal("refused request changed the target")
 	}
 }
 
