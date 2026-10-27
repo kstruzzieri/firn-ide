@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -995,11 +996,13 @@ func TestGolemRuntimeTransportRefusesRedirects(t *testing.T) {
 }
 
 // chatServer serves one streamed ollama chat answer per request and records
-// the Host each request named; the caller starts it, with or without TLS.
+// the Host each request named, and over TLS the server name its client sent;
+// the caller starts it, with or without TLS.
 type chatServer struct {
 	*httptest.Server
-	mu    sync.Mutex
-	hosts []string
+	mu       sync.Mutex
+	hosts    []string
+	tlsNames []string
 }
 
 func newOllamaChatServer(t *testing.T, ln net.Listener) *chatServer {
@@ -1008,6 +1011,9 @@ func newOllamaChatServer(t *testing.T, ln net.Listener) *chatServer {
 	cs.Server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cs.mu.Lock()
 		cs.hosts = append(cs.hosts, r.Host)
+		if r.TLS != nil {
+			cs.tlsNames = append(cs.tlsNames, r.TLS.ServerName)
+		}
 		cs.mu.Unlock()
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -1025,6 +1031,14 @@ func (cs *chatServer) requestHosts() []string {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	return slices.Clone(cs.hosts)
+}
+
+// requestTLSNames is the TLS server name (SNI) of every request served so far
+// over TLS.
+func (cs *chatServer) requestTLSNames() []string {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return slices.Clone(cs.tlsNames)
 }
 
 // standInDialer refuses the refused IP literals, dials every other literal as
@@ -1172,10 +1186,10 @@ func TestGolemRuntimeTransportDialsLoopbackForHTTPSLocalhost(t *testing.T) {
 			target.destination.Endpoint = endpoint
 			rec := &dialRecorder{next: (&net.Dialer{}).DialContext}
 			base := &http.Transport{DialContext: rec.dial}
-			// The test server's certificate names example.com; the request
-			// host stays localhost.
-			base.TLSClientConfig = srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
-			base.TLSClientConfig.ServerName = "example.com"
+			// The test server's certificate does not name localhost, so the
+			// client skips verification here; the name it sends is asserted
+			// below instead.
+			base.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 			tc.hook(base, &hookUsed)
 			backend, transport, err := buildProviderOn(base, target, "")
 			if err != nil {
@@ -1194,6 +1208,9 @@ func TestGolemRuntimeTransportDialsLoopbackForHTTPSLocalhost(t *testing.T) {
 			}
 			if got, want := srv.requestHosts(), []string{fmt.Sprintf("localhost:%d", port)}; !slices.Equal(got, want) {
 				t.Fatalf("loopback listener saw Host %q, want %q: one request that still names localhost", got, want)
+			}
+			if got, want := srv.requestTLSNames(), []string{"localhost"}; !slices.Equal(got, want) {
+				t.Fatalf("loopback listener saw TLS server name %q, want %q", got, want)
 			}
 		})
 	}
