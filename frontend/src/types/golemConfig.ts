@@ -1698,7 +1698,8 @@ export const sameCaps = (a: readonly CapabilityName[], b: readonly CapabilityNam
  * Ceilings, named rather than drawn: a SOURCE selector left by a retarget can
  * change its remaining roles' projected exposure when the leaver carried the
  * selector's only explicit override (`capabilityOverride` names the owner
- * since #335, but reach stays a DESTINATION report); a fallback role forked by an unrouted referrer
+ * since #335, but reach stays a DESTINATION report); a fallback role forked
+ * by an unrouted referrer
  * (`fallbacks[role]`) is invisible here as in `selectorGroups`; reasserting an
  * identical override can change EFFECTIVE caps without changing the
  * projection, which is outside the definition of reach.

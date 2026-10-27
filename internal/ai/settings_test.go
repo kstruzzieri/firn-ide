@@ -227,12 +227,18 @@ func TestProjectionCapabilityOverride(t *testing.T) {
 	// #335: the explicit override is reported on the role that OWNS it,
 	// canonical, beside the folded exposure both roles show — so the editor
 	// can tell an owner from a sibling that only derives its set.
+	// The frontend validator refuses a projection whose override differs from
+	// the owner's effective set, so the three-way equality is pinned here,
+	// where it is produced (go-llm's ResolvedCapabilities returns the explicit
+	// list verbatim).
 	want := []string{"chat", "tool_call"}
 	if !reflect.DeepEqual(alpha.CapabilityOverride, want) ||
+		!reflect.DeepEqual(alpha.EffectiveCapabilities, want) ||
 		!reflect.DeepEqual(alpha.ExposedCapabilities, want) ||
 		!reflect.DeepEqual(beta.ExposedCapabilities, want) {
-		t.Fatalf("override alpha=%v (exposed %v) beta exposed=%v, want %v",
-			alpha.CapabilityOverride, alpha.ExposedCapabilities, beta.ExposedCapabilities, want)
+		t.Fatalf("override alpha=%v (effective %v, exposed %v) beta exposed=%v, want %v",
+			alpha.CapabilityOverride, alpha.EffectiveCapabilities, alpha.ExposedCapabilities,
+			beta.ExposedCapabilities, want)
 	}
 	// A deriving role owns none, on an overridden selector or not, and the
 	// wire omits the key: the frontend reads absence, never an empty list.

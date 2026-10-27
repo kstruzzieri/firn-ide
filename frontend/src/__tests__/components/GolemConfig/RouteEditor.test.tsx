@@ -1694,6 +1694,32 @@ describe('RouteEditor', () => {
     expect(onStage).toHaveBeenCalledTimes(1);
   });
 
+  it('names an owner by role when its route leaves only after this join', async () => {
+    // Route plans run in stable-id order: `route:agent` joins gpt-5 before
+    // `route:chat` moves chat-role off it, so the owner is still there — with
+    // nothing routed left to name — when the join is gated. Same rule, same
+    // wording, as the Think conflict.
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [
+        model({ role: 'agent-role', routedUseCases: ['agent'] }),
+        gpt5Owner({ role: 'chat-role', routedUseCases: ['chat'] }),
+      ],
+      draft: draftWith(routedAway('chat')),
+    });
+    await openRoute('agent');
+    await pickModel('gpt-5');
+    await userEvent.click(screen.getByLabelText(/^thinking/));
+    expect(screen.getByText(/already exposes/)).toHaveTextContent(
+      'role chat-role (its chat route leaves after this join) already exposes chat, stream, tool_call on this model; a route joining it cannot expose a different set.'
+    );
+    await stage();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
   it('unlocks the selector when its only owner leaves, though a deriving sibling stays', async () => {
     // The owner (agent-role) is retargeted away before this join; spare-role
     // stays but only DERIVES its set — its exposure still shows the folded
