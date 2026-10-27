@@ -49,6 +49,7 @@ import {
   type ReachGroup,
   type RouteReachEntry,
   type RowMarkers,
+  routedOnto,
 } from '../../types/golemConfig';
 import { orderModelsForDisplay } from '../../utils/golemModelOrder';
 import { listUseCases } from '../../utils/listUseCases';
@@ -441,7 +442,7 @@ export function RoutingCard({
         floorShortfalls(probe.exposedCaps, governedUseCasesOf(base, draft, probe)),
         base,
         probe.modelFacts,
-        [useCase]
+        [useCase, ...routedOnto(draft.changes, probe.modelFacts)]
       );
       return { useCase, reason: shortfallLine(short) };
     });

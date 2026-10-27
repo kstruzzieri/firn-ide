@@ -1354,6 +1354,33 @@ describe('RouteEditor', () => {
     expect(joined.thinkMode).toBe('auto');
   });
 
+  it('reopens an adopted hand-declared model with its hidden Think intact', async () => {
+    // [#311] The staged join declares thinking but exposes none and keeps
+    // thinkMode auto. Reopened untouched, nothing is cleared and nothing is
+    // there to stage: the checklist and the arrival are seeded from one
+    // exposure, never from the declaration.
+    const peer: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'fresh-model', type: 'dense' },
+      capabilityFacts: {
+        caps: ['chat', 'stream', 'tool_call', 'thinking'],
+        knownCaps: [...CAPABILITY_NAMES],
+      },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+      thinkMode: 'auto',
+      confirmUnknown: false,
+    };
+    const adopted: RouteChange = { ...peer, useCase: 'agent' };
+    const { onStage } = renderRouting({ models: [model()], draft: draftWith(peer, adopted) });
+    // Unrouted in the applied document, so the row still offers Assign.
+    await openRoute('agent', 'Assign');
+    expect(screen.queryByText(/cleared/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
   it('re-seeds from its own coalesced staging when a pick returns to that model', async () => {
     // chat staged an override on its model that narrows the exposure and sets
     // Think. Reopened, the user picks another model, then the original again:
@@ -4126,6 +4153,48 @@ describe('RouteEditor union floor (wave 4c)', () => {
     await userEvent.click(screen.getByRole('button', { name: /not eligible/ }));
     expect(within(cardNamed('deepseek')).getByText('agent needs tool_call')).toBeInTheDocument();
     expect(screen.queryByText(/\(via /)).not.toBeInTheDocument();
+  });
+
+  it('names no chain for a staged route that joins the model directly', async () => {
+    // [#311] agent is staged onto deepseek, its fallback model, so after
+    // Apply it runs there directly. Unticking tool_call on analysis, also on
+    // deepseek, names agent without the chain it has today.
+    const front = model({
+      role: 'front-role',
+      modelName: 'front',
+      routedUseCases: ['agent'],
+      fallbacks: ['pro-role'],
+    });
+    const pro = model({
+      role: 'pro-role',
+      modelName: 'deepseek',
+      effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+      capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: ['chat', 'stream', 'tool_call'],
+      routedUseCases: ['agent', 'analysis'],
+    });
+    const join: RouteChange = {
+      kind: 'route',
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'deepseek', type: 'dense' },
+      capabilityFacts: pro.capabilityFacts,
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'front-role' },
+        { useCase: 'analysis', role: 'pro-role' },
+      ],
+      models: [model(), front, pro],
+      draft: draftWith(join),
+    });
+    await openRoute('analysis');
+    await userEvent.click(screen.getByLabelText(/^tool_call/));
+    expect(screen.getByText(/takes it from/)).toHaveTextContent(
+      'Unticking tool_call takes it from every route on deepseek: agent needs tool_call.'
+    );
   });
 
   it('locks a sibling floor in the exposure checklist once the card is chosen', async () => {

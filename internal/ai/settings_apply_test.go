@@ -3115,6 +3115,99 @@ func TestApplySettingsRetargetWhoseOwnFloorFailsIsRefusedByUseCase(t *testing.T)
 	}
 }
 
+// soleOwnerJSON: chat-m is the only role on chat-model and carries the list
+// its type derives, as an older Firn left it. sharedOwnerJSON adds spare-m,
+// routed by nothing, holding the same list on the same model.
+var soleOwnerJSON = strings.Replace(chainTargetJSON,
+	`"chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense"}`,
+	`"chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense", "capabilities": ["chat", "generate", "stream"]}`, 1)
+
+var sharedOwnerJSON = strings.Replace(soleOwnerJSON,
+	`"chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense", "capabilities": ["chat", "generate", "stream"]}`,
+	`"chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense", "capabilities": ["chat", "generate", "stream"]},
+    "spare-m": {"name": "chat-model", "provider": "ollama", "type": "dense", "capabilities": ["chat", "generate", "stream"]}`, 1)
+
+// TestApplySettingsSameSelectorRetargetKeepsTheSoleOwnersList: a type change
+// in place is a retarget, and SetRoleModel clears what is not re-asserted.
+// When the role is the only one on its selector holding a list, nil would
+// take the selector's explicit list with it — state go-llm reads as
+// selector-wide — so the list is sent again; beside a sibling holding the
+// same list it is redundant and goes.
+func TestApplySettingsSameSelectorRetargetKeepsTheSoleOwnersList(t *testing.T) {
+	cases := []struct {
+		name    string
+		fixture string
+		keep    bool
+	}{
+		{"the sole holder keeps it", soleOwnerJSON, true},
+		{"a sibling holding the list lets it go", sharedOwnerJSON, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.fixture == chainTargetJSON {
+				t.Fatal("fixture replace did not apply")
+			}
+			h := newApplyHarness(t, tc.fixture)
+			change := routeChange("chat", "ollama", "chat-model", "chat", "generate", "stream")
+			change.ModelFacts.Type = "moe"
+			res, err := h.svc.ApplySettings(h.request(t, change))
+			if err != nil {
+				t.Fatalf("ApplySettings(retarget in place): %v", err)
+			}
+			if res.Status != "applied" {
+				t.Fatalf("ApplySettings(retarget in place) = %+v, want applied", res)
+			}
+			models := writtenModels(t, h)
+			if string(models["chat-m"]["type"]) != `"moe"` {
+				t.Fatalf("type after the retarget = %s", models["chat-m"]["type"])
+			}
+			caps, explicit := writtenCapabilities(t, models["chat-m"])
+			if explicit != tc.keep {
+				t.Fatalf("explicit list present = %v (%v), want %v", explicit, caps, tc.keep)
+			}
+			if tc.keep && !slices.Equal(caps, []string{"chat", "generate", "stream"}) {
+				t.Fatalf("kept list = %v", caps)
+			}
+			if !tc.keep {
+				if spare, ok := writtenCapabilities(t, models["spare-m"]); !ok || !slices.Equal(spare, []string{"chat", "generate", "stream"}) {
+					t.Fatalf("sibling's list changed: %v (%v)", spare, ok)
+				}
+			}
+		})
+	}
+}
+
+// orphanedMaskJSON: old-m, routed by nothing, holds the list its type derives
+// on chat-model; chat-m sits there with no list of its own, as a join since
+// #311 leaves it. go-llm refuses to remove the last role supplying a
+// selector-wide list while siblings remain, so the redundant list is
+// cleared on old-m first and the removal goes through.
+var orphanedMaskJSON = strings.Replace(chainTargetJSON,
+	`"chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense"}`,
+	`"chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense"},
+    "old-m": {"name": "chat-model", "provider": "ollama", "type": "dense", "capabilities": ["chat", "generate", "stream"]}`, 1)
+
+func TestApplySettingsRemovingTheLastRedundantOwnerDropsItsListFirst(t *testing.T) {
+	if orphanedMaskJSON == chainTargetJSON {
+		t.Fatal("fixture replace did not apply")
+	}
+	h := newApplyHarness(t, orphanedMaskJSON)
+	res, err := h.svc.ApplySettings(h.request(t, Change{Kind: changeKindRoleRemove, Role: "old-m"}))
+	if err != nil {
+		t.Fatalf("ApplySettings(remove): %v", err)
+	}
+	if res.Status != "applied" {
+		t.Fatalf("ApplySettings(remove) = %+v, want applied", res)
+	}
+	models := writtenModels(t, h)
+	if _, still := models["old-m"]; still {
+		t.Fatal("old-m still written")
+	}
+	if caps, explicit := writtenCapabilities(t, models["chat-m"]); explicit {
+		t.Fatalf("survivor gained a list: %v", caps)
+	}
+}
+
 // TestApplySettingsForkWithNarrowingExposureIsRefusedByUseCase: the same move
 // with an exposure that differs from the derived set IS an explicit override,
 // selector-wide, so `mimo-m`'s chain use case gates it. The refusal names that

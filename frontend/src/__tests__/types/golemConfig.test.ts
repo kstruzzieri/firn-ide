@@ -1169,6 +1169,50 @@ describe('governed set under the asserted-override rule (#311)', () => {
     ]);
   });
 
+  it('counts the edited route own role when a retarget in place would take the selector only list with it', () => {
+    // chat runs on own-role, the only role on shared-model holding a list,
+    // the derived one. A type change in place is a retarget, and the backend
+    // re-sends the list rather than let SetRoleModel clear the selector's
+    // only explicit list, so the gate widens to the selector's roles. Beside
+    // a sibling holding the same list nothing is taken: the join governs
+    // itself alone.
+    const own = modelRow({
+      role: 'own-role',
+      modelName: 'shared-model',
+      effectiveCapabilities: DERIVED,
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: DERIVED,
+      capabilityOverride: DERIVED,
+      routedUseCases: ['chat'],
+    });
+    const side = modelRow({
+      role: 'side-role',
+      modelName: 'shared-model',
+      effectiveCapabilities: DERIVED,
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: DERIVED,
+      routedUseCases: ['agent'],
+    });
+    const retype = routeChange({
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'shared-model', type: 'moe' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: DERIVED,
+    });
+    const routes = [
+      { useCase: 'chat', role: 'own-role' },
+      { useCase: 'agent', role: 'side-role' },
+    ];
+    expect(governedUseCasesOf({ routes, models: [own, side] }, draft, retype)).toEqual([
+      'chat',
+      'agent',
+    ]);
+    const sideHolding = modelRow({ ...side, capabilityOverride: DERIVED });
+    expect(governedUseCasesOf({ routes, models: [own, sideHolding] }, draft, retype)).toEqual([
+      'chat',
+    ]);
+  });
+
   it('governs every route on the selector for an override, changed or not', () => {
     // Whatever is staged as an override is applied through SetRoleOverrides,
     // which gates every role on the selector; the EDITOR is what keeps an

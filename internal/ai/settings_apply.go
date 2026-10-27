@@ -1627,6 +1627,9 @@ func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed
 	// identity, so a use case cannot be both rebound and unbound in one
 	// request, and nothing else can orphan a role born in this batch.
 	for _, change := range stagedChanges(req.Changes, consumed, changeKindRoleRemove) {
+		if result := dropRedundantListBeforeRemoval(doc, change.Role); result != nil {
+			return result
+		}
 		if err := doc.RemoveRole(change.Role); err != nil {
 			return actionDiagnostics(err)
 		}
@@ -1635,6 +1638,62 @@ func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed
 		if err := doc.RemoveProvider(change.Name); err != nil {
 			return actionDiagnostics(err)
 		}
+	}
+	return nil
+}
+
+// dropRedundantListBeforeRemoval clears, on a role about to be removed, an
+// explicit capability list equal to what its type derives, when siblings on
+// its selector remain and none of them holds a list: go-llm reads an
+// explicit list as selector-wide state and refuses to remove the last role
+// supplying it (selectorStateDrop) while siblings depend on it — siblings a
+// Firn since #311 joined with no list of their own, beside exactly such a
+// redundant one. Cleared, the list leaves every survivor resolving the same
+// set it did. A list that says something is left alone and go-llm's refusal
+// stands. The rewrite drops the role's slots, which the removal drops anyway.
+func dropRedundantListBeforeRemoval(doc *config.Document, role string) *SettingsApplyResult {
+	cfg := doc.Config()
+	m, ok := cfg.Models[role]
+	if !ok || len(m.Capabilities) == 0 {
+		return nil
+	}
+	derived := canonicalizeCapabilities(config.ModelConfig{Type: m.Type}.ResolvedCapabilities())
+	if !slices.Equal(canonicalizeCapabilities(m.Capabilities), derived) {
+		return nil
+	}
+	selector := modelSelector{provider: m.Provider, model: m.Name}
+	survivors := false
+	for other, sibling := range cfg.Models {
+		if other == role || (modelSelector{provider: sibling.Provider, model: sibling.Name}) != selector {
+			continue
+		}
+		if len(sibling.Capabilities) > 0 {
+			return nil
+		}
+		survivors = true
+	}
+	if !survivors {
+		return nil
+	}
+	caps, err := provider.ParseCapsStrict(derived)
+	if err != nil {
+		return blockingDiagnostics(Diagnostic{Code: codeInvalidArgument, SubjectKind: "role", SubjectName: role})
+	}
+	if _, err := doc.SetRoleModel(role, config.ModelFacts{
+		Key:           provider.ModelKey{Provider: m.Provider, Model: m.Name},
+		Type:          m.Type,
+		Parameters:    m.Parameters,
+		ContextWindow: m.ContextWindow,
+		Dimensions:    m.Dimensions,
+	}, config.SetRoleModelOpts{
+		Requirements:   floorRequirements(),
+		Caps:           caps,
+		KnownMask:      provider.CanonicalCaps(),
+		ConfirmUnknown: true,
+		ThinkMode:      m.ThinkMode,
+		ThinkTags:      m.ThinkTags,
+	}); err != nil {
+		return actionDiagnostics(err)
 	}
 	return nil
 }
@@ -1866,12 +1925,36 @@ func roleOptions(cfg *config.Config, plan routePlan) (config.SetRoleModelOpts, e
 // with it, and the refusal upstream gives is the conflict it is.
 func assertedCapabilities(cfg *config.Config, plan routePlan) []string {
 	derived := canonicalizeCapabilities(config.ModelConfig{Type: plan.change.ModelFacts.Type}.ResolvedCapabilities())
-	if owner, owned := selectorCapabilityOverrides(cfg)[plan.selector]; !owned || slices.Equal(owner, derived) {
-		if slices.Equal(canonicalizeCapabilities(plan.change.ExposedCaps), derived) {
-			return nil
+	if !slices.Equal(canonicalizeCapabilities(plan.change.ExposedCaps), derived) {
+		return overrideCapabilities(plan.change.ExposedCaps)
+	}
+	owner, owned := selectorCapabilityOverrides(cfg)[plan.selector]
+	if !owned {
+		return nil
+	}
+	if !slices.Equal(owner, derived) || (plan.action == routeRetarget && soleListHolder(cfg, plan.role, plan.selector)) {
+		return overrideCapabilities(plan.change.ExposedCaps)
+	}
+	return nil
+}
+
+// soleListHolder reports whether role sits on selector and is the only role
+// there holding an explicit list. A retarget in place (a type change on the
+// same model) that sent nil would take that list with it — SetRoleModel
+// clears what is not re-asserted — and go-llm reads it as selector-wide
+// state the siblings use (selectorStateDrop), so such a retarget sends the
+// list again even when it is the derived one.
+func soleListHolder(cfg *config.Config, role string, selector modelSelector) bool {
+	own, ok := cfg.Models[role]
+	if !ok || len(own.Capabilities) == 0 || (modelSelector{provider: own.Provider, model: own.Name}) != selector {
+		return false
+	}
+	for other, m := range cfg.Models {
+		if other != role && len(m.Capabilities) > 0 && (modelSelector{provider: m.Provider, model: m.Name}) == selector {
+			return false
 		}
 	}
-	return overrideCapabilities(plan.change.ExposedCaps)
+	return true
 }
 
 // refuseIneligible mirrors upstream's eligibility gate for one plan against

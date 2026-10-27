@@ -1711,17 +1711,30 @@ const assertsOverride = (
   const derived = TYPE_DERIVED_CAPABILITIES[change.modelFacts.type];
   if (!sameCaps(change.exposedCaps, derived)) return true;
   const joinId = changeStableID(change);
-  return base.models.some((model) => {
-    if (
-      model.provider !== change.modelFacts.provider ||
-      model.modelName !== change.modelFacts.model ||
-      model.capabilityOverride === undefined ||
-      sameCaps(model.capabilityOverride, derived)
-    )
-      return false;
+  const holders = base.models.filter(
+    (model) =>
+      model.provider === change.modelFacts.provider &&
+      model.modelName === change.modelFacts.model &&
+      model.capabilityOverride !== undefined
+  );
+  const owned = holders.some((model) => {
+    if (sameCaps(model.capabilityOverride ?? [], derived)) return false;
     const departure = retargetOf(base, staged, model);
     return departure === undefined || compareString(changeStableID(departure), joinId) >= 0;
   });
+  if (owned) return true;
+  // A retarget in place (a type change on the same model) of the selector's
+  // only list holder re-sends its list, derived or not: SetRoleModel clears
+  // what is not re-asserted, and go-llm reads that list as selector-wide
+  // state (the backend's soleListHolder). A role the backend forks instead —
+  // shared by another route, or listed as a fallback — keeps its list anyway.
+  const ownRole = base.routes.find((route) => route.useCase === change.useCase)?.role;
+  return (
+    holders.length === 1 &&
+    holders[0].role === ownRole &&
+    holders[0].routedUseCases.every((other) => other === change.useCase) &&
+    !isFallbackTarget(base, ownRole)
+  );
 };
 
 /**
@@ -2265,6 +2278,22 @@ export function reachOf(
   }
   return [];
 }
+
+/**
+ * [#311] The use cases the draft routes onto `selector` itself: after Apply
+ * they run there directly, whatever chain their applied role has today.
+ */
+export const routedOnto = (
+  changes: readonly Change[],
+  selector: { readonly provider: string; readonly model: string }
+): string[] =>
+  changes.flatMap((change) =>
+    change.kind === 'route' &&
+    change.modelFacts.provider === selector.provider &&
+    change.modelFacts.model === selector.model
+      ? [change.useCase]
+      : []
+  );
 
 /**
  * [#311] The same shortfalls with each chain-reached use case's route to the

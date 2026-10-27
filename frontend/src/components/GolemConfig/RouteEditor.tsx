@@ -48,6 +48,7 @@ import {
   floorShortfalls,
   governedUseCasesOf,
   isFallbackTarget,
+  routedOnto,
   leavingRoutes,
   modelFactsOf,
   overridesSelector,
@@ -392,17 +393,18 @@ export function RouteEditor({
   const [seenKey, setSeenKey] = useState(factsKey);
   /**
    * [#311] What the selected model ARRIVED with — the exposure the checklist
-   * was seeded from, captured at each seeding rather than re-read from
-   * `offeredCaps` (a hand declaration adopts a staged selector's exposure, not
-   * its declared set; another editor staging onto the selector moves the
-   * authority without re-seeding this checklist). It decides whether an
+   * was seeded from, captured at each seeding (the mount seed, a change of
+   * model, a hand declaration adopting a staged selector) rather than re-read
+   * from `offeredCaps`, which for a hand-declared model is its declared set
+   * and moves with the authority when another editor stages onto the
+   * selector. It decides whether an
    * unticked capability is a removal, and whether an unticked `thinking`
    * takes a Think with it. The row's baseline cannot: picking the applied
    * model back over a staged change that exposed `thinking` on another model
    * removes nothing.
    */
   const [arrivalExposed, setArrivalExposed] = useState<CapabilityName[]>(() =>
-    canonicalCaps(offeredCaps)
+    canonicalCaps(seed.exposed)
   );
   if (factsKey !== seenKey) {
     setSeenKey(factsKey);
@@ -500,7 +502,10 @@ export function RouteEditor({
   const short =
     candidate === null
       ? []
-      : withReach(floorShortfalls(exposed, governed), base, candidate.modelFacts, [useCase]);
+      : withReach(floorShortfalls(exposed, governed), base, candidate.modelFacts, [
+          useCase,
+          ...routedOnto(draft.changes, candidate.modelFacts),
+        ]);
   /**
    * [#311] A shortfall the checklist ARRIVED with is one it took away — an
    * override of the whole selector, said as what it removes and from whom;
@@ -761,7 +766,7 @@ export function RouteEditor({
         floorShortfalls(probe.exposedCaps, governedBy(probe)),
         base,
         probe.modelFacts,
-        [useCase]
+        [useCase, ...routedOnto(draft.changes, probe.modelFacts)]
       );
       cache.set(model.role, verdict);
       return verdict;
