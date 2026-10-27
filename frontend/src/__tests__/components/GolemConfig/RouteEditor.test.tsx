@@ -2366,12 +2366,18 @@ describe('RouteEditor', () => {
     const announcement = screen.getByRole('alert');
     expect(announcement).toBeEmptyDOMElement();
     expect(announcement).toHaveAttribute('aria-atomic', 'true');
+    expect(announcement).not.toHaveFocus();
     await pickModel('gpt-5');
     await stage();
 
     const refusal = screen.getByRole('alert');
     expect(refusal).toBe(announcement);
     expect(refusal).toHaveTextContent(/requirements are unknown/i);
+    expect(refusal).toHaveFocus();
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'Done' })).toHaveFocus();
+    await userEvent.keyboard('{Enter}');
+    expect(refusal).toHaveFocus();
     expect(screen.getByTestId('editor-changes').nextElementSibling).toBe(refusal);
     expect(refusal.nextElementSibling).toContainElement(
       screen.getByRole('button', { name: 'Done' })

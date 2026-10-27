@@ -30,7 +30,16 @@
  * omission or an extra.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   CAPABILITY_NAMES,
   compareString,
@@ -340,7 +349,15 @@ export function RouteEditor({
   const [think, setThink] = useState<ThinkMode>(seed.think);
   const [ackUnknown, setAckUnknown] = useState(seed.ackUnknown);
   const [ackDrops, setAckDrops] = useState(seed.ackDrops);
-  const [refusal, setRefusal] = useState('');
+  const refusalRef = useRef<HTMLParagraphElement>(null);
+  // A fresh notice lets repeated Done presses focus the same refusal again.
+  const [refusal, setRefusal] = useReducer(
+    (_previous: { text: string }, text: string) => ({ text }),
+    { text: '' }
+  );
+  useEffect(() => {
+    if (refusal.text !== '') refusalRef.current?.focus();
+  }, [refusal]);
 
   // The facts the picker currently yields. `null` means "not choosable yet";
   // submit() names which half is missing.
@@ -1248,14 +1265,15 @@ export function RouteEditor({
         </p>
       )}
 
-      {/* Keep the live region mounted before its text changes so VoiceOver
-          announces Done's refusal; its answer stays directly above the footer. */}
+      {/* Keep the live region mounted before its text changes. */}
       <p
-        className={refusal === '' ? styles.srOnly : styles.fieldError}
+        ref={refusalRef}
+        tabIndex={-1}
+        className={refusal.text === '' ? styles.srOnly : styles.fieldError}
         role="alert"
         aria-atomic="true"
       >
-        {refusal}
+        {refusal.text}
       </p>
 
       <div className={styles.editorFooter}>
