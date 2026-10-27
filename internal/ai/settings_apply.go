@@ -1643,26 +1643,30 @@ func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed
 }
 
 // dropRedundantListBeforeRemoval clears, on a role about to be removed, an
-// explicit capability list equal to what its type derives, when siblings on
-// its selector remain and none of them holds a list: go-llm reads an
-// explicit list as selector-wide state and refuses to remove the last role
-// supplying it (selectorStateDrop) while siblings depend on it — siblings a
-// Firn since #311 joined with no list of their own, beside exactly such a
-// redundant one. Cleared, the list leaves every survivor resolving the same
-// set it did. A list that says something is left alone and go-llm's refusal
-// stands. The rewrite drops the role's slots, which the removal drops anyway.
+// explicit capability list that owns nothing: siblings on its selector
+// remain, none holds a list, and every one of them resolves exactly that
+// list from its own type once it is gone. go-llm reads an explicit list as
+// selector-wide state and refuses to remove the last role supplying it
+// (selectorStateDrop) while siblings depend on it — siblings a Firn since
+// #311 joined with no list of their own, beside exactly such a redundant
+// one. Cleared under that condition, the list leaves every survivor
+// resolving the same set it did. A list a sibling of another type would
+// resolve differently without is left alone, and so is a role whose slots
+// value no sibling holds (the rewrite clears slots, and the removal guard
+// would otherwise lose that one too): go-llm's refusal stands for both.
 func dropRedundantListBeforeRemoval(doc *config.Document, role string) *SettingsApplyResult {
 	cfg := doc.Config()
 	m, ok := cfg.Models[role]
 	if !ok || len(m.Capabilities) == 0 {
 		return nil
 	}
+	list := canonicalizeCapabilities(m.Capabilities)
 	derived := canonicalizeCapabilities(config.ModelConfig{Type: m.Type}.ResolvedCapabilities())
-	if !slices.Equal(canonicalizeCapabilities(m.Capabilities), derived) {
+	if !slices.Equal(list, derived) {
 		return nil
 	}
 	selector := modelSelector{provider: m.Provider, model: m.Name}
-	survivors := false
+	survivors, slotsKept := false, m.Slots == 0
 	for other, sibling := range cfg.Models {
 		if other == role || (modelSelector{provider: sibling.Provider, model: sibling.Name}) != selector {
 			continue
@@ -1670,9 +1674,15 @@ func dropRedundantListBeforeRemoval(doc *config.Document, role string) *Settings
 		if len(sibling.Capabilities) > 0 {
 			return nil
 		}
+		if !slices.Equal(canonicalizeCapabilities(sibling.ResolvedCapabilities()), list) {
+			return nil
+		}
+		if sibling.Slots == m.Slots {
+			slotsKept = true
+		}
 		survivors = true
 	}
-	if !survivors {
+	if !survivors || !slotsKept {
 		return nil
 	}
 	caps, err := provider.ParseCapsStrict(derived)

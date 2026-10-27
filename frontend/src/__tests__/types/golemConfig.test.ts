@@ -1213,6 +1213,94 @@ describe('governed set under the asserted-override rule (#311)', () => {
     ]);
   });
 
+  it('counts list holders as the backend meets them, after earlier departures and in-place rewrites of the group', () => {
+    // Two roles hold the derived list on shared-model; agent reaches it
+    // through a fallback and needs tool_call. route:analysis sorts before
+    // route:chat. When analysis leaves first, chat is the sole holder by the
+    // time its retype runs, so the backend re-sends its list and gates the
+    // selector: agent is governed. When analysis is instead retyped in place
+    // first (not sole then: its list goes), chat is again sole at its turn.
+    const holder = (role: string, useCase: string): ModelProjection =>
+      modelRow({
+        role,
+        modelName: 'shared-model',
+        effectiveCapabilities: DERIVED,
+        capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: DERIVED,
+        capabilityOverride: DERIVED,
+        routedUseCases: [useCase],
+      });
+    const chatHolder = holder('chat-role', 'chat');
+    const analysisHolder = holder('analysis-role', 'analysis');
+    // spare-role derives its set, routes nothing itself, and is how agent
+    // reaches the selector (a holder listed as a fallback would be forked,
+    // never let go).
+    const spareRole = modelRow({
+      role: 'spare-role',
+      modelName: 'shared-model',
+      effectiveCapabilities: DERIVED,
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: DERIVED,
+      routedUseCases: ['agent'],
+    });
+    const agentRole = modelRow({
+      ...owner,
+      role: 'agent-role',
+      modelName: 'agent-model',
+      routedUseCases: ['agent'],
+      fallbacks: ['spare-role'],
+    });
+    const routes = [
+      { useCase: 'agent', role: 'agent-role' },
+      { useCase: 'analysis', role: 'analysis-role' },
+      { useCase: 'chat', role: 'chat-role' },
+    ];
+    const seqBase: DraftBaseProjection = {
+      routes,
+      models: [agentRole, analysisHolder, chatHolder, spareRole],
+    };
+    const retypeChat = routeChange({
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'shared-model', type: 'moe' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: DERIVED,
+    });
+    // Nothing else staged: two holders, chat's retype in place is not sole.
+    expect(governedUseCasesOf(seqBase, draft, retypeChat)).toEqual(['chat']);
+    // analysis leaves for another model first: chat is the sole holder by then.
+    const analysisAway = routeChange({
+      useCase: 'analysis',
+      modelFacts: { provider: 'hosted', model: 'elsewhere', type: 'dense' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: DERIVED,
+    });
+    expect(governedUseCasesOf(seqBase, stage([analysisAway, retypeChat]), retypeChat)).toEqual([
+      'chat',
+      'agent',
+    ]);
+    // analysis is retyped in place first: not sole at its turn, so its list
+    // goes, and chat is sole at its own turn. analysis-role is still on the
+    // selector then, so analysis is gated too.
+    const retypeAnalysis = routeChange({
+      useCase: 'analysis',
+      modelFacts: { provider: 'hosted', model: 'shared-model', type: 'moe' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: DERIVED,
+    });
+    expect(governedUseCasesOf(seqBase, stage([retypeAnalysis, retypeChat]), retypeChat)).toEqual([
+      'chat',
+      'agent',
+      'analysis',
+    ]);
+    // The group gates as one, on the coalesced exposure: once chat's retype
+    // asserts, the analysis change staged with it is governed wide too, even
+    // though at its own turn it was not sole (the backend gates only its role
+    // then; the wider set only ever shows more).
+    expect(
+      governedUseCasesOf(seqBase, stage([retypeAnalysis, retypeChat]), retypeAnalysis)
+    ).toEqual(['analysis', 'agent', 'chat']);
+  });
+
   it('governs every route on the selector for an override, changed or not', () => {
     // Whatever is staged as an override is applied through SetRoleOverrides,
     // which gates every role on the selector; the EDITOR is what keeps an

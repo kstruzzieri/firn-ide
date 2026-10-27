@@ -3208,6 +3208,70 @@ func TestApplySettingsRemovingTheLastRedundantOwnerDropsItsListFirst(t *testing.
 	}
 }
 
+// mixedTypeMaskJSON: old-m, routed by nothing, holds the dense list on
+// chat-model beside a list-less dense sibling AND a list-less embedding
+// sibling. go-llm reads old-m's list as the selector-wide mask: the
+// embedding sibling resolves it too. Clearing it would change what that
+// sibling resolves ([embed]), so Firn leaves the list alone and go-llm's
+// refusal to remove the last supplier of the mask stands.
+var mixedTypeMaskJSON = strings.Replace(orphanedMaskJSON,
+	`"old-m": {"name": "chat-model", "provider": "ollama", "type": "dense", "capabilities": ["chat", "generate", "stream"]}`,
+	`"old-m": {"name": "chat-model", "provider": "ollama", "type": "dense", "capabilities": ["chat", "generate", "stream"]},
+    "vec-m": {"name": "chat-model", "provider": "ollama", "type": "embedding"}`, 1)
+
+func TestApplySettingsRemovingTheLastOwnerBesideAnotherTypeIsStillRefused(t *testing.T) {
+	if mixedTypeMaskJSON == orphanedMaskJSON {
+		t.Fatal("fixture replace did not apply")
+	}
+	h := newApplyHarness(t, mixedTypeMaskJSON)
+	res, err := h.svc.ApplySettings(h.request(t, Change{Kind: changeKindRoleRemove, Role: "old-m"}))
+	if err != nil {
+		t.Fatalf("ApplySettings(remove): %v", err)
+	}
+	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 || res.Diagnostics[0].Code != codeInvalidArgument {
+		t.Fatalf("ApplySettings(remove) = %+v, want go-llm's refusal", res)
+	}
+	if caps, ok := writtenCapabilities(t, writtenModels(t, h)["old-m"]); !ok || !slices.Equal(caps, []string{"chat", "generate", "stream"}) {
+		t.Fatalf("refused removal still rewrote old-m: %v (%v)", caps, ok)
+	}
+}
+
+// slotsMaskJSON: on a provider with slot discovery, old-m pins slots as well
+// as holding the derived list, beside a list-less sibling without slots.
+// Clearing the list would rewrite old-m without its slots too (SetRoleModel
+// clears them), and go-llm's removal guard would then let the selector's
+// only slots value go silently: Firn leaves old-m alone and the refusal
+// stands.
+const slotsMaskJSON = `{
+  "providers": {
+    "remote": {"base_url": "https://api.example.com/v1", "api_format": "openai-compat",
+               "api_key": "sk-live-secret", "slot_discovery": true}
+  },
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "remote", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "chat-m": {"name": "chat-model", "provider": "remote", "type": "dense"},
+    "old-m": {"name": "chat-model", "provider": "remote", "type": "dense",
+      "capabilities": ["chat", "generate", "stream"], "slots": 4}
+  },
+  "defaults": {"agent": "agent-m", "chat": "chat-m"}
+}`
+
+func TestApplySettingsRemovingTheLastOwnerWithSlotsIsStillRefused(t *testing.T) {
+	h := newApplyHarness(t, slotsMaskJSON)
+	res, err := h.svc.ApplySettings(h.request(t, Change{Kind: changeKindRoleRemove, Role: "old-m"}))
+	if err != nil {
+		t.Fatalf("ApplySettings(remove): %v", err)
+	}
+	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 || res.Diagnostics[0].Code != codeInvalidArgument {
+		t.Fatalf("ApplySettings(remove) = %+v, want go-llm's refusal", res)
+	}
+	old := writtenModels(t, h)["old-m"]
+	if string(old["slots"]) != "4" {
+		t.Fatalf("refused removal still rewrote old-m: slots=%s", old["slots"])
+	}
+}
+
 // TestApplySettingsForkWithNarrowingExposureIsRefusedByUseCase: the same move
 // with an exposure that differs from the derived set IS an explicit override,
 // selector-wide, so `mimo-m`'s chain use case gates it. The refusal names that

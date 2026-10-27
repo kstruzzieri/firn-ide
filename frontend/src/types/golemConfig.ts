@@ -1692,16 +1692,81 @@ function selectorGroups(
 }
 
 /**
+ * [#311] The roles holding an explicit list on `selector`, with the list,
+ * as the backend meets them when the change with stable id `before` runs:
+ * the applied holders, replayed through every staged route that sorts
+ * earlier and touches the selector, in stable-id order. A holder whose only
+ * route leaves for another selector is gone (a shared or fallback-referenced
+ * one is forked and stays); a holder retyped in place keeps a list only when
+ * the backend re-sends one (`assertedCapabilities`: a non-derived exposure, an
+ * owner with another list, or being the sole holder), else its list goes;
+ * a join or fork that asserts adds a holder. `exposure` is the group's
+ * coalesced exposure, which every change onto the selector is sent with.
+ * Overrides run in a later phase and change nothing here.
+ */
+const listHoldersAt = (
+  base: DraftBaseProjection,
+  staged: ReadonlyMap<string, RouteChange>,
+  selector: { readonly provider: string; readonly model: string },
+  exposure: readonly CapabilityName[],
+  before: string
+): Map<string, readonly CapabilityName[]> => {
+  const onSelector = (model: ModelProjection): boolean =>
+    model.provider === selector.provider && model.modelName === selector.model;
+  const holders = new Map<string, readonly CapabilityName[]>();
+  for (const model of base.models) {
+    if (onSelector(model) && model.capabilityOverride !== undefined)
+      holders.set(model.role, model.capabilityOverride);
+  }
+  const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
+  const modelOf = new Map(base.models.map((model) => [model.role, model]));
+  const earlier = [...staged.values()]
+    .filter((change) => compareString(changeStableID(change), before) < 0)
+    .sort((a, b) => compareString(changeStableID(a), changeStableID(b)));
+  for (const change of earlier) {
+    const role = roleOf.get(change.useCase);
+    const current = role === undefined ? undefined : modelOf.get(role);
+    const fromSelector = current !== undefined && onSelector(current);
+    const toSelector =
+      change.modelFacts.provider === selector.provider &&
+      change.modelFacts.model === selector.model;
+    if (!fromSelector && !toSelector) continue;
+    const forked =
+      current !== undefined &&
+      (current.routedUseCases.length > 1 || isFallbackTarget(base, current.role));
+    if (fromSelector && !toSelector) {
+      if (!forked && role !== undefined) holders.delete(role);
+      continue;
+    }
+    if (fromSelector && current !== undefined && sameModelFacts(current, change.modelFacts))
+      continue;
+    const derived = TYPE_DERIVED_CAPABILITIES[change.modelFacts.type];
+    const inPlace = fromSelector && !forked && role !== undefined;
+    const asserts =
+      !sameCaps(exposure, derived) ||
+      [...holders.values()].some((caps) => !sameCaps(caps, derived)) ||
+      (inPlace && holders.size === 1 && holders.has(role));
+    if (inPlace) {
+      if (asserts) holders.set(role, exposure);
+      else holders.delete(role);
+    } else if (asserts) {
+      holders.set(forked || role === undefined ? `route:${change.useCase}` : role, exposure);
+    }
+  }
+  return holders;
+};
+
+/**
  * [#311] Whether a join's exposure becomes an explicit, selector-wide override
  * in the request — the backend's `assertedCapabilities`, mirrored: no when the
- * exposure is what the model type derives and every role on the selector
- * holds no list, or holds that same derived list (what every earlier Firn
- * wrote on every move, which owns nothing the type does not resolve); yes
- * otherwise. Only an asserted override widens upstream's eligibility gate to
- * the selector's other roles. Ownership is read as the backend reads it, at
- * the join's place in stable-id order: an owner whose only route a staged
- * retarget moves away BEFORE the join is gone by then; one leaving only AFTER
- * it still counts.
+ * exposure is what the model type derives and every role holding a list on
+ * the selector, as the backend meets them when this change runs
+ * (`listHoldersAt`), holds that same derived list — what every earlier Firn
+ * wrote on every move, which owns nothing the type does not resolve — unless
+ * the change is a retarget in place (a type change on the same model) of the
+ * selector's only list holder, which re-sends its list rather than let
+ * SetRoleModel clear the selector's last one; yes otherwise. Only an asserted
+ * override widens upstream's eligibility gate to the selector's other roles.
  */
 const assertsOverride = (
   base: DraftBaseProjection,
@@ -1710,31 +1775,23 @@ const assertsOverride = (
 ): boolean => {
   const derived = TYPE_DERIVED_CAPABILITIES[change.modelFacts.type];
   if (!sameCaps(change.exposedCaps, derived)) return true;
-  const joinId = changeStableID(change);
-  const holders = base.models.filter(
-    (model) =>
-      model.provider === change.modelFacts.provider &&
-      model.modelName === change.modelFacts.model &&
-      model.capabilityOverride !== undefined
+  const holders = listHoldersAt(
+    base,
+    staged,
+    change.modelFacts,
+    change.exposedCaps,
+    changeStableID(change)
   );
-  const owned = holders.some((model) => {
-    if (sameCaps(model.capabilityOverride ?? [], derived)) return false;
-    const departure = retargetOf(base, staged, model);
-    return departure === undefined || compareString(changeStableID(departure), joinId) >= 0;
-  });
-  if (owned) return true;
-  // A retarget in place (a type change on the same model) of the selector's
-  // only list holder re-sends its list, derived or not: SetRoleModel clears
-  // what is not re-asserted, and go-llm reads that list as selector-wide
-  // state (the backend's soleListHolder). A role the backend forks instead —
-  // shared by another route, or listed as a fallback — keeps its list anyway.
+  if ([...holders.values()].some((caps) => !sameCaps(caps, derived))) return true;
   const ownRole = base.routes.find((route) => route.useCase === change.useCase)?.role;
-  return (
-    holders.length === 1 &&
-    holders[0].role === ownRole &&
-    holders[0].routedUseCases.every((other) => other === change.useCase) &&
-    !isFallbackTarget(base, ownRole)
-  );
+  const current = ownRole === undefined ? undefined : base.models.find((m) => m.role === ownRole);
+  const inPlace =
+    current !== undefined &&
+    current.provider === change.modelFacts.provider &&
+    current.modelName === change.modelFacts.model &&
+    current.routedUseCases.length <= 1 &&
+    !isFallbackTarget(base, current.role);
+  return inPlace && holders.size === 1 && holders.has(current.role);
 };
 
 /**
