@@ -1559,8 +1559,8 @@ func sameSelectorFields(a, b Change) bool {
 
 // ---------------------------------------------------------------------------
 // Mutation. Dependency-safe order, removals last: provider adds/updates ->
-// key set/clear -> role create/fork/retarget/override and bind -> unbind and
-// guarded role removal -> provider removal.
+// key set/clear -> role create/fork (each bound)/retarget -> override ->
+// unbind and guarded role removal -> provider removal.
 // ---------------------------------------------------------------------------
 
 func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed map[string]bool) *SettingsApplyResult {
@@ -1708,13 +1708,15 @@ func dropRedundantListBeforeRemoval(doc *config.Document, role string) *Settings
 	return nil
 }
 
-// applyRoutePlans runs the role-level mutations, then exactly one override per
-// selector, then the binds for the roles it created. Firn's own eligibility
-// gate (refuseIneligible) runs before each mutation against the document as
-// it stands at that point — the view upstream's gate takes — so a refusal
-// over a Firn floor names the USE CASE whose floor fails (#338, #311).
+// applyRoutePlans runs the role-level mutations, binding each role it creates
+// or forks to its use case right away, then exactly one override per
+// selector. Firn's own eligibility gate (refuseIneligible) runs before each
+// mutation against the document as it stands at that point — the view
+// upstream's gate takes — so a refusal over a Firn floor names the USE CASE
+// whose floor fails (#338, #311). The overrides run after every bind: a use
+// case this Apply moves off an overridden selector has left it by then, and
+// is gated on its new role instead (#474).
 func applyRoutePlans(doc *config.Document, plans []routePlan) *SettingsApplyResult {
-	binds := make([][2]string, 0, len(plans))
 	overrides := make([]routePlan, 0, len(plans))
 	overridden := map[modelSelector]bool{}
 	for _, plan := range plans {
@@ -1736,14 +1738,18 @@ func applyRoutePlans(doc *config.Document, plans []routePlan) *SettingsApplyResu
 			if err := doc.AddRoleModel(plan.newRole, facts, opts); err != nil {
 				return actionDiagnostics(err)
 			}
-			binds = append(binds, [2]string{plan.change.UseCase, plan.newRole})
+			if err := doc.BindUseCase(plan.change.UseCase, plan.newRole); err != nil {
+				return actionDiagnostics(err)
+			}
 		case routeFork:
 			if err := doc.ForkRoleModel(plan.role, plan.newRole, facts, config.ForkRoleModelOpts{
 				SetRoleModelOpts: opts, ConfirmDrops: plan.change.ConfirmDrops,
 			}); err != nil {
 				return forkRefusal(plan, err)
 			}
-			binds = append(binds, [2]string{plan.change.UseCase, plan.newRole})
+			if err := doc.BindUseCase(plan.change.UseCase, plan.newRole); err != nil {
+				return actionDiagnostics(err)
+			}
 		case routeRetarget:
 			if _, err := doc.SetRoleModel(plan.role, facts, opts); err != nil {
 				return actionDiagnostics(err)
@@ -1779,11 +1785,6 @@ func applyRoutePlans(doc *config.Document, plans []routePlan) *SettingsApplyResu
 				Requirements: floorRequirements(), Caps: caps, KnownMask: known,
 				ConfirmUnknown: plan.change.ConfirmUnknown,
 			}); err != nil {
-			return actionDiagnostics(err)
-		}
-	}
-	for _, bind := range binds {
-		if err := doc.BindUseCase(bind[0], bind[1]); err != nil {
 			return actionDiagnostics(err)
 		}
 	}

@@ -3136,6 +3136,34 @@ func TestApplySettingsOverrideAfterAForkAwayJudgesTheMovedUseCaseOnItsNewRole(t 
 	}
 }
 
+// TestApplySettingsOverrideAfterAForkAwayStillGatesTheUseCasesThatStay is
+// #474's negative control: the earlier bind takes only the moved use case
+// out of the override's gate. planning stays on x-m and needs tool_call, so
+// the override is still refused, naming planning and not agent.
+func TestApplySettingsOverrideAfterAForkAwayStillGatesTheUseCasesThatStay(t *testing.T) {
+	h := newApplyHarness(t, strings.Replace(overrideAfterForkAwayJSON,
+		`"chat": "x-m"`, `"chat": "x-m", "planning": "x-m"`, 1))
+	before := h.targetBytes(t)
+	res, err := h.svc.ApplySettings(h.request(t,
+		routeChange("agent", "ollama", "tool-model", "chat", "stream", "tool_call"),
+		routeChange("chat", "ollama", "shared-model", "chat", "stream"),
+	))
+	if err != nil {
+		t.Fatalf("ApplySettings(fork away, override): %v", err)
+	}
+	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+		res.Diagnostics[0].Code != codeEligibilityIneligible ||
+		res.Diagnostics[0].SubjectKind != "use_case" ||
+		res.Diagnostics[0].SubjectName != config.UseCasePlanning ||
+		!res.Diagnostics[0].Blocking {
+		t.Fatalf("ApplySettings(fork away, override) = %+v, want one blocking use_case planning %s",
+			res, codeEligibilityIneligible)
+	}
+	if got := h.targetBytes(t); !bytes.Equal(got, before) {
+		t.Fatal("refused request changed the target")
+	}
+}
+
 const ownFloorRetargetJSON = `{
   "providers": {"ollama": {"base_url": "http://localhost:11434"}},
   "models": {
