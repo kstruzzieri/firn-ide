@@ -2677,12 +2677,67 @@ describe('reach of a route edit, not its gate (#307)', () => {
       sameModel: [],
       affectedRoles: [],
     });
+    // An empty exposure (hand-built only; the editor never stages one) writes
+    // no list either, as selectorGroups' gates skips it.
+    const empty = projectDraft(mixed, stage([{ ...join, exposedCaps: [] }]));
+    expect(marked(empty)).toEqual([['chat', 'modified']]);
+    expect(empty.roleRows.size).toBe(0);
     // A list it does write reaches both.
     const asserted = { ...join, exposedCaps: ['chat', 'stream'] as CapabilityName[] };
     expect(projectDraft(mixed, stage([asserted])).reachGroups[0]).toMatchObject({
       sameModel: ['embedding'],
       affectedRoles: ['unused-embed'],
     });
+  });
+
+  it('reaches the roles a departing owner leaves to derive their own set, when the join writes no list', () => {
+    // Project review round 2: agent-role is gpt-5's only list holder (OWN) and
+    // routes only agent; planning-role derives and shows the folded OWN.
+    // agent retargets to claude, so the list leaves with it, and chat joins
+    // gpt-5 with the derived set, which the backend sends without a list:
+    // after Apply planning-role derives DERIVED, and its row says so.
+    const OWN: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    const onGpt5 = (over: Partial<ModelProjection>) =>
+      modelRow({
+        modelName: 'gpt-5',
+        capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+        effectiveCapabilities: DERIVED,
+        exposedCapabilities: OWN,
+        ...over,
+      });
+    const leaving: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'planning-role' },
+      ],
+      models: [
+        onGpt5({ role: 'agent-role', capabilityOverride: OWN, routedUseCases: ['agent'] }),
+        modelRow(),
+        onGpt5({ role: 'planning-role', routedUseCases: ['planning'] }),
+      ],
+    };
+    const retarget = routeChange({
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+      exposedCaps: OWN,
+    });
+    const join = routeChange({
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: DERIVED,
+    });
+    expect(projectDraft(leaving, stage([retarget, join])).routeRows.get('planning')).toMatchObject({
+      modified: true,
+    });
+    // The editor measures from the rest of the draft, where the retarget
+    // already takes the list away: the join itself moves nothing more.
+    expect(editReachFor(leaving, stage([retarget]), join)?.group.sameModel).toEqual([]);
+    // With the owner staying, a join must expose its set (another is refused
+    // as a selector conflict, #335) and changes nothing for planning.
+    expect(
+      projectDraft(leaving, stage([{ ...join, exposedCaps: OWN }])).routeRows.get('planning')
+    ).toBeUndefined();
   });
 
   it('measures the edit from the rest of the draft, not from the applied document', () => {

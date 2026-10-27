@@ -1815,6 +1815,8 @@ const writesSelectorCaps = (
   );
   if (authority === undefined) return false;
   if (overridesSelector(base, changes, selector)) return true;
+  // As `gates` is skipped: an empty exposure clears a join's list (hand-built changes only, [W5-1]).
+  if (authority.exposedCaps.length === 0) return false;
   const staged = stagedRoutes(changes);
   return changes.some(
     (change) =>
@@ -1831,12 +1833,18 @@ interface RoleValues {
   think: ThinkMode;
 }
 
+/** A stable id `compareString` sorts after every change's: `listHoldersAt` past the last route plan. */
+const AFTER_EVERY_CHANGE = '\u{10FFFF}';
+
 /**
  * [#307] What each role on `selector` shows once `changes` are applied, as
  * projected configuration: the group's exposure when the group writes a list
  * there (`writesSelectorCaps`), its Think when it overrides the selector
  * (only SetRoleOverrides writes Think beyond the joining role), else the
- * role's applied values.
+ * role's applied values — except that once the route plans have taken the
+ * selector's last explicit list away (its only holder retargeted off it), a
+ * role derives its own set from its type, as the backend's projection then
+ * resolves it.
  */
 const selectorValuesOf = (
   base: DraftBaseProjection,
@@ -1849,8 +1857,28 @@ const selectorValuesOf = (
   );
   const writes = writesSelectorCaps(base, changes, selector);
   const thinks = authority !== undefined && overridesSelector(base, changes, selector);
+  const orphaned =
+    !writes &&
+    base.models.some(
+      (model) =>
+        model.provider === selector.provider &&
+        model.modelName === selector.model &&
+        model.capabilityOverride !== undefined
+    ) &&
+    listHoldersAt(
+      base,
+      stagedRoutes(changes),
+      selector,
+      authority?.exposedCaps ?? [],
+      AFTER_EVERY_CHANGE
+    ).size === 0;
   return (role) => ({
-    exposed: writes && authority !== undefined ? authority.exposedCaps : role.exposedCapabilities,
+    exposed:
+      writes && authority !== undefined
+        ? authority.exposedCaps
+        : orphaned
+          ? TYPE_DERIVED_CAPABILITIES[role.type]
+          : role.exposedCapabilities,
     think: thinks && authority !== undefined ? authority.thinkMode : role.thinkMode,
   });
 };
@@ -2330,8 +2358,11 @@ export interface EditReachGroup {
  * group takes. The same reach the row markers read (`reachGroupsOf`), with the
  * rest of the draft rather than the applied document as the baseline, so a
  * route another staged change already moved is named only if this one moves
- * it again, and one this change moves back is named too. Undefined only for a
- * change the probe does not group (never for a route change).
+ * it again, and one this change moves back is named too. A destination
+ * report, like `reachGroupsOf`: when Done moves this route's own staged change
+ * off another model (or drops it), the group it leaves changes too, and only
+ * the rows say so. Undefined only for a change the probe does not group
+ * (never for a route change).
  */
 export function editReachFor(
   base: DraftBaseProjection,
