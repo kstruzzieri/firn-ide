@@ -82,7 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change is applied. Apply now binds a moved route to the role it creates for
   it before any capability override runs, and the editor checks the override
   against the routes that stay on the model, which are still checked and
-  named. (#474)
+  named. Apply runs route changes in use-case name order, and the editor now
+  follows that order for a route joining a model too: a route leaving the
+  model before the join runs no longer counts against it, and one leaving
+  only after still does, as Apply already held it to. (#474)
 - The route editor in Golem Configuration now refuses, before Apply, a route
   joining a model whose capabilities another route already fixes explicitly
   when the exposure ticked here differs from that set. Golem rejected such a

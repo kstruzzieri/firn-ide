@@ -3136,6 +3136,75 @@ func TestApplySettingsOverrideAfterAForkAwayJudgesTheMovedUseCaseOnItsNewRole(t 
 	}
 }
 
+const joinAroundForkAwayJSON = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "x-m": {"name": "shared-model", "provider": "ollama", "type": "dense"}
+  },
+  "defaults": {"agent": "agent-m", "chat": "x-m", "summarize": "x-m"}
+}`
+
+// TestApplySettingsJoinMeetsAForkAwayOnlyIfItRunsFirst pins #474 for joins:
+// chat forks off x-m, and a new route joins shared-model asserting chat,
+// generate, below chat's floor. The fork binds chat to its copy where it
+// runs, in stable-id order, so a join sorting after route:chat no longer
+// meets chat on x-m and is applied; one sorting before still does and is
+// refused, naming chat. The editor's governed set (selectorGroups) mirrors
+// both orders.
+func TestApplySettingsJoinMeetsAForkAwayOnlyIfItRunsFirst(t *testing.T) {
+	cases := []struct {
+		join    string
+		applied bool
+	}{
+		{join: "translate", applied: true}, // route:translate sorts after route:chat
+		{join: "analysis", applied: false}, // route:analysis sorts before route:chat
+	}
+	for _, tc := range cases {
+		t.Run(tc.join, func(t *testing.T) {
+			h := newApplyHarness(t, joinAroundForkAwayJSON)
+			before := h.targetBytes(t)
+			res, err := h.svc.ApplySettings(h.request(t,
+				confirmUnknown(routeChange("chat", "ollama", "chat-model", "chat", "stream"), "summarize"),
+				confirmUnknown(routeChange(tc.join, "ollama", "shared-model", "chat", "generate"),
+					tc.join, "summarize"),
+			))
+			if err != nil {
+				t.Fatalf("ApplySettings(fork away, join): %v", err)
+			}
+			if !tc.applied {
+				if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+					res.Diagnostics[0].Code != codeEligibilityIneligible ||
+					res.Diagnostics[0].SubjectKind != "use_case" ||
+					res.Diagnostics[0].SubjectName != "chat" {
+					t.Fatalf("ApplySettings(join first) = %+v, want one use_case chat %s",
+						res, codeEligibilityIneligible)
+				}
+				if got := h.targetBytes(t); !bytes.Equal(got, before) {
+					t.Fatal("refused request changed the target")
+				}
+				return
+			}
+			if res.Status != "applied" {
+				t.Fatalf("ApplySettings(fork first) = %+v, want applied", res)
+			}
+			var written struct {
+				Defaults map[string]string `json:"defaults"`
+			}
+			if err := json.Unmarshal(h.targetBytes(t), &written); err != nil {
+				t.Fatalf("written target: %v", err)
+			}
+			want := map[string]string{
+				"agent": "agent-m", "chat": "chat-m", "summarize": "x-m", tc.join: tc.join + "-m",
+			}
+			if !maps.Equal(written.Defaults, want) {
+				t.Fatalf("defaults = %v, want %v", written.Defaults, want)
+			}
+		})
+	}
+}
+
 // TestApplySettingsOverrideAfterAForkAwayStillGatesTheUseCasesThatStay is
 // #474's negative control: the earlier bind takes only the moved use case
 // out of the override's gate. planning stays on x-m and needs tool_call, so
