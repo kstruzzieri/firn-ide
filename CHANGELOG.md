@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The route editor in Golem Configuration now refuses, before Apply, a route
+  joining a model whose capabilities another route already fixes explicitly
+  when the exposure ticked here differs from that set. Golem rejected such a
+  change at Apply as "Models sharing a provider/model selector disagree."
+  with nothing in the editor to say why. The editor now shows the same kind of
+  blocking notice it shows for a conflicting Think mode, naming the routes
+  that hold the set, and Done is refused until the exposure matches or
+  another model is picked. A model whose capabilities are only derived from
+  its type locks nothing, and keeping a route's own model is never held to
+  its own set. The settings projection names the selector's explicit override
+  for this (`selectorCapabilityOverride`). (#335)
 - The file tree and Workspace Views now place a path under the project folder
   in that folder's own path syntax: a backslash separates folders only in a
   Windows project, and a drive root keeps its slash. With a Windows drive root
