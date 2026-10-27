@@ -231,3 +231,33 @@ func TestStagedScope_SameDirectoryInAnotherCaseMapsDirectly(t *testing.T) {
 	assertAllowed(t, scope.Guard, "main.go")
 	assertDenied(t, scope.Guard, ".env")
 }
+
+// With a subfolder open, the go-llm config source outside it, and any hard
+// link to it, is still a protected copy source: a staged copy of models.json
+// would carry its API keys.
+func TestStagedScope_ConfigSourceOutsideProjectIsProtected(t *testing.T) {
+	top := t.TempDir()
+	bound := filepath.Join(top, "app")
+	if err := os.MkdirAll(bound, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(top, "models.json")
+	writeFile(t, config, `{"providers":{},"models":{},"defaults":{}}`)
+	if err := os.Link(config, filepath.Join(top, "alias.json")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_LLM_CONFIG", config)
+	svc := newStagedGuardService(t)
+	bindStaged(t, svc, bound)
+
+	scope, err := svc.StagedScope(top)
+
+	if err != nil {
+		t.Fatalf("StagedScope: %v", err)
+	}
+	for path, want := range map[string]bool{"models.json": true, "alias.json": true, "README.md": false} {
+		if got := scope.Protected(path); got != want {
+			t.Errorf("Protected(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

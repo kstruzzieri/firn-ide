@@ -386,6 +386,19 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 	if err != nil {
 		return StagedScope{}, err
 	}
+	// isConfigSource reports the config source itself or a hard link to it.
+	// A path that no longer exists matches by name alone.
+	isConfigSource := func(string) bool { return false }
+	if configPath != "" {
+		configInfo, configErr := filesystem.Lstat(s.fs, configPath)
+		isConfigSource = func(abs string) bool {
+			if abs == configPath {
+				return true
+			}
+			info, err := filesystem.Lstat(s.fs, abs)
+			return err == nil && configErr == nil && os.SameFile(info, configInfo)
+		}
+	}
 	// toBound maps a top-relative path onto the bound root; ok is false
 	// outside it. The usual case, the project is the git top level, compares
 	// by identity: on a case-insensitive filesystem the bound root keeps the
@@ -408,13 +421,14 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 			}
 			return guard(bound, write)
 		},
-		// Outside the bound root only the floor applies: manifest rules
-		// describe the project alone.
+		// Outside the bound root the floor applies, and so does the config
+		// source by path or identity, as inside; manifest rules describe the
+		// project alone.
 		Protected: func(rel string) bool {
 			if bound, ok := toBound(rel); ok {
 				return guard(bound, false) != nil
 			}
-			return floorDenies(rel)
+			return floorDenies(rel) || isConfigSource(filepath.Join(top, filepath.FromSlash(rel)))
 		},
 		ConfigPath: configPath,
 	}, nil
