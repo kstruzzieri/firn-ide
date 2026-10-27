@@ -17,10 +17,11 @@
  * - a real retarget drops the authored, model-specific ThinkTags/Slots, which
  *   the projection reports only as existence facts (§5.2b, plan amendment 13).
  *
- * Two more block Done outright, because the backend would refuse the request:
- * a floor capability the checked set lacks (never ticked for the user — an
- * asserted cap is taken as truth), and a Think mode a selector sibling already
- * sets differently (go-llm's selectorPairConflict).
+ * Three more block Done outright, because the backend would refuse the
+ * request: a floor capability the checked set lacks (never ticked for the
+ * user — an asserted cap is taken as truth), a Think mode a selector sibling
+ * already sets differently, and a capability set a selector sibling already
+ * fixes explicitly (both go-llm's selectorPairConflict; #335).
  *
  * The affected and governed sets are NEVER re-derived here: the candidate
  * change is projected through `projectDraft`, the same reducer whose
@@ -483,69 +484,159 @@ export function RouteEditor({
    * [W4-10] The backend applies a request in phases — route plans in
    * stable-id order, then overrides, binds, unassigns, removals — and
    * validates every mutation, so what counts is the selector as it stands
-   * when THIS join runs. A sibling is skipped only when it is gone by then:
-   * its one routed use case has a staged route onto another selector whose
-   * plan sorts before this one (a retarget rewrites the role onto the new
-   * selector). Everything else stays and counts — a fork keeps the source
+   * when THIS join runs. A sibling is skipped only when its lock is gone or
+   * replaced by then: its one routed use case has a staged route onto
+   * another selector (a departure — the retarget rewrites the role onto the
+   * new selector) or onto this selector with other model facts (a rewrite),
+   * whose plan sorts before every mutation of the group (below).
+   * Everything else stays and counts — a fork keeps the source
    * role on the selector, an unassigned route is still bound, and a
    * departure sorting after the join is a transient conflict the backend
    * still refuses — named by the routes it still serves, or as
    * `role <name>` when none is left to name (an unrouted role never leaves).
-   * The edited role counts only when shared (this route is leaving it).
+   * The edited role counts only when shared (this route is leaving it), or
+   * when an earlier mutation of the group meets its lock before this plan
+   * rewrites it.
    * A sibling's own staged override lands in the overrides phase, after every
    * join, so its APPLIED Think is what this join meets — even while the row
    * already paints the staged one.
+   * A lock is replaced (same-selector retarget) or left behind (departure
+   * to another selector) at THAT plan's place in stable-id order, and every
+   * other mutation of this selector group that runs before it — an earlier
+   * join or retarget, coalesced to the same values — still meets the applied
+   * lock; overrides run in a later phase and meet nothing here. So a rewrite
+   * or a departure counts only when it sorts before every other mutation of
+   * the group, not merely before this join.
    * Ceiling: a sibling routed by exactly one use case that an unrouted role
    * lists as a fallback is forked too (`fallbacks[role]`), invisible here —
    * the pre-check may mark it gone and the backend refuses late.
-   * Capability overrides conflict the same way, but the projection cannot
-   * tell a sibling's explicit override from its declared caps, so that half
-   * stays with the backend.
+   *
+   * [#335] A capability override conflicts the same way — selectorPairConflict
+   * compares two EXPLICIT sets — and is judged by the same staying rule,
+   * against each sibling's own `capabilityOverride`: only a sibling that OWNS
+   * an override locks the join, and only while it stays, so an owner the draft
+   * retargets away before this join unlocks the selector even when a deriving
+   * sibling (whose `exposedCapabilities` still shows the folded override)
+   * remains. Owners on one selector agree (validation), so the lock is one set.
    */
   const conflictsByMode = new Map<ThinkMode, Set<string>>();
-  if (!isOverride && candidate !== null && candidate.thinkMode !== '') {
-    const staged = stagedRoutes(draft.changes);
+  const lockedBy = new Set<string>();
+  let lockedCaps: CapabilityName[] | undefined;
+  if (!isOverride && candidate !== null) {
+    // This row's own staged change is what Done replaces, never a sibling's
+    // departure or rewrite: read the OTHER staged routes.
+    const staged = stagedRoutes(others);
     const unassigned = new Set(
-      draft.changes.flatMap((change) => (change.kind === 'route-unassign' ? [change.useCase] : []))
+      others.flatMap((change) => (change.kind === 'route-unassign' ? [change.useCase] : []))
     );
     const joinId = changeStableID(candidate);
-    for (const sibling of base.models) {
+    // The stable ids of every mutation of this selector group that runs in
+    // the route-plan phase: this join and each other staged join or retarget
+    // onto the selector (an override of its own applied model runs later).
+    const roleOfUseCase = new Map(base.routes.map((route) => [route.useCase, route.role]));
+    const modelOfRole = new Map(base.models.map((entry) => [entry.role, entry]));
+    const groupMutations = [
+      joinId,
+      ...others.flatMap((change) => {
+        if (
+          change.kind !== 'route' ||
+          change.modelFacts.provider !== candidate.modelFacts.provider ||
+          change.modelFacts.model !== candidate.modelFacts.model
+        )
+          return [];
+        const applied = modelOfRole.get(roleOfUseCase.get(change.useCase) ?? '');
+        return applied !== undefined && sameModelFacts(applied, change.modelFacts)
+          ? []
+          : [changeStableID(change)];
+      }),
+    ];
+    /** Whether the plan with this id runs before every other mutation of the group. */
+    const runsFirst = (id: string): boolean =>
+      groupMutations.every((other) => other === id || compareString(id, other) < 0);
+    /** Names holding the applied constraints, or null once those are replaced. */
+    const staying = (sibling: ModelProjection): string[] | null => {
+      const rewrite =
+        sibling.routedUseCases.length === 1 ? staged.get(sibling.routedUseCases[0]) : undefined;
+      // A same-selector retarget replaces the old lock — SetRoleModel rewrites
+      // the role with the coalesced capabilities and Think — for every
+      // mutation of the group that runs after it.
       if (
-        sibling.provider !== candidate.modelFacts.provider ||
-        sibling.modelName !== candidate.modelFacts.model ||
-        sibling.thinkMode === '' ||
-        sibling.thinkMode === candidate.thinkMode
+        rewrite !== undefined &&
+        rewrite.modelFacts.provider === sibling.provider &&
+        rewrite.modelFacts.model === sibling.modelName &&
+        !sameModelFacts(sibling, rewrite.modelFacts) &&
+        base.routes.some(
+          (route) => route.useCase === rewrite.useCase && route.role === sibling.role
+        ) &&
+        runsFirst(changeStableID(rewrite))
       )
-        continue;
+        return null;
       const leaving = leavingRoutes(base, staged, sibling);
       // The route taking the sibling's ONLY use case elsewhere, if there is one.
       const departure = retargetOf(base, staged, sibling);
+      // The edited role's own lock is rewritten by THIS plan: gone for it when
+      // nothing else shares the role — and only if no other mutation of the
+      // group runs before it and meets the old lock.
       const gone =
         sibling.role === role
-          ? sharedRole.length === 0
-          : departure !== undefined && compareString(changeStableID(departure), joinId) < 0;
-      if (gone) continue;
-      const staying = sibling.routedUseCases.filter(
+          ? sharedRole.length === 0 && runsFirst(joinId)
+          : departure !== undefined && runsFirst(changeStableID(departure));
+      if (gone) return null;
+      const names = sibling.routedUseCases.filter(
         (other) =>
           !leaving.has(other) &&
           !unassigned.has(other) &&
           (sibling.role !== role || other !== useCase)
       );
-      // Still here, but only because its plan sorts after this join — say so.
-      // departure !== undefined means the sibling's one route is leaving, so
-      // staying is always empty then — the note only ever decorates the
-      // role-fallback name.
-      const departureNote =
-        departure !== undefined ? ` (its ${departure.useCase} route leaves after this join)` : '';
-      const names = conflictsByMode.get(sibling.thinkMode) ?? new Set<string>();
-      for (const name of staying.length > 0 ? staying : [`role ${sibling.role}${departureNote}`])
-        names.add(name);
-      conflictsByMode.set(sibling.thinkMode, names);
+      // Still here, but only because its plan sorts after this join, or after
+      // an earlier mutation of the group — say so. departure !== undefined
+      // means the sibling's one route is leaving, so names is always empty
+      // then; an UNSHARED edited role's own rewrite is this plan, overtaken by
+      // an earlier change of the group (a shared one is forked and simply
+      // holds). Either note only ever decorates the role-fallback name.
+      const note =
+        departure !== undefined
+          ? compareString(changeStableID(departure), joinId) > 0
+            ? ` (its ${departure.useCase} route leaves after this join)`
+            : ` (its ${departure.useCase} route leaves after an earlier change in this group)`
+          : sibling.role === role && sharedRole.length === 0
+            ? ' (rewritten after an earlier change in this group)'
+            : '';
+      return names.length > 0 ? names : [`role ${sibling.role}${note}`];
+    };
+    for (const sibling of base.models) {
+      if (
+        sibling.provider !== candidate.modelFacts.provider ||
+        sibling.modelName !== candidate.modelFacts.model
+      )
+        continue;
+      const thinkDiffers =
+        candidate.thinkMode !== '' &&
+        sibling.thinkMode !== '' &&
+        sibling.thinkMode !== candidate.thinkMode;
+      const capsDiffer =
+        sibling.capabilityOverride !== undefined &&
+        !sameCaps(sibling.capabilityOverride, candidate.exposedCaps);
+      if (!thinkDiffers && !capsDiffer) continue;
+      const names = staying(sibling);
+      if (names === null) continue;
+      if (thinkDiffers) {
+        const held = conflictsByMode.get(sibling.thinkMode) ?? new Set<string>();
+        for (const name of names) held.add(name);
+        conflictsByMode.set(sibling.thinkMode, held);
+      }
+      if (capsDiffer) {
+        lockedCaps = sibling.capabilityOverride;
+        for (const name of names) lockedBy.add(name);
+      }
     }
   }
   const thinkConflicts = [...conflictsByMode].map(([mode, names]) => ({ mode, names: [...names] }));
   const thinkConflictLine = ({ mode, names }: { mode: ThinkMode; names: string[] }): string =>
     `${listUseCases(names)} already ${agrees(names, 'sets', 'set')} Think to ${mode} on this model; a route joining it cannot set a different Think mode.`;
+  const capsConflict = lockedCaps === undefined ? null : { caps: lockedCaps, names: [...lockedBy] };
+  const capsConflictLine = ({ caps, names }: { caps: CapabilityName[]; names: string[] }): string =>
+    `${listUseCases(names)} already ${agrees(names, 'exposes', 'expose')} ${caps.join(', ')} on this model; a route joining it cannot expose a different set.`;
 
   /**
    * [K6] One verdict per card, cached by role for the life of the draft: the
@@ -665,6 +756,10 @@ export function RouteEditor({
     // floor clause, which names what a floored route is missing.
     if (exposed.length === 0) {
       setRefusal(EMPTY_EXPOSURE);
+      return;
+    }
+    if (capsConflict !== null) {
+      setRefusal(capsConflictLine(capsConflict));
       return;
     }
     if (thinkConflicts.length > 0) {
@@ -910,6 +1005,16 @@ export function RouteEditor({
       ) : null}
 
       {/* Staging is refused while any of these stand. */}
+      {capsConflict !== null && (
+        <div className={styles.disclosure} data-tone="blocking">
+          <p className={styles.disclosureText}>
+            <strong>{listUseCases(capsConflict.names)}</strong> already{' '}
+            {agrees(capsConflict.names, 'exposes', 'expose')}{' '}
+            <strong>{capsConflict.caps.join(', ')}</strong> on this model; a route joining it cannot
+            expose a different set.
+          </p>
+        </div>
+      )}
       {thinkConflicts.map(({ mode, names }) => (
         <div key={mode} className={styles.disclosure} data-tone="blocking">
           <p className={styles.disclosureText}>

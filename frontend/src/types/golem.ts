@@ -625,6 +625,14 @@ export interface ModelProjection {
   effectiveCapabilities: CapabilityName[];
   capabilityFacts: CapabilityFacts;
   exposedCapabilities: CapabilityName[];
+  /**
+   * This role's own EXPLICIT capability override (#335); absent for a role
+   * that derives its set from its type, even on a selector another role
+   * overrides — `exposedCapabilities` shows the folded override either way.
+   * Per role, like `thinkMode`, because the editor's pre-check needs to know
+   * which siblings OWN the lock. Equals `exposedCapabilities` whenever present.
+   */
+  capabilityOverride?: CapabilityName[];
   thinkMode: ThinkMode;
   routedUseCases: string[];
   /** Existence facts only — a retarget drops these, the values never cross. */
@@ -916,6 +924,7 @@ function readModel(value: unknown): ModelProjection | null {
       'effectiveCapabilities',
       'capabilityFacts',
       'exposedCapabilities',
+      'capabilityOverride',
       'thinkMode',
       'routedUseCases',
       'hasThinkTags',
@@ -991,6 +1000,29 @@ function readModel(value: unknown): ModelProjection | null {
   )
     return null;
 
+  let capabilityOverride: CapabilityName[] | undefined;
+  if (hasPresentKey(value, 'capabilityOverride')) {
+    const override = readCappedArray(value.capabilityOverride, CAPABILITY_NAMES.length, (cap) =>
+      isOneOf(cap, CAPABILITY_NAMES) ? cap : null
+    );
+    // An owner's resolved set IS its explicit set (ResolvedCapabilities), and
+    // the producer folds that set into exposedCapabilities and omits the key
+    // rather than sending an empty list: a projection whose override differs
+    // from either, or that names an empty override, was not produced by it.
+    const sameAs = (caps: readonly CapabilityName[]): boolean =>
+      override !== null &&
+      override.length === caps.length &&
+      override.every((cap, index) => cap === caps[index]);
+    if (
+      override === null ||
+      override.length === 0 ||
+      !sameAs(exposedCapabilities) ||
+      !sameAs(effectiveCapabilities)
+    )
+      return null;
+    capabilityOverride = override;
+  }
+
   return {
     role,
     modelName,
@@ -1003,6 +1035,7 @@ function readModel(value: unknown): ModelProjection | null {
     effectiveCapabilities,
     capabilityFacts,
     exposedCapabilities,
+    ...(capabilityOverride === undefined ? {} : { capabilityOverride }),
     thinkMode,
     routedUseCases,
     hasThinkTags,

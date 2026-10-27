@@ -36,6 +36,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected the word under the pointer, which read as an editable name Firn
   does not have. Keyboard navigation, focus outlines and what a screen reader
   reads for each row are unchanged. (#462)
+- The route editor in Golem Configuration now refuses, before Apply, a route
+  joining a model whose capabilities another route already fixes explicitly
+  when the exposure ticked here differs from that set. Golem rejected such a
+  change at Apply as "Models sharing a provider/model selector disagree."
+  with nothing in the editor to say why. The editor now shows the same kind of
+  blocking notice it shows for a conflicting Think mode, naming the routes
+  that hold the set, and Done is refused until the exposure matches or
+  another model is picked. A model whose capabilities are only derived from
+  its type locks nothing, and keeping a route's own model is never held to
+  its own set. A route whose explicit set leaves the model, or is rewritten
+  by a retarget that keeps the same provider/model but changes its model
+  facts, stops locking it only when that change runs before every other
+  change to the model in the same Apply; otherwise the notice still names
+  the route or role that holds the lock. The settings projection names each
+  role's explicit override for this (`capabilityOverride`). (#335)
 - The file tree and Workspace Views now place a path under the project folder
   in that folder's own path syntax: a backslash separates folders only in a
   Windows project, and a drive root keeps its slash. With a Windows drive root
