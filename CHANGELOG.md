@@ -49,9 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by a retarget that keeps the same provider/model but changes its model
   facts, stops locking it only when that change runs before every other
   change to the model in the same Apply; otherwise the notice still names
-  the route or role that holds the lock and says it leaves or is rewritten
-  after an earlier change. The settings projection names each role's
-  explicit override for this (`capabilityOverride`). (#335)
+  the route or role that holds the lock. The settings projection names each
+  role's explicit override for this (`capabilityOverride`). (#335)
 - The file tree and Workspace Views now place a path under the project folder
   in that folder's own path syntax: a backslash separates folders only in a
   Windows project, and a drive root keeps its slash. With a Windows drive root

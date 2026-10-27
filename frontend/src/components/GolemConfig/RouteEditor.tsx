@@ -488,7 +488,8 @@ export function RouteEditor({
    * replaced by then: its one routed use case has a staged route onto
    * another selector (a departure — the retarget rewrites the role onto the
    * new selector) or onto this selector with other model facts (a rewrite),
-   * whose plan sorts before every mutation of the group (below). Everything else stays and counts — a fork keeps the source
+   * whose plan sorts before every mutation of the group (below).
+   * Everything else stays and counts — a fork keeps the source
    * role on the selector, an unassigned route is still bound, and a
    * departure sorting after the join is a transient conflict the backend
    * still refuses — named by the routes it still serves, or as
