@@ -517,8 +517,21 @@ export function RouteEditor({
       draft.changes.flatMap((change) => (change.kind === 'route-unassign' ? [change.useCase] : []))
     );
     const joinId = changeStableID(candidate);
-    /** What `sibling` still serves when this join runs, or null once it is gone. */
+    /** Names holding the applied constraints, or null once those are replaced. */
     const staying = (sibling: ModelProjection): string[] | null => {
+      const rewrite =
+        sibling.routedUseCases.length === 1 ? staged.get(sibling.routedUseCases[0]) : undefined;
+      // A same-selector retarget also replaces the old lock before this join;
+      // coalescing gives both plans the candidate's capabilities and Think.
+      if (
+        rewrite !== undefined &&
+        !sameModelFacts(sibling, rewrite.modelFacts) &&
+        base.routes.some(
+          (route) => route.useCase === rewrite.useCase && route.role === sibling.role
+        ) &&
+        compareString(changeStableID(rewrite), joinId) < 0
+      )
+        return null;
       const leaving = leavingRoutes(base, staged, sibling);
       // The route taking the sibling's ONLY use case elsewhere, if there is one.
       const departure = retargetOf(base, staged, sibling);

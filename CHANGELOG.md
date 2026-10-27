@@ -46,8 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another model is picked. A model whose capabilities are only derived from
   its type locks nothing, and keeping a route's own model is never held to
   its own set, and a route whose explicit set leaves the model earlier in the
-  same Apply no longer locks it. The settings projection names each role's
-  explicit override for this (`capabilityOverride`). (#335)
+  same Apply no longer locks it. An earlier retarget that keeps the same
+  provider/model but changes its model facts replaces the old lock too.
+  The settings projection names each role's explicit override for this
+  (`capabilityOverride`). (#335)
 - The file tree and Workspace Views now place a path under the project folder
   in that folder's own path syntax: a backslash separates folders only in a
   Windows project, and a drive root keeps its slash. With a Windows drive root

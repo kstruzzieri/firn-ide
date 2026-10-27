@@ -2760,6 +2760,27 @@ func TestApplySettingsRejectsAgentProviderEndpointMadeUnusable(t *testing.T) {
 	}
 }
 
+func TestApplySettingsSameSelectorRetargetBeforeJoin(t *testing.T) {
+	h := newApplyHarness(t, `{
+		"providers": {"hosted": {"base_url": "http://localhost:11434"}},
+		"models": {
+			"agent-role": {"name": "gpt-5", "provider": "hosted", "type": "dense", "capabilities": ["chat", "stream", "tool_call"]},
+			"chat-role": {"name": "gpt-5-mini", "provider": "hosted", "type": "dense", "capabilities": ["chat", "stream"]}
+		},
+		"defaults": {"agent": "agent-role", "chat": "chat-role"}
+	}`)
+	retarget := routeChange("agent", "hosted", "gpt-5", "chat", "stream", "tool_call", "thinking")
+	retarget.ModelFacts.Type = "moe"
+	join := routeChange("chat", "hosted", "gpt-5", "chat", "stream", "tool_call", "thinking")
+	result, err := h.svc.ApplySettings(h.request(t, retarget, join))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "applied" {
+		t.Fatalf("result = %+v, want applied", result)
+	}
+}
+
 func TestApplySettingsRejectsSelectorOverrideThatBreaksAnotherFirnUseCase(t *testing.T) {
 	const target = `{
   "providers": {"ollama": {"base_url": "http://localhost:11434"}},
