@@ -2789,6 +2789,36 @@ describe('reach of a route edit, not its gate (#307)', () => {
     expect(group).toMatchObject({ addedCaps: [], removedCaps: [], sameModel: [] });
   });
 
+  it('names the capability change of an in-place retype on a model that holds no list', () => {
+    // Codex round 4: analysis-role, the only role on solo-model, derives
+    // chat, generate, stream as dense. Retyped in place to embedding with
+    // embed (what embedding derives), it sends no list, and after Apply it
+    // derives embed: the Apply summary names that delta, as develop did.
+    const base: DraftBaseProjection = {
+      routes: [{ useCase: 'analysis', role: 'analysis-role' }],
+      models: [
+        modelRow({
+          role: 'analysis-role',
+          modelName: 'solo-model',
+          effectiveCapabilities: DERIVED,
+          capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: DERIVED,
+          routedUseCases: ['analysis'],
+        }),
+      ],
+    };
+    const retype = routeChange({
+      useCase: 'analysis',
+      modelFacts: { provider: 'hosted', model: 'solo-model', type: 'embedding' },
+      capabilityFacts: { caps: ['embed'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['embed'],
+    });
+    expect(projectDraft(base, stage([retype])).reachGroups[0]).toMatchObject({
+      addedCaps: ['embed'],
+      removedCaps: ['chat', 'generate', 'stream'],
+    });
+  });
+
   it('measures the edit from the rest of the draft, not from the applied document', () => {
     // planning runs on gpt-5, which derives its set from its type. agent is
     // already staged onto gpt-5 with a list of its own, so the draft already

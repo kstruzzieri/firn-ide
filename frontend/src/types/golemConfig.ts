@@ -1841,12 +1841,13 @@ const AFTER_EVERY_CHANGE = '\u{10FFFF}';
  * projected configuration: the group's exposure when the group writes a list
  * there (`writesSelectorCaps`), its Think when it overrides the selector
  * (only SetRoleOverrides writes Think beyond the joining role), else the
- * role's applied values — except that once the route plans have taken the
- * selector's last explicit list away (its only holder retargeted off it), a
- * role derives its own set from its type, as the backend's projection then
- * resolves it: the staged type for a role retargeted in place on the
- * selector (it routes only that use case and nothing falls back to it, so
- * SetRoleModel rewrites it), its applied type otherwise.
+ * role's applied values — except that when no explicit list is left on the
+ * selector once the route plans run (none was there, or its only holder was
+ * retargeted off it), a role derives its own set from its type, as the
+ * backend's projection then resolves it: the staged type for a role
+ * retargeted in place on the selector (it routes only that use case and
+ * nothing falls back to it, so SetRoleModel rewrites it), its applied type
+ * otherwise. For a role nothing retypes that is its applied set.
  */
 const selectorValuesOf = (
   base: DraftBaseProjection,
@@ -1870,21 +1871,23 @@ const selectorValuesOf = (
       ? change.modelFacts.type
       : role.type;
   };
-  const orphaned =
+  const listless =
     !writes &&
-    base.models.some(
-      (model) =>
-        model.provider === selector.provider &&
-        model.modelName === selector.model &&
-        model.capabilityOverride !== undefined
-    ) &&
     listHoldersAt(base, staged, selector, authority?.exposedCaps ?? [], AFTER_EVERY_CHANGE).size ===
       0;
+  // Where nothing held a list and nothing retypes the role, its applied set
+  // already IS the derived one; read it from the projection.
+  const heldList = base.models.some(
+    (model) =>
+      model.provider === selector.provider &&
+      model.modelName === selector.model &&
+      model.capabilityOverride !== undefined
+  );
   return (role) => ({
     exposed:
       writes && authority !== undefined
         ? authority.exposedCaps
-        : orphaned
+        : listless && (heldList || typeOf(role) !== role.type)
           ? TYPE_DERIVED_CAPABILITIES[typeOf(role)]
           : role.exposedCapabilities,
     think: thinks && authority !== undefined ? authority.thinkMode : role.thinkMode,
