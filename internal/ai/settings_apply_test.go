@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -2871,11 +2872,10 @@ func TestApplySettingsRejectsSelectorOverrideThatBreaksAnotherFirnUseCase(t *tes
 	h := newApplyHarness(t, target)
 	before := h.targetBytes(t)
 	// An override asserting the shared selector without embed, below
-	// embedding's floor. Upstream's SetRoleOverrides gate refuses it during the
-	// mutation, naming the first matching ROLE; the use-case-subject refusal
-	// (checkPreparedDocument) is reached only when that gate passes — which an
-	// empty exposure did, by clearing to the type defaults, before
-	// validateRouteChange refused the empty list (see the apply corpus).
+	// embedding's floor. #338: Firn's own gate refuses it before any mutation,
+	// naming the USE CASE whose floor fails — never upstream's
+	// SetRoleOverrides refusal, whose subject is the first matching ROLE
+	// (`embed-m`), a name the routing rows cannot map.
 	change := confirmUnknown(
 		routeChange("summarize", "ollama", "shared-model", "chat", "stream"),
 		"summarize",
@@ -2887,14 +2887,204 @@ func TestApplySettingsRejectsSelectorOverrideThatBreaksAnotherFirnUseCase(t *tes
 	}
 	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
 		res.Diagnostics[0].Code != codeEligibilityIneligible ||
-		res.Diagnostics[0].SubjectKind != "role" ||
-		res.Diagnostics[0].SubjectName != "embed-m" ||
+		res.Diagnostics[0].SubjectKind != "use_case" ||
+		res.Diagnostics[0].SubjectName != "embedding" ||
 		!res.Diagnostics[0].Blocking {
-		t.Errorf("ApplySettings(selector override) = %+v, want blocking embed-m %s diagnostic",
+		t.Errorf("ApplySettings(selector override) = %+v, want blocking use_case embedding %s diagnostic",
 			res, codeEligibilityIneligible)
 	}
 	if got := h.targetBytes(t); !bytes.Equal(got, before) {
 		t.Errorf("ApplySettings(selector override) target bytes changed, want unchanged")
+	}
+}
+
+// chainTargetJSON is the shape of the v0.14.0 release-candidate smoke (#311):
+// `agent` reaches `pro-m`'s and `mimo-m`'s selectors only through a fallback
+// chain (agent-m -> coder-m -> pro-m -> mimo-m); `analysis` runs on `pro-m`,
+// which `coder-m` also lists as a fallback, so moving analysis forks it.
+// `chat-m` serves chat alone and nothing references it, so moving chat is a
+// plain retarget.
+const chainTargetJSON = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"], "fallbacks": ["coder-m"]},
+    "coder-m": {"name": "coder-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"], "fallbacks": ["pro-m"]},
+    "pro-m": {"name": "deepseek-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"], "fallbacks": ["mimo-m"]},
+    "mimo-m": {"name": "mimo-model", "provider": "ollama", "type": "moe"},
+    "chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense"}
+  },
+  "defaults": {"agent": "agent-m", "analysis": "pro-m", "chat": "chat-m"}
+}`
+
+// writtenModels parses the target the harness wrote, as raw JSON objects, so a
+// test can assert on the PRESENCE of a key and not only its value.
+func writtenModels(t *testing.T, h *applyHarness) map[string]map[string]json.RawMessage {
+	t.Helper()
+	var doc struct {
+		Models   map[string]map[string]json.RawMessage `json:"models"`
+		Defaults map[string]string                     `json:"defaults"`
+	}
+	if err := json.Unmarshal(h.targetBytes(t), &doc); err != nil {
+		t.Fatalf("written target: %v", err)
+	}
+	return doc.Models
+}
+
+// TestApplySettingsForkWithRedundantExposureSendsNoOverride is #311 defect 2,
+// Keith's reproduction: analysis moves to mimo-model, whose only other role
+// `mimo-m` the agent chain reaches. The exposure is exactly what a dense model
+// derives (chat, generate, stream), so Firn asserts no capability override;
+// upstream's gate then covers the new role alone (gateRoleEligibility widens
+// to selector siblings only for an explicit override) and the fork succeeds.
+// Before: the redundant override widened the gate to `mimo-m`, agent's floor
+// failed, and the user was refused for a route that can serve analysis.
+func TestApplySettingsForkWithRedundantExposureSendsNoOverride(t *testing.T) {
+	h := newApplyHarness(t, chainTargetJSON)
+	change := confirmUnknown(
+		routeChange("analysis", "ollama", "mimo-model", "chat", "generate", "stream"),
+		"analysis",
+	)
+	res, err := h.svc.ApplySettings(h.request(t, change))
+	if err != nil {
+		t.Fatalf("ApplySettings(fork): %v", err)
+	}
+	if res.Status != "applied" {
+		t.Fatalf("ApplySettings(fork) = %+v, want applied", res)
+	}
+	models := writtenModels(t, h)
+	forked, ok := models["analysis-m"]
+	if !ok {
+		t.Fatalf("no forked role written: %v", slices.Sorted(maps.Keys(models)))
+	}
+	if _, explicit := forked["capabilities"]; explicit {
+		t.Fatalf("forked role carries a redundant capability override: %s", forked["capabilities"])
+	}
+	if string(forked["name"]) != `"mimo-model"` {
+		t.Fatalf("forked role name = %s", forked["name"])
+	}
+	// The source role and the sibling on the target selector are untouched.
+	if string(models["pro-m"]["capabilities"]) != `["chat","stream","tool_call"]` {
+		t.Fatalf("source role changed: %s", models["pro-m"]["capabilities"])
+	}
+	if _, explicit := models["mimo-m"]["capabilities"]; explicit {
+		t.Fatalf("sibling gained an override: %s", models["mimo-m"]["capabilities"])
+	}
+}
+
+// TestApplySettingsForkWithNarrowingExposureIsRefusedByUseCase: the same move
+// with an exposure that differs from the derived set IS an explicit override,
+// selector-wide, so `mimo-m`'s chain use case gates it. The refusal names that
+// use case (#338), not the generated role upstream would name.
+func TestApplySettingsForkWithNarrowingExposureIsRefusedByUseCase(t *testing.T) {
+	h := newApplyHarness(t, chainTargetJSON)
+	before := h.targetBytes(t)
+	change := confirmUnknown(
+		routeChange("analysis", "ollama", "mimo-model", "chat", "stream"),
+		"analysis",
+	)
+	res, err := h.svc.ApplySettings(h.request(t, change))
+	if err != nil {
+		t.Fatalf("ApplySettings(narrowing fork): %v", err)
+	}
+	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+		res.Diagnostics[0].Code != codeEligibilityIneligible ||
+		res.Diagnostics[0].SubjectKind != "use_case" ||
+		res.Diagnostics[0].SubjectName != "agent" ||
+		!res.Diagnostics[0].Blocking {
+		t.Fatalf("ApplySettings(narrowing fork) = %+v, want blocking use_case agent %s",
+			res, codeEligibilityIneligible)
+	}
+	if got := h.targetBytes(t); !bytes.Equal(got, before) {
+		t.Fatal("refused request changed the target")
+	}
+}
+
+// TestApplySettingsOverrideRemovalThatBreaksAChainSiblingIsRefusedByUseCase
+// is #311's "real removal": analysis keeps deepseek-model but drops tool_call
+// from the selector's exposure. `agent` reaches `pro-m` through coder-m, so
+// the override breaks it; the refusal names agent, the use case a routing
+// row can carry, not `pro-m`.
+func TestApplySettingsOverrideRemovalThatBreaksAChainSiblingIsRefusedByUseCase(t *testing.T) {
+	h := newApplyHarness(t, chainTargetJSON)
+	before := h.targetBytes(t)
+	change := confirmUnknown(
+		routeChange("analysis", "ollama", "deepseek-model", "chat", "stream"),
+		"analysis",
+	)
+	res, err := h.svc.ApplySettings(h.request(t, change))
+	if err != nil {
+		t.Fatalf("ApplySettings(override removal): %v", err)
+	}
+	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+		res.Diagnostics[0].Code != codeEligibilityIneligible ||
+		res.Diagnostics[0].SubjectKind != "use_case" ||
+		res.Diagnostics[0].SubjectName != "agent" ||
+		!res.Diagnostics[0].Blocking {
+		t.Fatalf("ApplySettings(override removal) = %+v, want blocking use_case agent %s",
+			res, codeEligibilityIneligible)
+	}
+	if got := h.targetBytes(t); !bytes.Equal(got, before) {
+		t.Fatal("refused request changed the target")
+	}
+}
+
+// TestApplySettingsOverrideKeepsTheExplicitCapabilities pins the override
+// path against the redundancy rule: keeping the model with the exposure the
+// selector already holds explicitly must write that explicit list again,
+// never nil — SetRoleOverrides reads nil as "clear the override".
+func TestApplySettingsOverrideKeepsTheExplicitCapabilities(t *testing.T) {
+	h := newApplyHarness(t, chainTargetJSON)
+	change := confirmUnknown(
+		routeChange("analysis", "ollama", "deepseek-model", "chat", "stream", "tool_call"),
+		"analysis",
+	)
+	res, err := h.svc.ApplySettings(h.request(t, change))
+	if err != nil {
+		t.Fatalf("ApplySettings(override): %v", err)
+	}
+	if res.Status != "applied" {
+		t.Fatalf("ApplySettings(override) = %+v, want applied", res)
+	}
+	if got := string(writtenModels(t, h)["pro-m"]["capabilities"]); got != `["chat","stream","tool_call"]` {
+		t.Fatalf("explicit override after a keep = %s", got)
+	}
+}
+
+// TestApplySettingsRetargetWritesAnOverrideOnlyWhenItDiffersFromDerived:
+// a plain retarget (chat-m serves chat alone) asserts a capability override
+// only when the exposure is not what the model type derives.
+func TestApplySettingsRetargetWritesAnOverrideOnlyWhenItDiffersFromDerived(t *testing.T) {
+	cases := []struct {
+		name    string
+		exposed []string
+		want    string // "" = no capabilities key written
+	}{
+		{"derived exposure", []string{"chat", "generate", "stream"}, ""},
+		{"narrowed exposure", []string{"chat", "stream"}, `["chat","stream"]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newApplyHarness(t, chainTargetJSON)
+			res, err := h.svc.ApplySettings(h.request(t,
+				routeChange("chat", "ollama", "other-model", tc.exposed...)))
+			if err != nil {
+				t.Fatalf("ApplySettings(retarget): %v", err)
+			}
+			if res.Status != "applied" {
+				t.Fatalf("ApplySettings(retarget) = %+v, want applied", res)
+			}
+			role := writtenModels(t, h)["chat-m"]
+			if string(role["name"]) != `"other-model"` {
+				t.Fatalf("retargeted role = %v", role)
+			}
+			caps, explicit := role["capabilities"]
+			if (tc.want == "") == explicit || (explicit && string(caps) != tc.want) {
+				t.Fatalf("capabilities written = %s (present=%v), want %q", caps, explicit, tc.want)
+			}
+		})
 	}
 }
 
