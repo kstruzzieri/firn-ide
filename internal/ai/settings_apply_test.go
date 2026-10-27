@@ -3087,6 +3087,55 @@ func TestApplySettingsJoinAfterTheOwnerMovesAwaySendsNoOverride(t *testing.T) {
 	}
 }
 
+const overrideAfterForkAwayJSON = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "x-m": {"name": "shared-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]}
+  },
+  "defaults": {"agent": "x-m", "chat": "x-m"}
+}`
+
+// TestApplySettingsOverrideAfterAForkAwayJudgesTheMovedUseCaseOnItsNewRole
+// is #474: agent forks off x-m onto tool-model, and chat keeps shared-model
+// without tool_call — one Apply whose finished document meets every floor.
+// The override gates every role on shared-model, so it has to see agent on
+// its forked role already; were the fork's bind still pending, x-m would
+// carry agent into the override's gate and the request be refused for
+// agent's tool_call.
+func TestApplySettingsOverrideAfterAForkAwayJudgesTheMovedUseCaseOnItsNewRole(t *testing.T) {
+	h := newApplyHarness(t, overrideAfterForkAwayJSON)
+	res, err := h.svc.ApplySettings(h.request(t,
+		routeChange("agent", "ollama", "tool-model", "chat", "stream", "tool_call"),
+		routeChange("chat", "ollama", "shared-model", "chat", "stream"),
+	))
+	if err != nil {
+		t.Fatalf("ApplySettings(fork away, override): %v", err)
+	}
+	if res.Status != "applied" {
+		t.Fatalf("ApplySettings(fork away, override) = %+v, want applied", res)
+	}
+	var written struct {
+		Defaults map[string]string `json:"defaults"`
+	}
+	if err := json.Unmarshal(h.targetBytes(t), &written); err != nil {
+		t.Fatalf("written target: %v", err)
+	}
+	if want := map[string]string{"agent": "agent-m", "chat": "x-m"}; !maps.Equal(written.Defaults, want) {
+		t.Fatalf("defaults = %v, want %v", written.Defaults, want)
+	}
+	models := writtenModels(t, h)
+	if string(models["agent-m"]["name"]) != `"tool-model"` {
+		t.Fatalf("forked role name = %s", models["agent-m"]["name"])
+	}
+	if caps, _ := writtenCapabilities(t, models["agent-m"]); !slices.Equal(caps, []string{"chat", "stream", "tool_call"}) {
+		t.Fatalf("forked role capabilities = %v", caps)
+	}
+	if caps, _ := writtenCapabilities(t, models["x-m"]); !slices.Equal(caps, []string{"chat", "stream"}) {
+		t.Fatalf("overridden role capabilities = %v", caps)
+	}
+}
+
 const ownFloorRetargetJSON = `{
   "providers": {"ollama": {"base_url": "http://localhost:11434"}},
   "models": {
