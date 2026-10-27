@@ -2933,6 +2933,22 @@ func writtenModels(t *testing.T, h *applyHarness) map[string]map[string]json.Raw
 	return doc.Models
 }
 
+// writtenCapabilities decodes a written role's `capabilities`; (nil, false)
+// when the key is absent — the file is pretty-printed, so compare values,
+// never bytes.
+func writtenCapabilities(t *testing.T, role map[string]json.RawMessage) ([]string, bool) {
+	t.Helper()
+	raw, ok := role["capabilities"]
+	if !ok {
+		return nil, false
+	}
+	var caps []string
+	if err := json.Unmarshal(raw, &caps); err != nil {
+		t.Fatalf("written capabilities %s: %v", raw, err)
+	}
+	return caps, true
+}
+
 // TestApplySettingsForkWithRedundantExposureSendsNoOverride is #311 defect 2,
 // Keith's reproduction: analysis moves to mimo-model, whose only other role
 // `mimo-m` the agent chain reaches. The exposure is exactly what a dense model
@@ -2966,8 +2982,8 @@ func TestApplySettingsForkWithRedundantExposureSendsNoOverride(t *testing.T) {
 		t.Fatalf("forked role name = %s", forked["name"])
 	}
 	// The source role and the sibling on the target selector are untouched.
-	if string(models["pro-m"]["capabilities"]) != `["chat","stream","tool_call"]` {
-		t.Fatalf("source role changed: %s", models["pro-m"]["capabilities"])
+	if caps, _ := writtenCapabilities(t, models["pro-m"]); !slices.Equal(caps, []string{"chat", "stream", "tool_call"}) {
+		t.Fatalf("source role changed: %v", caps)
 	}
 	if _, explicit := models["mimo-m"]["capabilities"]; explicit {
 		t.Fatalf("sibling gained an override: %s", models["mimo-m"]["capabilities"])
@@ -3048,8 +3064,8 @@ func TestApplySettingsOverrideKeepsTheExplicitCapabilities(t *testing.T) {
 	if res.Status != "applied" {
 		t.Fatalf("ApplySettings(override) = %+v, want applied", res)
 	}
-	if got := string(writtenModels(t, h)["pro-m"]["capabilities"]); got != `["chat","stream","tool_call"]` {
-		t.Fatalf("explicit override after a keep = %s", got)
+	if got, _ := writtenCapabilities(t, writtenModels(t, h)["pro-m"]); !slices.Equal(got, []string{"chat", "stream", "tool_call"}) {
+		t.Fatalf("explicit override after a keep = %v", got)
 	}
 }
 
@@ -3060,10 +3076,10 @@ func TestApplySettingsRetargetWritesAnOverrideOnlyWhenItDiffersFromDerived(t *te
 	cases := []struct {
 		name    string
 		exposed []string
-		want    string // "" = no capabilities key written
+		want    []string // nil = no capabilities key written
 	}{
-		{"derived exposure", []string{"chat", "generate", "stream"}, ""},
-		{"narrowed exposure", []string{"chat", "stream"}, `["chat","stream"]`},
+		{"derived exposure", []string{"chat", "generate", "stream"}, nil},
+		{"narrowed exposure", []string{"chat", "stream"}, []string{"chat", "stream"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3080,9 +3096,9 @@ func TestApplySettingsRetargetWritesAnOverrideOnlyWhenItDiffersFromDerived(t *te
 			if string(role["name"]) != `"other-model"` {
 				t.Fatalf("retargeted role = %v", role)
 			}
-			caps, explicit := role["capabilities"]
-			if (tc.want == "") == explicit || (explicit && string(caps) != tc.want) {
-				t.Fatalf("capabilities written = %s (present=%v), want %q", caps, explicit, tc.want)
+			caps, explicit := writtenCapabilities(t, role)
+			if explicit != (tc.want != nil) || !slices.Equal(caps, tc.want) {
+				t.Fatalf("capabilities written = %v (present=%v), want %v", caps, explicit, tc.want)
 			}
 		})
 	}
