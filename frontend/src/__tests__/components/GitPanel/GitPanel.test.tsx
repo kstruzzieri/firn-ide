@@ -580,6 +580,35 @@ describe('GitPanel AI message generation', () => {
   });
 });
 
+describe('GitPanel AI generation across a workspace switch', () => {
+  it('does not carry a draft into another workspace when it switches mid-generate', async () => {
+    let resolve: (result: git.CommitMessageResult) => void = () => {};
+    mockGenerate.mockReturnValue(
+      new Promise<git.CommitMessageResult>((r) => {
+        resolve = r;
+      }) as unknown as ReturnType<typeof GitGenerateCommitMessage>
+    );
+    seed([file('staged.ts', 'M', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+
+    render(<GitPanel />);
+    fireEvent.change(screen.getByRole('textbox', { name: /commit message/i }), {
+      target: { value: 'draft for the first repository' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    act(() => {
+      useGitStore.getState().resetForWorkspace('/other');
+    });
+    await act(async () => {
+      resolve({ message: 'feat: late', withheld: [] } as git.CommitMessageResult);
+    });
+
+    expect(useGitStore.getState().commitMessage).toBe('');
+  });
+});
+
 describe('GitPanel AI withheld paths (#384)', () => {
   const generated = (message: string, withheld: string[] = []) =>
     ({ message, withheld }) as git.CommitMessageResult;

@@ -343,25 +343,69 @@ func (s *Service) DestinationPolicy() provider.DestinationPolicy {
 	return s.consent.DestinationPolicy()
 }
 
-// StagedPathGuard returns the scope guard commit-message generation applies to
-// the repo-relative staged paths of the repository at repoRoot (#384). It is
-// built the way BindRepository builds chat's: the floor, the repository's
-// manifests and the protected config source, all through ScopePolicy, so the
-// two cannot drift. A root that cannot be canonicalized or a config source
-// that cannot be protected denies every path.
-func (s *Service) StagedPathGuard(repoRoot string) agenttools.ScopeGuard {
-	denyAll := func(string, bool) error { return errPolicyDenied }
-	root, err := filepath.EvalSymlinks(repoRoot)
+// StagedPathGuard returns what commit-message generation applies to the staged
+// paths of the git working tree at gitRoot (#384): the bound repository's own
+// chat policy, as a guard over paths relative to gitRoot, and the go-llm
+// config source that policy now protects, for the runtime to load. One policy
+// instance serves both features, so they cannot drift: the floor, the
+// manifests (reloaded here, so an edit applies without a watcher event), and
+// the config source as discovery finds it now, not as a cached snapshot
+// recorded it. The guard reads live policy state, so it denies everything
+// once the repository is unbound or replaced, and it denies a staged path
+// outside the bound root, which chat cannot see either. No bound repository,
+// a closing service, or a config source that cannot be resolved or protected
+// is an error, and generation sends nothing.
+func (s *Service) StagedPathGuard(gitRoot string) (agenttools.ScopeGuard, string, error) {
+	top, err := filepath.EvalSymlinks(gitRoot)
 	if err != nil {
-		return denyAll
+		return nil, "", fmt.Errorf("%w: canonicalizing the repository: %w", ErrWorkspaceUnavailable, err)
 	}
-	policy := LoadScopePolicy(s.fs, root)
-	if sn := s.snapshotOrBuild(); sn.canonicalPath != "" {
-		if err := policy.ProtectConfigSource(sn.canonicalPath); err != nil {
-			return denyAll
+	// ponytail: "" means discovery found no file, and golem.New then
+	// discovers again; a config created and staged between the two is not
+	// protected. go-llm has no option to pin "no config".
+	configPath, err := currentConfigSource()
+	if err != nil {
+		return nil, "", err
+	}
+	guard, boundRoot, warningsChanged, err := s.stagedPolicy(configPath)
+	if warningsChanged {
+		s.emit(EventGolemStatusChanged, nil)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return func(rel string, write bool) error {
+		bound, err := filepath.Rel(boundRoot, filepath.Join(top, filepath.FromSlash(rel)))
+		if err != nil || !filepath.IsLocal(bound) {
+			return errPolicyDenied
+		}
+		return guard(filepath.ToSlash(bound), write)
+	}, configPath, nil
+}
+
+// stagedPolicy issues the current binding's guard under the binding gate's
+// read side, the way chat admission does: reload the manifests, protect the
+// config source, then issue. warningsChanged tells the caller to announce a
+// status change once the gate is released.
+func (s *Service) stagedPolicy(configPath string) (guard agenttools.ScopeGuard, boundRoot string, warningsChanged bool, err error) {
+	s.bindingGate.RLock()
+	defer s.bindingGate.RUnlock()
+	if s.isClosing() {
+		return nil, "", false, fmt.Errorf("%w: commit message generation rejected", errServiceClosing)
+	}
+	b := s.currentBinding()
+	if b == nil {
+		return nil, "", false, fmt.Errorf("commit message generation needs the repository open in Firn: %w", errPolicyDetached)
+	}
+	warnings := b.policy.Warnings()
+	b.policy.Reload()
+	warningsChanged = !slices.Equal(warnings, b.policy.Warnings())
+	if configPath != "" {
+		if err := b.policy.ProtectConfigSource(configPath); err != nil {
+			return nil, "", warningsChanged, fmt.Errorf("%w: config source could not be protected: %w", ErrAgentConfigInvalid, err)
 		}
 	}
-	return policy.Guard("")
+	return b.policy.Guard(""), b.repoRoot, warningsChanged, nil
 }
 
 // BindRepository makes repoPath the current repository incarnation and returns

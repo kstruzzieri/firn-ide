@@ -637,7 +637,7 @@ func TestService_StagedDiff_LimitsToPaths(t *testing.T) {
 	svc := NewService()
 	_ = svc.Stage(ctx(), dir, []string{"README.md", "other.txt"})
 
-	diff, err := svc.StagedDiff(ctx(), dir, []string{"README.md"})
+	diff, err := svc.StagedDiff(ctx(), dir, []string{"README.md"}, nil)
 
 	if err != nil {
 		t.Fatalf("StagedDiff() error = %v", err)
@@ -650,7 +650,7 @@ func TestService_StagedDiff_LimitsToPaths(t *testing.T) {
 	}
 
 	// No paths is no diff, never everything: the caller decides what may be seen.
-	diff, err = svc.StagedDiff(ctx(), dir, nil)
+	diff, err = svc.StagedDiff(ctx(), dir, nil, nil)
 	if err != nil || diff != "" {
 		t.Errorf("StagedDiff(nil paths) = %q, %v, want empty and no error", diff, err)
 	}
@@ -664,13 +664,57 @@ func TestService_StagedDiff_PathspecIsLiteral(t *testing.T) {
 	svc := NewService()
 	_ = svc.Stage(ctx(), dir, []string{"a[1].txt", "a1.txt"})
 
-	diff, err := svc.StagedDiff(ctx(), dir, []string{"a[1].txt"})
+	diff, err := svc.StagedDiff(ctx(), dir, []string{"a[1].txt"}, nil)
 
 	if err != nil {
 		t.Fatalf("StagedDiff() error = %v", err)
 	}
 	if !strings.Contains(diff, "+bracketed") || strings.Contains(diff, "+plain") {
 		t.Errorf("diff %q, want only the literally named file", diff)
+	}
+}
+
+// A literal pathspec for a deleted file also selects a directory staged at
+// the same name; an exclude keeps a withheld descendant out, whatever the
+// caller's pathspec environment says.
+func TestService_StagedDiff_ExcludesWithheldDescendants(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "config", "plain config\n")
+	gitCmd(t, dir, "add", "config")
+	gitCmd(t, dir, "commit", "-m", "add config")
+	gitCmd(t, dir, "rm", "-q", "config")
+	writeFile(t, dir, "config/.env", "TOKEN=descendant\n")
+	gitCmd(t, dir, "add", "config/.env")
+	svc := NewService()
+
+	for _, env := range []string{"", "GIT_LITERAL_PATHSPECS", "GIT_ICASE_PATHSPECS"} {
+		if env != "" {
+			t.Setenv(env, "1")
+		}
+		diff, err := svc.StagedDiff(ctx(), dir, []string{"config"}, []string{"config/.env"})
+
+		if err != nil {
+			t.Fatalf("StagedDiff() with %s error = %v", env, err)
+		}
+		if !strings.Contains(diff, "-plain config") || strings.Contains(diff, "descendant") || strings.Contains(diff, ".env") {
+			t.Errorf("StagedDiff() with %s = %q, want the deletion without the excluded descendant", env, diff)
+		}
+	}
+}
+
+func TestService_StagedChanges_ReportsCopyOfUnmodifiedFile(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "README.md", "hello\n") // committed by initRepo, unmodified
+	writeFile(t, dir, "copy.md", "hello\n")
+	gitCmd(t, dir, "add", "copy.md")
+
+	changes, err := NewService().StagedChanges(ctx(), dir)
+
+	want := []StagedChange{{Status: 'C', Path: "copy.md", OldPath: "README.md"}}
+	if err != nil || !slices.Equal(changes, want) {
+		t.Errorf("StagedChanges() = %+v, %v, want %+v", changes, err, want)
 	}
 }
 

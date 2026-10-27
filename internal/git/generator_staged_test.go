@@ -2,10 +2,12 @@ package git
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
@@ -19,8 +21,8 @@ import (
 // the repository's own manifests, so these tests exercise the same matching
 // (#384: one policy for both paths).
 func chatPolicy(gen *MessageGenerator) {
-	gen.SetScopeGuardSource(func(repoRoot string) agenttools.ScopeGuard {
-		return ai.LoadScopePolicy(filesystem.NewOS(), repoRoot).Guard("")
+	gen.SetScopeGuardSource(func(repoRoot string) (agenttools.ScopeGuard, string, error) {
+		return ai.LoadScopePolicy(filesystem.NewOS(), repoRoot).Guard(""), "", nil
 	})
 }
 
@@ -65,8 +67,9 @@ func readRequest(t *testing.T, provider *gittest.Provider) providerRequest {
 	return providerRequest{body: string(body), user: user.String()}
 }
 
-// assertWithheld checks that no withheld content reached the provider at all
-// and that no withheld name reached the prompt Firn wrote.
+// assertWithheld checks that no withheld content reached the provider at all,
+// that no withheld name reached the prompt Firn wrote, and that no diff header
+// for a withheld name appears anywhere in the request.
 func assertWithheld(t *testing.T, request providerRequest, contents []string, names []string) {
 	t.Helper()
 	for _, content := range contents {
@@ -77,6 +80,11 @@ func assertWithheld(t *testing.T, request providerRequest, contents []string, na
 	for _, name := range names {
 		if strings.Contains(request.user, name) {
 			t.Errorf("prompt names withheld path %q:\n%s", name, request.user)
+		}
+		for _, header := range []string{"a/" + name, "b/" + name, "from " + name, "to " + name} {
+			if strings.Contains(request.body, header) {
+				t.Errorf("provider request carries diff header %q", header)
+			}
 		}
 	}
 }
@@ -295,5 +303,236 @@ func TestGenerateStaged_NothingStaged(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "nothing staged") {
 		t.Fatalf("GenerateStaged() error = %v, want nothing-staged error", err)
+	}
+}
+
+// A tracked file replaced by a directory: the deletion is allowed, but its
+// literal pathspec also selects the new directory's contents, so a withheld
+// descendant must be excluded explicitly.
+func TestGenerateStaged_KeepsWithheldDescendantOutOfAllowedPathspec(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "config", "plain config\n")
+	gitCmd(t, dir, "add", "config")
+	gitCmd(t, dir, "commit", "-m", "add config")
+	gitCmd(t, dir, "rm", "-q", "config")
+	writeFile(t, dir, "config/.env", "TOKEN=leak-descendant\n")
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "config/.env", "main.go")
+	provider := gittest.Start(t, "chore: replace config", nil)
+	gen := NewMessageGenerator()
+	chatPolicy(gen)
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil {
+		t.Fatalf("GenerateStaged() error = %v", err)
+	}
+	if !slices.Equal(result.Withheld, []string{"config/.env"}) {
+		t.Errorf("Withheld = %q", result.Withheld)
+	}
+	request := readRequest(t, provider)
+	if !strings.Contains(request.user, "shipped hunk") || !strings.Contains(request.user, "deleted file") {
+		t.Errorf("prompt lacks the allowed changes:\n%s", request.user)
+	}
+	assertWithheld(t, request, []string{"leak-descendant"}, []string{"config/.env"})
+}
+
+func TestGenerateStaged_WithholdsCopyOfProtectedFile(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, ".env", "API_TOKEN=copied-secret\n")
+	gitCmd(t, dir, "add", ".env")
+	gitCmd(t, dir, "commit", "-m", "add env")
+	writeFile(t, dir, "config.txt", "API_TOKEN=copied-secret\n")
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "config.txt", "main.go")
+	provider := gittest.Start(t, "feat: add main", nil)
+	gen := NewMessageGenerator()
+	chatPolicy(gen)
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil {
+		t.Fatalf("GenerateStaged() error = %v", err)
+	}
+	if !slices.Equal(result.Withheld, []string{".env -> config.txt"}) {
+		t.Errorf("Withheld = %q", result.Withheld)
+	}
+	assertWithheld(t, readRequest(t, provider), []string{"copied-secret"}, []string{"config.txt"})
+}
+
+// Repository config must not be able to add content the guard never saw: an
+// external diff, a textconv filter, or a submodule expanded into its own diff.
+func TestGenerateStaged_IgnoresDiffHelpersAndSubmoduleExpansion(t *testing.T) {
+	requireGit(t)
+	const secret = "API_TOKEN=helper-leak"
+	cases := map[string]func(t *testing.T, dir string){
+		"diff.external": func(t *testing.T, dir string) {
+			gitCmd(t, dir, "config", "diff.external", "cat .env;:")
+			writeFile(t, dir, "main.go", mainGo)
+			gitCmd(t, dir, "add", "main.go")
+		},
+		"textconv": func(t *testing.T, dir string) {
+			writeFile(t, dir, ".gitattributes", "*.go diff=leak\n")
+			gitCmd(t, dir, "add", ".gitattributes")
+			gitCmd(t, dir, "commit", "-m", "attributes")
+			gitCmd(t, dir, "config", "diff.leak.textconv", "cat .env;:")
+			writeFile(t, dir, "main.go", mainGo)
+			gitCmd(t, dir, "add", "main.go")
+		},
+		"diff.submodule=diff": func(t *testing.T, dir string) {
+			sub := filepath.Join(dir, "sub")
+			if err := os.MkdirAll(sub, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			gitCmd(t, sub, "init", "-q", "-b", "main")
+			writeFile(t, sub, "lib.go", "package lib\n")
+			gitCmd(t, sub, "add", "lib.go")
+			gitCmd(t, sub, "commit", "-m", "lib")
+			gitCmd(t, dir, "add", "sub")
+			gitCmd(t, dir, "commit", "-m", "add sub")
+			writeFile(t, sub, ".env", secret+"\n")
+			gitCmd(t, sub, "add", ".env")
+			gitCmd(t, sub, "commit", "-m", "env")
+			gitCmd(t, dir, "config", "diff.submodule", "diff")
+			gitCmd(t, dir, "add", "sub")
+		},
+	}
+	for name, stage := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := initRepo(t)
+			writeFile(t, dir, ".env", secret+"\n") // unstaged, in the worktree
+			stage(t, dir)
+			provider := gittest.Start(t, "chore: update", nil)
+			gen := NewMessageGenerator()
+			chatPolicy(gen)
+
+			if _, err := gen.GenerateStaged(ctx(), NewService(), dir); err != nil {
+				t.Fatalf("GenerateStaged() error = %v", err)
+			}
+			assertWithheld(t, readRequest(t, provider), []string{"helper-leak"}, nil)
+		})
+	}
+}
+
+// The runtime loads the config source the guard protected, not whatever its
+// own discovery finds later.
+func TestGenerateStaged_PinsRuntimeToGuardedConfig(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "main.go")
+	provider := gittest.Start(t, "feat: pinned", nil)
+	pinned := os.Getenv("GO_LLM_CONFIG")
+	noRuntime(t)
+	gen := NewMessageGenerator()
+	gen.SetScopeGuardSource(func(repoRoot string) (agenttools.ScopeGuard, string, error) {
+		return ai.LoadScopePolicy(filesystem.NewOS(), repoRoot).Guard(""), pinned, nil
+	})
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil || result.Message != "feat: pinned" {
+		t.Fatalf("GenerateStaged() = %+v, %v, want the pinned config's answer", result, err)
+	}
+	if len(provider.Requests) != 1 {
+		t.Errorf("provider requests = %d, want 1", len(provider.Requests))
+	}
+}
+
+func TestGenerateStaged_GuardSourceErrorMakesNoRequest(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "main.go")
+	noRuntime(t)
+	gen := NewMessageGenerator()
+	gen.SetScopeGuardSource(func(string) (agenttools.ScopeGuard, string, error) {
+		return nil, "", errors.New("reopen the repository")
+	})
+
+	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err == nil || !strings.Contains(err.Error(), "reopen the repository") {
+		t.Fatalf("GenerateStaged() error = %v, want the guard source's error", err)
+	}
+}
+
+// A policy that starts denying after the paths were checked (the repository
+// was detached or its rules changed) stops the request.
+func TestGenerateStaged_PolicyChangeBeforeSendMakesNoRequest(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "main.go")
+	noRuntime(t)
+	var calls atomic.Int32
+	gen := NewMessageGenerator()
+	gen.SetScopeGuardSource(func(string) (agenttools.ScopeGuard, string, error) {
+		return func(string, bool) error {
+			if calls.Add(1) > 1 {
+				return errors.New("detached")
+			}
+			return nil
+		}, "", nil
+	})
+
+	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if !errors.Is(err, errStagedChangesMoved) {
+		t.Fatalf("GenerateStaged() error = %v, want errStagedChangesMoved", err)
+	}
+}
+
+// Staging after the paths were checked could put an unchecked path under an
+// allowed directory pathspec, so a changed index stops the request.
+func TestGenerateStaged_IndexChangeBeforeSendMakesNoRequest(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "main.go", mainGo)
+	writeFile(t, dir, "late.txt", "staged late\n")
+	gitCmd(t, dir, "add", "main.go")
+	noRuntime(t)
+	var staged atomic.Bool
+	gen := NewMessageGenerator()
+	gen.SetScopeGuardSource(func(repoRoot string) (agenttools.ScopeGuard, string, error) {
+		guard := ai.LoadScopePolicy(filesystem.NewOS(), repoRoot).Guard("")
+		return func(rel string, write bool) error {
+			if staged.CompareAndSwap(false, true) {
+				gitCmd(t, dir, "add", "late.txt")
+			}
+			return guard(rel, write)
+		}, "", nil
+	})
+
+	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if !errors.Is(err, errStagedChangesMoved) {
+		t.Fatalf("GenerateStaged() error = %v, want errStagedChangesMoved", err)
+	}
+}
+
+// Past diff.renameLimit git silently stops pairing modified renames, so a
+// modified .env rename would list as an ordinary addition. That fails closed.
+func TestGenerateStaged_SkippedRenameDetectionMakesNoRequest(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, ".env", "A=1\nB=2\nC=3\nD=4\n")
+	gitCmd(t, dir, "add", ".env")
+	gitCmd(t, dir, "commit", "-m", "add env")
+	gitCmd(t, dir, "rm", "-q", ".env")
+	writeFile(t, dir, "config/app.env.txt", "A=1\nB=2\nC=3\nD=5\n")
+	writeFile(t, dir, "new.txt", "x\n")
+	gitCmd(t, dir, "add", "config", "new.txt")
+	gitCmd(t, dir, "config", "diff.renameLimit", "1")
+	noRuntime(t)
+	gen := NewMessageGenerator()
+	chatPolicy(gen)
+
+	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if !errors.Is(err, ErrRenameDetectionLimited) {
+		t.Fatalf("GenerateStaged() error = %v, want ErrRenameDetectionLimited", err)
 	}
 }

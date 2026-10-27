@@ -234,20 +234,13 @@
   gap: 6px;
 }
 
-.aiWithheld {
-  padding: 4px 8px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
-  color: var(--status-warning);
-  font-size: 11px;
-}
-
 .aiWithheldList {
   margin: 4px 0 0;
   padding-left: 16px;
   word-break: break-all;
 }
 
+.aiWithheld,
 .scopeGuard {
   padding: 4px 8px;
   border-radius: 4px;

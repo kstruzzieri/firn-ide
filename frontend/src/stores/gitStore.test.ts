@@ -322,6 +322,16 @@ describe('gitStore operations', () => {
     expect(useGitStore.getState().lastError).toBeNull();
   });
 
+  it('generateMessage clears the withheld list when a retry fails', async () => {
+    useGitStore.setState({ withheldFromAI: { paths: ['.env'], allWithheld: true } });
+    mockGenerate.mockRejectedValue(new Error('model unavailable'));
+
+    await useGitStore.getState().generateMessage();
+
+    expect(useGitStore.getState().withheldFromAI).toBeNull();
+    expect(useGitStore.getState().lastError).toContain('model unavailable');
+  });
+
   it('commit clears the withheld list', async () => {
     useGitStore.setState({ withheldFromAI: { paths: ['.env'], allWithheld: false } });
     mockGitCommit.mockResolvedValue('[main abc1234] feat: x\n 1 file changed');

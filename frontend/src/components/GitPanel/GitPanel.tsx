@@ -271,8 +271,13 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
     }
     // Non-destructive: keep the draft, surface the proposal beside it.
     const before = git.commitMessage;
+    const epoch = git.epoch;
     await git.generateMessage();
-    const generated = useGitStore.getState().commitMessage;
+    const after = useGitStore.getState();
+    // A workspace switch mid-generate reset the box; the draft belongs to the
+    // workspace it was written in.
+    if (after.epoch !== epoch) return;
+    const generated = after.commitMessage;
     if (generated !== before) {
       useGitStore.getState().setCommitMessage(before);
       setSuggestion(generated);
@@ -309,20 +314,23 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
           </div>
         </div>
       )}
-      {withheldFromAI && (
-        <div className={styles.aiWithheld} data-testid="ai-withheld" role="status">
-          {withheldFromAI.allWithheld
-            ? 'Every staged file is withheld from the AI by the sensitive-path policy, so no request was made. Write the message by hand.'
-            : 'Withheld from the AI by the sensitive-path policy, so the message may not mention:'}
-          <ul className={styles.aiWithheldList}>
-            {withheldFromAI.paths.map((path) => (
-              <li key={path}>
-                <code>{path}</code>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/* Mounted empty so screen readers announce the notice when it fills. */}
+      <div role="status">
+        {withheldFromAI && (
+          <div className={styles.aiWithheld} data-testid="ai-withheld">
+            {withheldFromAI.allWithheld
+              ? 'Every staged file is withheld from the AI by the sensitive-path policy, so no request was made. Write the message by hand.'
+              : 'Withheld from the AI by the sensitive-path policy, so the message may not mention:'}
+            <ul className={styles.aiWithheldList}>
+              {withheldFromAI.paths.map((path) => (
+                <li key={path}>
+                  <code>{path}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
       <ScopeGuard />
       <div className={styles.commitControls}>
         <label className={styles.amendLabel}>

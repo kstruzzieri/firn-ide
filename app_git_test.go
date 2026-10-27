@@ -107,6 +107,9 @@ func TestGitGenerateCommitMessage_Binding(t *testing.T) {
 	}
 	app := newGolemApp(t) // startup wires the staged-path policy source (#384)
 	provider := gittest.Start(t, "feat: add f.txt", nil)
+	if _, err := app.GetWorkspaceInfo(dir); err != nil {
+		t.Fatal(err)
+	}
 	if err := app.GitStage(dir, []string{"f.txt", ".env"}); err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +127,24 @@ func TestGitGenerateCommitMessage_Binding(t *testing.T) {
 	}
 	if request := string(<-provider.Requests); strings.Contains(request, "hunter2") || strings.Contains(request, "a/.env") {
 		t.Errorf("provider request carries the withheld file:\n%s", request)
+	}
+}
+
+// Without a bound repository there is no chat policy to apply, so nothing is
+// sent (#384).
+func TestGitGenerateCommitMessage_UnboundRepositoryMakesNoRequest(t *testing.T) {
+	dir := initGitRepoForApp(t)
+	app := newGolemApp(t)
+	provider := gittest.Start(t, "feat: add f.txt", nil)
+	if err := app.GitStage(dir, []string{"f.txt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.GitGenerateCommitMessage(dir); err == nil {
+		t.Fatal("GitGenerateCommitMessage() without a bound repository returned no error")
+	}
+	if len(provider.Requests) != 0 {
+		t.Errorf("provider requests = %d, want 0", len(provider.Requests))
 	}
 }
 

@@ -653,6 +653,8 @@ export const useGitStore = create<GitStore>()(
           get,
           set,
           async (root) => {
+            // A new attempt replaces the last verdict, even if it fails.
+            set({ withheldFromAI: null }, false, 'git/generateWithheldReset');
             const result = await GitGenerateCommitMessage(root);
             withheld = result.withheld;
             return result.message;

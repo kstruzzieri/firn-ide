@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -27,14 +28,23 @@ Rules: imperative mood, subject line of at most 72 characters, optional short
 body separated by a blank line explaining why. Output ONLY the commit message,
 no fences, no commentary.`
 
-var errNothingStaged = errors.New("nothing staged: stage changes before generating a message")
+var (
+	errNothingStaged = errors.New("nothing staged: stage changes before generating a message")
+	// errStagedChangesMoved stops a request when the staged paths or the
+	// policy's verdict on them changed between checking them and building
+	// the diff: an unchecked path could have landed under an allowed one.
+	errStagedChangesMoved = errors.New("the staged changes or the AI policy changed while the message was being prepared; generate again")
+	// errNoToolAccess denies every runtime file tool: the staged diff is the
+	// only workspace content a commit message may use.
+	errNoToolAccess = errors.New("commit message generation reads no workspace files")
+)
 
 // MessageGenerator produces commit messages from a staged diff via the public
 // golem runtime, behind the consent-derived destination policy and the AI
 // scope policy for staged paths.
 type MessageGenerator struct {
 	destinationPolicy func() provider.DestinationPolicy
-	scopeGuard        func(repoRoot string) agenttools.ScopeGuard
+	scopeGuard        func(repoRoot string) (agenttools.ScopeGuard, string, error)
 }
 
 func NewMessageGenerator() *MessageGenerator { return &MessageGenerator{} }
@@ -48,11 +58,13 @@ type CommitMessageResult struct {
 	Withheld []string `json:"withheld"`
 }
 
-// SetScopeGuardSource injects the guard that decides which staged paths may
-// reach the model: Golem chat's scope policy for the repository at repoRoot,
-// applied to repo-relative paths (#384). Nil (the default) withholds every
-// path, as a detached policy does in chat.
-func (g *MessageGenerator) SetScopeGuardSource(src func(repoRoot string) agenttools.ScopeGuard) {
+// SetScopeGuardSource injects what decides which staged paths may reach the
+// model (#384): for the git working tree at repoRoot, Golem chat's scope
+// guard over paths relative to it, and the go-llm config source that guard
+// protects, which the runtime is then pinned to ("" lets go-llm discover its
+// own). An error stops generation before any request. Nil (the default)
+// withholds every path, as a detached policy does in chat.
+func (g *MessageGenerator) SetScopeGuardSource(src func(repoRoot string) (agenttools.ScopeGuard, string, error)) {
 	g.scopeGuard = src
 }
 
@@ -75,37 +87,66 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 		return CommitMessageResult{}, err
 	}
 	guard := agenttools.ScopeGuard(func(string, bool) error { return errors.New("no AI scope policy") })
+	configPath := ""
 	if g.scopeGuard != nil {
-		guard = g.scopeGuard(root)
-	}
-	result := CommitMessageResult{Withheld: []string{}}
-	var allowed []string
-	for _, change := range changes {
-		if guard(change.Path, false) != nil || (change.OldPath != "" && guard(change.OldPath, false) != nil) {
-			name := change.Path
-			if change.OldPath != "" {
-				name = change.OldPath + " -> " + change.Path
-			}
-			result.Withheld = append(result.Withheld, name)
-			continue
-		}
-		allowed = append(allowed, change.Path)
-		if change.OldPath != "" {
-			allowed = append(allowed, change.OldPath)
+		if guard, configPath, err = g.scopeGuard(root); err != nil {
+			return CommitMessageResult{}, err
 		}
 	}
+	allowed, withheld, excluded := partitionStaged(changes, guard)
+	result := CommitMessageResult{Withheld: withheld}
 	if len(allowed) == 0 {
 		return result, nil
 	}
-	diff, err := svc.StagedDiff(ctx, dir, allowed)
+	diff, err := svc.StagedDiff(ctx, dir, allowed, excluded)
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
-	result.Message, err = g.generate(ctx, dir, diff, len(result.Withheld))
+	// ponytail: a re-list, not an index snapshot, so an index changed and
+	// changed back between the two listings goes unseen; copying the index
+	// for GIT_INDEX_FILE would close it if that ever matters.
+	again, err := svc.StagedChanges(ctx, dir)
+	if err != nil {
+		return CommitMessageResult{}, err
+	}
+	if againAllowed, _, _ := partitionStaged(again, guard); !slices.Equal(again, changes) || !slices.Equal(againAllowed, allowed) {
+		return CommitMessageResult{}, errStagedChangesMoved
+	}
+	result.Message, err = g.generate(ctx, dir, diff, len(withheld), configPath)
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
 	return result, nil
+}
+
+// partitionStaged applies guard to each staged change. allowed holds every
+// path the diff may name, both sides of an allowed rename or copy; withheld
+// holds each withheld change for display, "path" or "old -> new"; excluded
+// holds every withheld path, both sides, so the diff can keep them out of an
+// allowed directory pathspec.
+func partitionStaged(changes []StagedChange, guard agenttools.ScopeGuard) (allowed, withheld, excluded []string) {
+	withheld = []string{}
+	for _, change := range changes {
+		paths := []string{change.Path}
+		if change.OldPath != "" {
+			paths = append(paths, change.OldPath)
+		}
+		denied := false
+		for _, path := range paths {
+			denied = denied || guard(path, false) != nil
+		}
+		if !denied {
+			allowed = append(allowed, paths...)
+			continue
+		}
+		name := change.Path
+		if change.OldPath != "" {
+			name = change.OldPath + " -> " + change.Path
+		}
+		withheld = append(withheld, name)
+		excluded = append(excluded, paths...)
+	}
+	return allowed, withheld, excluded
 }
 
 // SetDestinationPolicySource injects the consent-derived policy, evaluated
@@ -162,15 +203,11 @@ func destinationDeniedMessage(err error) (string, bool) {
 // as errors from Generate instead of hiding the feature.
 func (*MessageGenerator) Available(context.Context) bool { return true }
 
-// Generate asks the embedded golem runtime for a commit message describing
-// diff, which the caller has already filtered.
-func (g *MessageGenerator) Generate(ctx context.Context, root, diff string) (string, error) {
-	return g.generate(ctx, root, diff, 0)
-}
-
-// generate runs one golem turn over diff. withheld is the number of staged
-// paths left out of diff; the prompt states the count and nothing else.
-func (g *MessageGenerator) generate(ctx context.Context, root, diff string, withheld int) (message string, err error) {
+// generate runs one golem turn over diff, which the caller has already
+// filtered. withheld is the number of staged paths left out of diff; the
+// prompt states the count and nothing else. configPath pins the go-llm config
+// the runtime loads; "" lets it discover its own.
+func (g *MessageGenerator) generate(ctx context.Context, root, diff string, withheld int, configPath string) (message string, err error) {
 	if strings.TrimSpace(diff) == "" {
 		return "", errNothingStaged
 	}
@@ -184,9 +221,11 @@ func (g *MessageGenerator) generate(ctx context.Context, root, diff string, with
 		policy = g.destinationPolicy()
 	}
 	runtime, err := golem.New(ctx, golem.Options{
-		Root:     root,
-		System:   generateSystem,
-		MaxSteps: 1, // Never send built-in read-tool output in a second provider request.
+		Root:       root,
+		ConfigPath: configPath,
+		ScopeGuard: func(string, bool) error { return errNoToolAccess },
+		System:     generateSystem,
+		MaxSteps:   1, // Never send built-in read-tool output in a second provider request.
 		// No ThreadID is ever submitted, so history compression cannot run for
 		// this consumer; disabling it keeps the summarize route OUT of
 		// destination admission entirely (spec D3a).

@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -74,9 +75,17 @@ func NewService() *Service {
 // credential prompts into immediate errors (a desktop app has no terminal to
 // answer them); LC_ALL=C pins parseable English output.
 func (s *Service) run(ctx context.Context, dir string, args ...string) (string, error) {
+	stdout, _, err := s.runEnv(ctx, dir, nil, args...)
+	return stdout, err
+}
+
+// runEnv is run with extra environment entries, which override inherited
+// ones, and returns stderr as well, which git uses for warnings even when the
+// command succeeds.
+func (s *Service) runEnv(ctx context.Context, dir string, env []string, args ...string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(ScrubGitEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	cmd.Env = append(append(ScrubGitEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C"), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -88,20 +97,9 @@ func (s *Service) run(ctx context.Context, dir string, args ...string) (string, 
 		if msg == "" {
 			msg = err.Error()
 		}
-		return stdout.String(), fmt.Errorf("git %s: %s", subcommand(args), msg)
+		return stdout.String(), stderr.String(), fmt.Errorf("git %s: %s", args[0], msg)
 	}
-	return stdout.String(), nil
-}
-
-// subcommand names the git subcommand in args, skipping global options such
-// as --literal-pathspecs, for error labels.
-func subcommand(args []string) string {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") {
-			return arg
-		}
-	}
-	return args[0]
+	return stdout.String(), stderr.String(), nil
 }
 
 // Status returns the repository snapshot for the repo containing dir.
@@ -278,12 +276,29 @@ type StagedChange struct {
 	OldPath string
 }
 
-// StagedChanges lists the staged paths. Rename detection is forced on so a
-// rename reports both sides whatever diff.renames says.
+// ErrRenameDetectionLimited reports that git stopped pairing inexact renames
+// because more files changed than diff.renameLimit allows, so a modified
+// rename lists as an unrelated deletion and addition and cannot be checked
+// as one change.
+var ErrRenameDetectionLimited = errors.New("too many staged files for git to pair renames, so they cannot be checked against the AI policy; write this message by hand")
+
+// StagedChanges lists the staged paths. Rename and copy detection are forced
+// on, copies from unmodified files included, so a rename or copy reports both
+// sides whatever diff.renames says. Exact copies are found in any repository;
+// past diff.renameLimit git pairs inexact copies only from modified files and
+// returns ErrRenameDetectionLimited when it pairs no inexact renames at all.
 func (s *Service) StagedChanges(ctx context.Context, dir string) ([]StagedChange, error) {
-	out, err := s.runAtRoot(ctx, dir, "diff", "--cached", "-M", "--name-status", "-z")
+	root, err := s.TopLevel(ctx, dir)
 	if err != nil {
 		return nil, err
+	}
+	out, warnings, err := s.runEnv(ctx, root, nil, "diff", "--cached", "-M", "--find-copies-harder", "--name-status", "-z")
+	if err != nil {
+		return nil, err
+	}
+	// "inexact" before git 2.48, "exhaustive" since; both end this way.
+	if strings.Contains(warnings, "rename detection was skipped") {
+		return nil, ErrRenameDetectionLimited
 	}
 	return parseNameStatus(out)
 }
@@ -316,16 +331,40 @@ func parseNameStatus(out string) ([]StagedChange, error) {
 	return changes, nil
 }
 
-// StagedDiff returns the unified diff of the index against HEAD for paths,
-// repo-relative and taken literally, as input for commit-message generation;
-// renames are detected so both sides of a rename show as one. No paths is no
-// diff, never everything: the caller decides what the model may see (#384).
-func (s *Service) StagedDiff(ctx context.Context, dir string, paths []string) (string, error) {
-	if len(paths) == 0 {
+// pathspecEnv restores git's default pathspec handling, so an inherited
+// GIT_LITERAL_PATHSPECS cannot switch off the exclude magic StagedDiff relies
+// on, and no glob or case folding widens a path.
+var pathspecEnv = []string{
+	"GIT_LITERAL_PATHSPECS=0",
+	"GIT_GLOB_PATHSPECS=0",
+	"GIT_NOGLOB_PATHSPECS=0",
+	"GIT_ICASE_PATHSPECS=0",
+}
+
+// StagedDiff returns the unified diff of the index against HEAD for include,
+// minus exclude, all repo-relative and taken literally, as input for
+// commit-message generation (#384). A path also selects everything staged
+// under a directory of that name, which is why exclude exists. No include is
+// no diff, never everything: the caller decides what the model may see.
+// External diff drivers, textconv filters and submodule expansion are off, so
+// repository config cannot add content from paths the caller never checked.
+func (s *Service) StagedDiff(ctx context.Context, dir string, include, exclude []string) (string, error) {
+	if len(include) == 0 {
 		return "", nil
 	}
-	args := append([]string{"--literal-pathspecs", "diff", "--cached", "-M", "--"}, paths...)
-	return s.runAtRoot(ctx, dir, args...)
+	root, err := s.TopLevel(ctx, dir)
+	if err != nil {
+		return "", err
+	}
+	args := []string{"diff", "--cached", "-M", "--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short", "--"}
+	for _, path := range include {
+		args = append(args, ":(top,literal)"+path)
+	}
+	for _, path := range exclude {
+		args = append(args, ":(top,literal,exclude)"+path)
+	}
+	out, _, err := s.runEnv(ctx, root, pathspecEnv, args...)
+	return out, err
 }
 
 // TopLevel returns the root of the working tree containing dir.

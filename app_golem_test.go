@@ -9,7 +9,6 @@ import (
 	"errors"
 	"firn/internal/ai"
 	"firn/internal/filesystem"
-	"firn/internal/git"
 	"firn/internal/testutil"
 	"firn/internal/watcher"
 	"fmt"
@@ -1599,9 +1598,6 @@ func TestGolemWriteMethodsUninitializedService(t *testing.T) {
 // destination is durably approved.
 // ---------------------------------------------------------------------------
 
-// golemApproveDiff is the smallest staged diff Generate accepts.
-const golemApproveDiff = "diff --git a/x b/x\n+added line\n"
-
 // golemApproveFallbackEndpoint is the destination the user has NOT approved.
 // ".invalid" can never resolve, so a run that reaches it fails with something
 // other than the denial sentinel and the assertion below stays honest.
@@ -1713,10 +1709,16 @@ func TestApproveMissingDestinationsUnblocksCommitMessageGeneration(t *testing.T)
 		t.Fatalf("introduce the fallback: %v", err)
 	}
 
-	generator := git.NewMessageGenerator()
-	generator.SetDestinationPolicySource(app.aiService.DestinationPolicy)
-	if _, err := generator.Generate(context.Background(), t.TempDir(), golemApproveDiff); !errors.Is(err, provider.ErrDestinationDenied) {
-		t.Fatalf("Generate before approval = %v, want a destination denial", err)
+	// The shipped binding: the app's own generator, wired at startup.
+	repo := initGitRepoForApp(t)
+	if _, err := app.GetWorkspaceInfo(repo); err != nil {
+		t.Fatalf("bind repository: %v", err)
+	}
+	if err := app.GitStage(repo, []string{"f.txt"}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if _, err := app.GitGenerateCommitMessage(repo); !errors.Is(err, provider.ErrDestinationDenied) {
+		t.Fatalf("GitGenerateCommitMessage before approval = %v, want a destination denial", err)
 	}
 
 	before := golemFileDigest(t, path)
@@ -1749,9 +1751,9 @@ func TestApproveMissingDestinationsUnblocksCommitMessageGeneration(t *testing.T)
 
 	// The SAME generator instance, with no restart and no re-injection: the
 	// policy source is evaluated fresh on every run.
-	message, err := generator.Generate(context.Background(), t.TempDir(), golemApproveDiff)
-	if err != nil || strings.TrimSpace(message) == "" {
-		t.Fatalf("Generate after approval = %q, %v, want a message", message, err)
+	result, err := app.GitGenerateCommitMessage(repo)
+	if err != nil || strings.TrimSpace(result.Message) == "" {
+		t.Fatalf("GitGenerateCommitMessage after approval = %+v, %v, want a message", result, err)
 	}
 }
 
