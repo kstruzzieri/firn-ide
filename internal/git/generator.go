@@ -121,14 +121,20 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 	// changed back between the two listings goes unseen; copying the index
 	// for GIT_INDEX_FILE would close it if that ever matters.
 	// A fresh cache, so the recheck sees a source the policy protected since.
-	again, err := svc.StagedChanges(ctx, dir, memoize(scope.Protected))
-	if err != nil {
+	recheck := func() error {
+		again, err := svc.StagedChanges(ctx, dir, memoize(scope.Protected))
+		if err != nil {
+			return err
+		}
+		if againAllowed, _, _ := partitionStaged(again, guard); !slices.Equal(again, changes) || !slices.Equal(againAllowed, allowed) {
+			return errStagedChangesMoved
+		}
+		return nil
+	}
+	if err := recheck(); err != nil {
 		return CommitMessageResult{}, err
 	}
-	if againAllowed, _, _ := partitionStaged(again, guard); !slices.Equal(again, changes) || !slices.Equal(againAllowed, allowed) {
-		return CommitMessageResult{}, errStagedChangesMoved
-	}
-	result.Message, err = g.generate(ctx, dir, diff, len(withheld), configPath)
+	result.Message, err = g.generate(ctx, dir, diff, len(withheld), configPath, recheck)
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
@@ -239,7 +245,7 @@ func (*MessageGenerator) Available(context.Context) bool { return true }
 // filtered. withheld is the number of staged paths left out of diff; the
 // prompt states the count and nothing else. configPath pins the go-llm config
 // the runtime loads; "" lets it discover its own.
-func (g *MessageGenerator) generate(ctx context.Context, root, diff string, withheld int, configPath string) (message string, err error) {
+func (g *MessageGenerator) generate(ctx context.Context, root, diff string, withheld int, configPath string, beforeSend func() error) (message string, err error) {
 	if strings.TrimSpace(diff) == "" {
 		return "", errNothingStaged
 	}
@@ -292,6 +298,13 @@ func (g *MessageGenerator) generate(ctx context.Context, root, diff string, with
 			noun = "file was"
 		}
 		instruction += fmt.Sprintf("\n%d staged %s withheld from this diff by the repository's AI policy. Do not guess at what was withheld.", withheld, noun)
+	}
+	// Provider discovery can block during bootstrap; recheck before sending
+	// the diff in case the repository, policy, or staged paths changed there.
+	if beforeSend != nil {
+		if err := beforeSend(); err != nil {
+			return "", err
+		}
 	}
 	result, err := runtime.Run(ctx, golem.Turn{
 		RunID:   "firn-commit-message",

@@ -290,6 +290,10 @@ var ErrTooManyWithheld = errors.New("too many withheld files to leave out of one
 // check.
 var ErrPathTooLong = errors.New("a staged path is too long to check against the AI policy; write this message by hand")
 
+// ErrUnexpectedCopySource reports a pathspec that admitted an unprotected
+// source, which could hide a protected copy by matching more closely.
+var ErrUnexpectedCopySource = errors.New("git included an unchecked copy source, so the staged files cannot be checked against the AI policy; write this message by hand")
+
 // copyCheckBatchBytes bounds the pathspecs of one copy-check command: half
 // for protected sources, half for additions. Bytes overcount UTF-16 units, so
 // two halves plus the fixed arguments stay under Windows' 32,767-character
@@ -357,7 +361,7 @@ func (s *Service) markCopiesFrom(ctx context.Context, root string, changes []Sta
 		isNew := change.Status == 'A' || change.Status == 'C' || change.Status == 'R'
 		if isNew && !copySource(change.Path) && (change.OldPath == "" || !copySource(change.OldPath)) {
 			created[change.Path] = i
-			dests = append(dests, ":(top,literal)"+change.Path)
+			dests = append(dests, exactFilePathspec(change.Path))
 		}
 	}
 	if len(dests) == 0 {
@@ -381,7 +385,7 @@ func (s *Service) markCopiesFrom(ctx context.Context, root string, changes []Sta
 	var sources []string
 	for _, path := range paths {
 		if path != "" && copySource(path) {
-			sources = append(sources, ":(top,literal)"+path)
+			sources = append(sources, exactFilePathspec(path))
 		}
 	}
 	if len(sources) == 0 {
@@ -415,8 +419,12 @@ func (s *Service) markCopiesFrom(ctx context.Context, root string, changes []Sta
 			}
 			for _, copied := range found {
 				i, ok := created[copied.Path]
-				if !ok || copied.OldPath == "" || !copySource(copied.OldPath) {
+				if !ok || copied.OldPath == "" {
 					continue
+				}
+				// Git also tries the pattern's raw spelling as a directory prefix.
+				if !copySource(copied.OldPath) {
+					return nil, ErrUnexpectedCopySource
 				}
 				if changes[i].Status == 'R' {
 					// The rename's old side was deleted; keep that deletion listed.
@@ -428,6 +436,20 @@ func (s *Service) markCopiesFrom(ctx context.Context, root string, changes []Sta
 		}
 	}
 	return append(changes, deleted...), nil
+}
+
+// exactFilePathspec escapes a glob's first byte to force whole-path matching:
+// a literal selector also includes deleted descendants of a new file's name.
+func exactFilePathspec(path string) string {
+	var spec strings.Builder
+	spec.WriteString(":(top,glob)")
+	for i := 0; i < len(path); i++ {
+		if i == 0 || strings.ContainsRune(`\*?[]`, rune(path[i])) {
+			spec.WriteByte('\\')
+		}
+		spec.WriteByte(path[i])
+	}
+	return spec.String()
 }
 
 // batchPathspecs splits pathspecs into batches of at most copyCheckBatchBytes

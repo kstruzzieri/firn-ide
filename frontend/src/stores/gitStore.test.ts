@@ -281,15 +281,17 @@ describe('gitStore operations', () => {
     expect(useGitStore.getState().branches).toEqual(['main', 'feature/x']);
   });
 
-  it('generateMessage fills commitMessage and records the paths withheld from the AI', async () => {
+  it('generateMessage returns the message and records the paths withheld from the AI', async () => {
     mockGenerate.mockResolvedValue({
       message: 'feat: generated subject',
       withheld: ['.env'],
     } as git.CommitMessageResult);
 
-    await useGitStore.getState().generateMessage();
+    useGitStore.getState().setCommitMessage('my draft');
+    const message = await useGitStore.getState().generateMessage();
 
-    expect(useGitStore.getState().commitMessage).toBe('feat: generated subject');
+    expect(message).toBe('feat: generated subject');
+    expect(useGitStore.getState().commitMessage).toBe('my draft');
     expect(useGitStore.getState().withheldFromAI).toEqual({ paths: ['.env'], allWithheld: false });
   });
 

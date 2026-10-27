@@ -31,7 +31,7 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 	provider := gittest.Start(t, "feat: add line", nil)
 	diff := "diff --git a/x b/x\n+added line\n"
 
-	msg, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), diff, 0, "")
+	msg, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), diff, 0, "", nil)
 
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -70,7 +70,7 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 
 	provider = gittest.Start(t, "chore: trim diff", nil)
 	huge := strings.Repeat("x", maxPromptBytes*4) + "must not reach provider"
-	if _, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), huge, 0, ""); err != nil {
+	if _, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), huge, 0, "", nil); err != nil {
 		t.Fatalf("Generate(huge) error = %v", err)
 	}
 	if got := string(<-provider.Requests); !strings.Contains(got, "[diff truncated for prompt budget]") || strings.Contains(got, "must not reach provider") {
@@ -79,7 +79,7 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 
 	provider = gittest.Start(t, "chore: escape diff", nil)
 	escapeHeavy := strings.Repeat("<", maxPromptBytes) + "must not reach provider"
-	if _, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), escapeHeavy, 0, ""); err != nil {
+	if _, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), escapeHeavy, 0, "", nil); err != nil {
 		t.Fatalf("Generate(escape-heavy) error = %v", err)
 	}
 	var escapedRequest struct {
@@ -119,7 +119,7 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 }
 
 func TestMessageGenerator_Generate_EmptyDiff(t *testing.T) {
-	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), " \n\t", 0, "")
+	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), " \n\t", 0, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "nothing staged") {
 		t.Fatalf("Generate() error = %v, want nothing-staged error", err)
 	}
@@ -128,7 +128,7 @@ func TestMessageGenerator_Generate_EmptyDiff(t *testing.T) {
 func TestMessageGenerator_Generate_BootstrapFailure(t *testing.T) {
 	t.Setenv("GO_LLM_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
 
-	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, "")
+	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, "", nil)
 
 	if err == nil || !strings.Contains(err.Error(), "golem runtime initialization") {
 		t.Fatalf("Generate() error = %v, want runtime-initialization failure", err)
@@ -140,7 +140,7 @@ func TestMessageGenerator_Generate_RuntimeFailure(t *testing.T) {
 		http.Error(w, "model unavailable", http.StatusServiceUnavailable)
 	})
 
-	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, "")
+	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, "", nil)
 
 	if err == nil || !strings.Contains(err.Error(), "golem runtime") {
 		t.Fatalf("Generate() error = %v, want golem runtime failure", err)
@@ -161,7 +161,7 @@ func TestMessageGenerator_Generate_SendsNoOpencodeSessionHeader(t *testing.T) {
 		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	})
 
-	if _, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, ""); err != nil {
+	if _, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, "", nil); err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
 	if len(headers) == 0 {
@@ -194,7 +194,7 @@ func TestMessageGenerator_Generate_DoesNotSendToolReadResultsToProvider(t *testi
 		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	})
 
-	if _, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, ""); err == nil || !strings.Contains(err.Error(), "unusable") {
+	if _, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, "", nil); err == nil || !strings.Contains(err.Error(), "unusable") {
 		t.Errorf("Generate() error = %v, want tool-only turn rejected as unusable", err)
 	}
 
@@ -222,7 +222,7 @@ func TestMessageGenerator_Generate_PropagatesCancellation(t *testing.T) {
 	defer cancel()
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := NewMessageGenerator().generate(ctx, t.TempDir(), "+change\n", 0, "")
+		_, err := NewMessageGenerator().generate(ctx, t.TempDir(), "+change\n", 0, "", nil)
 		errCh <- err
 	}()
 	<-started
@@ -236,7 +236,7 @@ func TestMessageGenerator_Generate_RejectsUnusableOutput(t *testing.T) {
 	for _, answer := range []string{" \n\t", "feat: bad\x00message"} {
 		t.Run(fmt.Sprintf("%q", answer), func(t *testing.T) {
 			gittest.Start(t, answer, nil)
-			_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, "")
+			_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, "", nil)
 			if err == nil || !strings.Contains(err.Error(), "golem returned") {
 				t.Fatalf("Generate() error = %v, want unusable-output error", err)
 			}
@@ -297,7 +297,7 @@ func TestGenerateDeniesUngrantedRemoteDestination(t *testing.T) {
 	}`)
 
 	gen := NewMessageGenerator()
-	_, err := gen.generate(context.Background(), t.TempDir(), sampleDiff, 0, "")
+	_, err := gen.generate(context.Background(), t.TempDir(), sampleDiff, 0, "", nil)
 	if !errors.Is(err, provider.ErrDestinationDenied) {
 		t.Fatalf("want destination denial, got %v", err)
 	}
@@ -327,7 +327,7 @@ func TestGenerateSucceedsAgainstGrantedRemoteListener(t *testing.T) {
 		}
 		return provider.NewDestinationPolicy(d)
 	})
-	msg, err := gen.generate(context.Background(), t.TempDir(), sampleDiff, 0, "")
+	msg, err := gen.generate(context.Background(), t.TempDir(), sampleDiff, 0, "", nil)
 	if err != nil || strings.TrimSpace(msg) == "" {
 		t.Fatalf("want a message, got %q, %v", msg, err)
 	}
@@ -355,7 +355,7 @@ func TestGeneratorDoesNotRequirePlanningDestination(t *testing.T) {
 	}`, server.URL))
 
 	gen := NewMessageGenerator() // zero grants: no destination is approved
-	msg, err := gen.generate(context.Background(), t.TempDir(), sampleDiff, 0, "")
+	msg, err := gen.generate(context.Background(), t.TempDir(), sampleDiff, 0, "", nil)
 	if err != nil || strings.TrimSpace(msg) == "" {
 		t.Fatalf("Generate() = %q, %v, want success without touching defaults.planning", msg, err)
 	}

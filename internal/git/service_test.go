@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -813,5 +814,77 @@ func TestBatchPathspecs(t *testing.T) {
 
 	if _, err := batchPathspecs([]string{strings.Repeat("x", copyCheckBatchBytes)}); !errors.Is(err, ErrPathTooLong) {
 		t.Errorf("batchPathspecs(oversized) error = %v, want ErrPathTooLong", err)
+	}
+}
+
+func TestService_StagedChanges_CopyDestinationDoesNotIncludeDeletedDescendants(t *testing.T) {
+	requireGit(t)
+	for _, tc := range []struct {
+		name     string
+		path     string
+		unixOnly bool
+	}{
+		{name: "plain", path: "config"},
+		{name: "nested", path: "sub/config"},
+		{name: "unicode", path: "配置/é😀"},
+		{name: "leading unicode", path: "😀"},
+		{name: "brackets", path: "[config]"},
+		{name: "space", path: "space name"},
+		{name: "wildcards", path: "con*fi?g", unixOnly: true},
+		{name: "backslash", path: `\config`, unixOnly: true},
+		{name: "nested metacharacters", path: `sub[dir]/con\fi*g?`, unixOnly: true},
+		{name: "colon", path: ":config", unixOnly: true},
+		{name: "newline", path: "line\nbreak", unixOnly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.unixOnly && runtime.GOOS == "windows" {
+				t.Skip("filename contains characters Windows does not allow")
+			}
+			dir := initRepo(t)
+			common := strings.Repeat("common unchanged configuration line\n", 10)
+			allowed := common + strings.Repeat("extra allowed configuration line\n", 4)
+			old := tc.path + "/old.txt"
+			writeFile(t, dir, ".env", common+"TOKEN=synthetic-secret-copy\n")
+			writeFile(t, dir, old, allowed)
+			gitCmd(t, dir, "add", ".")
+			gitCmd(t, dir, "commit", "-m", "seed")
+			gitCmd(t, dir, "--literal-pathspecs", "rm", "--", old)
+			writeFile(t, dir, tc.path, allowed+"TOKEN=synthetic-secret-copy\n")
+			gitCmd(t, dir, "add", ".")
+
+			changes, err := NewService().StagedChanges(ctx(), dir, func(path string) bool { return path == ".env" })
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []StagedChange{{Status: 'C', Path: tc.path, OldPath: ".env"}, {Status: 'D', Path: old}}
+			if !slices.Equal(changes, want) {
+				t.Fatalf("StagedChanges() = %+v, want %+v", changes, want)
+			}
+		})
+	}
+}
+
+func TestService_StagedChanges_RejectsRawPathspecSpellingAsCopySource(t *testing.T) {
+	requireGit(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("backslash is a directory separator on Windows")
+	}
+	dir := initRepo(t)
+	common := strings.Repeat("common unchanged configuration line\n", 10)
+	allowed := common + strings.Repeat("extra allowed configuration line\n", 4)
+	writeFile(t, dir, ".env", common+"TOKEN=synthetic-secret-copy\n")
+	// Git tries this literal spelling before interpreting the glob's escapes.
+	writeFile(t, dir, `\config/old.txt`, allowed)
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "seed")
+	gitCmd(t, dir, "--literal-pathspecs", "rm", "--", `\config/old.txt`)
+	writeFile(t, dir, "config", allowed+"TOKEN=synthetic-secret-copy\n")
+	gitCmd(t, dir, "add", "config")
+
+	changes, err := NewService().StagedChanges(ctx(), dir, func(path string) bool { return path == ".env" })
+
+	if !errors.Is(err, ErrUnexpectedCopySource) || changes != nil {
+		t.Fatalf("StagedChanges() = %+v, %v, want no changes and ErrUnexpectedCopySource", changes, err)
 	}
 }

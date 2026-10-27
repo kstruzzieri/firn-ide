@@ -144,7 +144,11 @@ export function GitPanel() {
           </div>
         )}
         {receipt && <CommitReceiptCard />}
-        <CommitArea stagedCount={buckets.staged.length} disabled={opInFlight !== null} />
+        <CommitArea
+          key={git.epoch}
+          stagedCount={buckets.staged.length}
+          disabled={opInFlight !== null}
+        />
         <div className={styles.sections}>
           {buckets.conflicts.length > 0 && (
             <Section
@@ -264,24 +268,21 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
 
   const handleGenerate = async () => {
     const git = useGitStore.getState();
-    const draft = git.commitMessage.trim();
-    if (draft === '') {
-      await git.generateMessage(); // fills the empty textarea directly
-      return;
-    }
-    // Non-destructive: keep the draft, surface the proposal beside it.
-    const before = git.commitMessage;
     const epoch = git.epoch;
-    await git.generateMessage();
+    setSuggestion(null);
+    const generated = await git.generateMessage();
     const after = useGitStore.getState();
-    // A workspace switch mid-generate reset the box; the draft belongs to the
-    // workspace it was written in.
-    if (after.epoch !== epoch) return;
-    const generated = after.commitMessage;
-    if (generated !== before) {
-      useGitStore.getState().setCommitMessage(before);
-      setSuggestion(generated);
-    }
+    if (after.epoch !== epoch || !generated) return;
+    // Decide against the current draft: it may have been edited while waiting.
+    if (after.commitMessage.trim() === '') after.setCommitMessage(generated);
+    else setSuggestion(generated);
+  };
+
+  const handleCommit = async () => {
+    const git = useGitStore.getState();
+    await git.commit(amend);
+    const after = useGitStore.getState();
+    if (after.epoch === git.epoch && after.lastCommitReceipt) setSuggestion(null);
   };
 
   return (
@@ -358,7 +359,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
           type="button"
           className={styles.commitBtn}
           disabled={!canCommit}
-          onClick={() => void useGitStore.getState().commit(amend)}
+          onClick={() => void handleCommit()}
         >
           Commit
         </button>

@@ -343,7 +343,7 @@ interface GitActions {
   push: () => Promise<void>;
   loadBranches: () => Promise<void>;
   checkout: (branch: string, create: boolean) => Promise<void>;
-  generateMessage: () => Promise<void>;
+  generateMessage: () => Promise<string | null>;
   probeAiAvailable: () => Promise<void>;
   requestBranchPopupFocus: () => void;
   openDiff: (
@@ -647,8 +647,9 @@ export const useGitStore = create<GitStore>()(
       },
 
       generateMessage: async () => {
+        let message: string | null = null;
         let withheld: string[] = [];
-        await runOp(
+        const ok = await runOp(
           'generate',
           get,
           set,
@@ -657,17 +658,16 @@ export const useGitStore = create<GitStore>()(
             set({ withheldFromAI: null }, false, 'git/generateWithheldReset');
             const result = await GitGenerateCommitMessage(root);
             withheld = result.withheld;
-            return result.message;
+            message = result.message;
+            return message;
           },
           (message) => ({
-            // #384: the withheld list is shown locally only. An empty message
-            // means every staged path was withheld and no request was made,
-            // so the draft stays as it is.
+            // An empty message means every staged path was withheld.
             withheldFromAI: withheld.length ? { paths: withheld, allWithheld: !message } : null,
             lastOpOutput: null,
-            ...(message ? { commitMessage: message } : {}),
           })
         );
+        return ok ? message : null;
       },
 
       probeAiAvailable: async () => {

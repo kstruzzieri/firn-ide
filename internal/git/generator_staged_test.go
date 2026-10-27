@@ -1,9 +1,12 @@
 package git
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -499,6 +502,86 @@ func TestGenerateStaged_PolicyChangeBeforeSendMakesNoRequest(t *testing.T) {
 
 	if !errors.Is(err, errStagedChangesMoved) {
 		t.Fatalf("GenerateStaged() error = %v, want errStagedChangesMoved", err)
+	}
+}
+
+// Provider discovery may block after the first recheck. A repository unbound
+// or a policy tightened during bootstrap must still stop the staged diff.
+func TestGenerateStaged_PolicyChangeDuringBootstrapMakesNoRequest(t *testing.T) {
+	for _, change := range []string{"unbind", "manifest"} {
+		t.Run(change, func(t *testing.T) {
+			dir := initRepo(t)
+			dir, err := filepath.EvalSymlinks(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, dir, "main.go", mainGo)
+			gitCmd(t, dir, "add", "main.go")
+			svc := ai.NewService(context.Background(), filesystem.NewOS(), "", nil, "")
+			t.Cleanup(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := svc.Close(ctx); err != nil {
+					t.Errorf("Close: %v", err)
+				}
+			})
+			var models, chats atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v1/models":
+					models.Add(1)
+					if change == "unbind" {
+						svc.UnbindRepository()
+					} else {
+						manifest := filepath.Join(dir, "ai-kit.yaml")
+						if err := os.WriteFile(manifest, []byte("sensitive_paths:\n  - main.go\n"), 0o600); err != nil {
+							t.Errorf("write manifest: %v", err)
+							http.Error(w, "manifest write failed", http.StatusInternalServerError)
+							return
+						}
+						svc.ReloadPolicy(manifest)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(w, `{"data":[{"id":%q}]}`, gittest.Model)
+				case "/v1/chat/completions":
+					chats.Add(1)
+					http.Error(w, "unexpected diff request after policy change", http.StatusBadRequest)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			config := filepath.Join(t.TempDir(), "models.json")
+			data := fmt.Sprintf(`{
+				"providers":{"test":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}},
+				"models":{"chat":{"name":%q,"provider":"test","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},
+				"defaults":{"agent":"chat"}
+			}`, server.URL, gittest.Model)
+			if err := os.WriteFile(config, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("GO_LLM_CONFIG", config)
+			if _, _, err := svc.BindRepository(dir); err != nil {
+				t.Fatal(err)
+			}
+			gen := NewMessageGenerator()
+			gen.SetScopeSource(func(root string) (StagedScope, error) {
+				scope, err := svc.StagedScope(root)
+				return StagedScope(scope), err
+			})
+
+			_, err = gen.GenerateStaged(ctx(), NewService(), dir)
+
+			if !errors.Is(err, errStagedChangesMoved) {
+				t.Errorf("GenerateStaged error = %v, want errStagedChangesMoved", err)
+			}
+			if models.Load() == 0 {
+				t.Error("no bootstrap model request observed")
+			}
+			if got := chats.Load(); got != 0 {
+				t.Errorf("sent %d staged-diff requests after policy change during bootstrap", got)
+			}
+		})
 	}
 }
 
