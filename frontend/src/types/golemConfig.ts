@@ -1613,20 +1613,20 @@ function selectorGroups(
 ): Map<string, SelectorGroup> {
   const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
   const modelOf = new Map(base.models.map((model) => [model.role, model]));
-  // [W4-10] A sibling contributes what it still routes when the join is
+  // [W4-10] A sibling contributes what it still routes when the change is
   // gated. The backend applies a request in phases — route plans in stable-id
-  // order, then overrides, binds, unassigns, removals — and forks a role
-  // (ForkRoleModel) whenever it still routes more than one use case, or any
-  // role lists it as a fallback (`fallbacks[role]`, read from the projection's
-  // `fallbacks`): the source role's Defaults binding stays on ALL of them,
-  // including the one this draft moves, until the binds phase, so a fork
-  // source's use cases still gate every join, in every order. Only a true
-  // retarget (SetRoleModel) — a role routing exactly this one use case that
-  // nothing falls back to — moves the role itself, so only then has a route
-  // sent to ANOTHER selector left it (a change onto THIS selector is in the
-  // group, governed by construction). An unassigned route is still bound at
-  // every join too. Ceiling, not mirrored here: a retarget whose plan sorts
-  // after the join is a transient conflict the backend still refuses.
+  // order, then overrides, unassigns, removals — and a route plan sending a
+  // use case to ANOTHER selector takes it off this one where the plan runs:
+  // a true retarget (SetRoleModel, a role routing exactly this one use case
+  // that nothing falls back to) moves the role itself; a fork (ForkRoleModel,
+  // for a role still routing more than one use case, or one any role lists
+  // as a fallback — `fallbacks[role]`, read from the projection's
+  // `fallbacks`) leaves the role and binds the use case to the copy right
+  // away (#474). So a departing use case is still governed by a join of the
+  // group that sorts before its departure, and never by an override, which
+  // runs after every route plan. A change onto THIS selector is in the
+  // group, governed by construction; an unassigned route is still bound at
+  // every join and every override.
   const staged = stagedRoutes(changes);
   const groups = new Map<string, SelectorGroup>();
   const currentOf = (change: RouteChange): ModelProjection | undefined => {
@@ -1662,15 +1662,17 @@ function selectorGroups(
       const current = currentOf(change);
       return current !== undefined && sameModelFacts(current, change.modelFacts);
     });
-    const gates =
-      overrides ||
-      group.changes.some((change) => {
+    // The stable ids of the joins that widen the gate, each where it runs.
+    const gatingJoins = group.changes
+      .filter((change) => {
         const current = currentOf(change);
         return (
           !(current !== undefined && sameModelFacts(current, change.modelFacts)) &&
           assertsOverride(base, staged, { ...change, exposedCaps: authority.exposedCaps })
         );
-      });
+      })
+      .map(changeStableID);
+    const gates = overrides || gatingJoins.length > 0;
     // The CONFIRMATION set stays the wide one the backend's gateRolesFor asks
     // for: every change the editor stages carries a non-empty exposure [W5-1],
     // so the roles already on the selector feed it for every real change; the
@@ -1678,12 +1680,16 @@ function selectorGroups(
     if (!overrides && authority.exposedCaps.length === 0) continue;
     for (const model of base.models) {
       if (selectorKey(model.provider, model.modelName) !== key) continue;
-      const retarget = retargetOf(base, staged, model);
+      const leaving = leavingRoutes(base, staged, model);
       for (const useCase of model.routedUseCases) {
         group.affected.add(useCase);
-        // A fork keeps the source role bound to every one of its use cases
-        // until the binds phase; only a true retarget actually leaves.
-        if (gates && (retarget === undefined || retarget.useCase !== useCase))
+        // Departed once its plan has run: only a join sorting before it meets it.
+        const departure = leaving.get(useCase);
+        if (
+          gates &&
+          (departure === undefined ||
+            gatingJoins.some((id) => compareString(id, changeStableID(departure)) < 0))
+        )
           group.governed.add(useCase);
       }
     }
