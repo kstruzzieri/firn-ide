@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -990,6 +991,146 @@ func TestGolemRuntimeTransportRefusesRedirects(t *testing.T) {
 		}
 		transport.CloseIdleConnections()
 		local.Close()
+	}
+}
+
+// ollamaChatServer serves one streamed ollama chat answer on ln and counts
+// the requests it receives.
+func ollamaChatServer(t *testing.T, ln net.Listener, hits *int32) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(hits, 1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = io.WriteString(w, `{"model":"big-coder","message":{"role":"assistant","content":"done"},"done":false}`+"\n")
+		_, _ = io.WriteString(w, `{"model":"big-coder","message":{"role":"assistant","content":""},"done":true}`+"\n")
+	}))
+	_ = srv.Listener.Close()
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// standInDialer dials IP literals as given and sends every name to resolved,
+// the way a hosts-file entry would send "localhost" elsewhere.
+func standInDialer(resolved string) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if host, _, err := net.SplitHostPort(addr); err == nil && net.ParseIP(host) == nil {
+			addr = resolved
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+}
+
+func chatOnce(t *testing.T, backend provider.Provider) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := backend.Chat(ctx, provider.ChatRequest{
+		Model:    "big-coder",
+		Messages: []provider.ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	return err
+}
+
+// A chat destination on http://localhost:<port> reaches the listener on
+// 127.0.0.1, or on ::1 when nothing listens on 127.0.0.1, while the base
+// dialer's name resolution (a hosts-file entry's stand-in) answers
+// "localhost" with a decoy: the name is never resolved. (#427)
+func TestGolemRuntimeTransportDialsLoopbackForLocalhost(t *testing.T) {
+	for _, tc := range []struct{ name, network, bind string }{
+		{"ipv4", "tcp4", "127.0.0.1:0"},
+		{"ipv6", "tcp6", "[::1]:0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ln, err := net.Listen(tc.network, tc.bind)
+			if err != nil {
+				t.Skipf("no %s loopback listener: %v", tc.name, err)
+			}
+			var hits, decoyHits int32
+			ollamaChatServer(t, ln, &hits)
+			decoy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&decoyHits, 1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(decoy.Close)
+			orig := baseTransport
+			baseTransport = func() *http.Transport {
+				return &http.Transport{DialContext: standInDialer(decoy.Listener.Addr().String())}
+			}
+			t.Cleanup(func() { baseTransport = orig })
+
+			endpoint, local, err := NormalizeEndpoint(fmt.Sprintf("http://localhost:%d", ln.Addr().(*net.TCPAddr).Port))
+			if err != nil || !local {
+				t.Fatalf("NormalizeEndpoint = %q local=%v err=%v", endpoint, local, err)
+			}
+			target := testTarget("local-ollama", "big-coder")
+			target.destination.Endpoint = endpoint
+			backend, transport, err := buildProvider(target, "")
+			if err != nil {
+				t.Fatalf("buildProvider: %v", err)
+			}
+			defer transport.CloseIdleConnections()
+			chatErr := chatOnce(t, backend)
+			if got := atomic.LoadInt32(&decoyHits); got != 0 {
+				t.Fatalf("decoy received %d request(s): localhost was resolved instead of dialed as loopback", got)
+			}
+			if chatErr != nil {
+				t.Fatalf("Chat: %v", chatErr)
+			}
+			if got := atomic.LoadInt32(&hits); got != 1 {
+				t.Fatalf("loopback listener received %d request(s), want 1", got)
+			}
+		})
+	}
+}
+
+// A destination whose host is any other name reaches the base dialer as that
+// name, so its resolution stays the operating system's. (#427)
+func TestGolemRuntimeTransportKeepsOrdinaryDialForOtherHosts(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	var hits int32
+	ollamaChatServer(t, ln, &hits)
+	var mu sync.Mutex
+	var dialed []string
+	orig := baseTransport
+	baseTransport = func() *http.Transport {
+		return &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			mu.Lock()
+			dialed = append(dialed, addr)
+			mu.Unlock()
+			return standInDialer(ln.Addr().String())(ctx, network, addr)
+		}}
+	}
+	t.Cleanup(func() { baseTransport = orig })
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	endpoint, local, err := NormalizeEndpoint(fmt.Sprintf("http://firn-backend.test:%d", port))
+	if err != nil || local {
+		t.Fatalf("NormalizeEndpoint = %q local=%v err=%v", endpoint, local, err)
+	}
+	target := testTarget("lan", "big-coder")
+	target.destination.Endpoint = endpoint
+	target.destination.Classification = "remote"
+	backend, transport, err := buildProvider(target, "")
+	if err != nil {
+		t.Fatalf("buildProvider: %v", err)
+	}
+	defer transport.CloseIdleConnections()
+	if err := chatOnce(t, backend); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("listener received %d request(s), want 1", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{fmt.Sprintf("firn-backend.test:%d", port)}; !reflect.DeepEqual(dialed, want) {
+		t.Fatalf("base dialer saw %q, want %q: a non-localhost name keeps the ordinary dial", dialed, want)
 	}
 }
 

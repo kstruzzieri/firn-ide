@@ -7,9 +7,13 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
+	"time"
 
 	"github.com/kstruzzieri/go-llm/agent"
 	"github.com/kstruzzieri/go-llm/agent/interceptor"
@@ -210,15 +214,9 @@ func (r *golemRunner) Close() error {
 // and hardened so nothing can silently change the consented destination:
 // environment proxies are ignored and provider redirects are never followed.
 func buildProvider(target providerTarget, userAgent string) (provider.Provider, *http.Transport, error) {
-	transport, ok := http.DefaultTransport.(*http.Transport)
-	if ok {
-		transport = transport.Clone()
-	} else {
-		// A dependency replaced http.DefaultTransport with something else;
-		// start from a fresh transport instead of panicking on the assertion.
-		transport = &http.Transport{}
-	}
+	transport := baseTransport()
 	transport.Proxy = nil
+	transport.DialContext = loopbackDialContext(transport.DialContext)
 	client := &http.Client{
 		Transport: transport,
 		Timeout:   target.timeout,
@@ -244,6 +242,57 @@ func buildProvider(target providerTarget, userAgent string) (provider.Provider, 
 	default:
 		return nil, nil, fmt.Errorf("%w: unsupported provider api format", ErrAgentConfigInvalid)
 	}
+}
+
+// localhostIPs are the addresses a "localhost" host dials, in order. RFC 6761
+// §6.3 lets an application treat the name as loopback without asking the
+// resolver, as browsers and go-llm's destination guard do (go-llm#665), so a
+// hosts-file entry cannot redirect a local chat destination. Local backends
+// commonly bind 127.0.0.1 only, so it goes first.
+var localhostIPs = []string{"127.0.0.1", "::1"}
+
+// loopbackDialContext wraps dial so a "localhost" host dials localhostIPs on
+// the requested port, one after another, and never consults the resolver;
+// every other host reaches dial unchanged. The endpoint host is the only host
+// the transport ever dials, with no proxy and no redirects, so this is the
+// whole of a local destination's dial policy. The attempts run in sequence
+// rather than racing as go-llm's guard does: a loopback connect is refused or
+// accepted at once.
+func loopbackDialContext(dial func(context.Context, string, string) (net.Conn, error)) func(context.Context, string, string) (net.Conn, error) {
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		if !strings.EqualFold(host, "localhost") {
+			return dial(ctx, network, addr)
+		}
+		var errs []error
+		for _, ip := range localhostIPs {
+			conn, err := dial(ctx, network, net.JoinHostPort(ip, port))
+			if err == nil {
+				return conn, nil
+			}
+			errs = append(errs, err)
+		}
+		return nil, errors.Join(errs...)
+	}
+}
+
+// baseTransport returns the transport buildProvider hardens: a private copy
+// of http.DefaultTransport, so the hardening never touches shared state. A
+// variable so a test can stand in a transport whose dialer resolves names
+// elsewhere.
+var baseTransport = func() *http.Transport {
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		return transport.Clone()
+	}
+	// A dependency replaced http.DefaultTransport with something else;
+	// start from a fresh transport instead of panicking on the assertion.
+	return &http.Transport{}
 }
 
 // fixedModelCaller sends every model call straight to the one consented

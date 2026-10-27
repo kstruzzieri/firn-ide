@@ -114,6 +114,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trackpad swipe or Shift+wheel. Each side's scrollbar follows the column
   divider and appears only while that side overflows. Long lines still do not
   wrap, which keeps the two sides aligned. (#448)
+- Golem chat dials 127.0.0.1, then ::1, for a `localhost` provider endpoint
+  instead of asking the operating system to resolve the name, so a hosts-file
+  entry can no longer redirect a local chat destination, nor, for an
+  openai-compat provider, the API key sent with it. Commit message generation
+  has dialed this way since #418 through go-llm's destination guard; chat
+  builds its own transport, which now applies the same rule. Any other host
+  keeps the ordinary dial. (#427)
 
 ## [0.14.0] - 2026-10-25
 
