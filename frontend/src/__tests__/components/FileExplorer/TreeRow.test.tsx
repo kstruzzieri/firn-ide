@@ -1,6 +1,9 @@
 // src/__tests__/components/FileExplorer/TreeRow.test.tsx
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { TreeRow, rowDomId } from '../../../components/FileExplorer/TreeRow';
+import { cssRule } from '../../helpers/cssRule';
 
 const noop = () => {};
 
@@ -56,6 +59,20 @@ describe('TreeRow git decoration', () => {
 
     expect(screen.getByRole('treeitem')).not.toHaveAttribute('data-git');
     expect(screen.queryByTestId('git-badge')).not.toBeInTheDocument();
+  });
+});
+
+describe('TreeRow text selection', () => {
+  it('turns text selection off on rows, so a double-click or a drag highlights no name', () => {
+    const css = readFileSync(
+      resolve(__dirname, '../../../components/FileExplorer/TreeRow.module.css'),
+      'utf8'
+    );
+    const row = cssRule(css, '.row');
+    // The prefixed form is for WebKit (WKWebView, WebKitGTK); the lookbehind
+    // keeps it from also satisfying the unprefixed check.
+    expect(row).toMatch(/-webkit-user-select:\s*none/);
+    expect(row).toMatch(/(?<!-webkit-)user-select:\s*none/);
   });
 });
 
