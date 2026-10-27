@@ -1418,6 +1418,12 @@ export interface ReachGroup {
   factsChanged: string[];
   /** The first edited route's identity: the group header's jump target. */
   changeId: string;
+  /**
+   * [#311] Every use case this group's mutations GATE (`selectorGroups`'
+   * governed set), sorted: a row's refusal is explained from the groups that
+   * gate it, which is wider than the rows whose display changes.
+   */
+  governed: string[];
 }
 
 export interface RouteReachEntry {
@@ -1570,9 +1576,18 @@ export const retargetOf = (
   staged: ReadonlyMap<string, RouteChange>,
   model: ModelProjection
 ): RouteChange | undefined =>
-  model.routedUseCases.length === 1
+  model.routedUseCases.length === 1 && !isFallbackTarget(base, model.role)
     ? leavingRoutes(base, staged, model).get(model.routedUseCases[0])
     : undefined;
+
+/**
+ * [#311] The `fallbacks[role]` half of the backend's fork test: a role any
+ * other role lists as a fallback — routed or not — is forked when its one
+ * route moves, never retargeted, so it never leaves its selector. Read from
+ * the projection's `fallbacks` (a role listing itself cannot leave either).
+ */
+const isFallbackTarget = (base: DraftBaseProjection, role: string): boolean =>
+  base.models.some((model) => model.fallbacks?.includes(role) === true);
 
 interface SelectorGroup {
   changes: RouteChange[];
@@ -1601,21 +1616,23 @@ function selectorGroups(
   // [W4-10] A sibling contributes what it still routes when the join is
   // gated. The backend applies a request in phases — route plans in stable-id
   // order, then overrides, binds, unassigns, removals — and forks a role
-  // (ForkRoleModel) whenever it still routes more than one use case: the
-  // source role's Defaults binding stays on ALL of them, including the one
-  // this draft moves, until the binds phase, so a fork source's use cases
-  // still gate every join, in every order. Only a true retarget
-  // (SetRoleModel) — a role routing exactly this one use case — moves the
-  // role itself, so only then has a route sent to ANOTHER selector left it (a
-  // change onto THIS selector is in the group, governed by construction). An
-  // unassigned route is still bound at every join too. Ceilings, not mirrored
-  // here: a retarget whose plan sorts after the join is a transient conflict
-  // the backend still refuses; and a sibling routed by exactly one use case
-  // that an unrouted role lists as a fallback is forked too
-  // (`fallbacks[role]`), invisible to this projection — the pre-check may
-  // mark it gone and the backend refuses late.
+  // (ForkRoleModel) whenever it still routes more than one use case, or any
+  // role lists it as a fallback (`fallbacks[role]`, read from the projection's
+  // `fallbacks`): the source role's Defaults binding stays on ALL of them,
+  // including the one this draft moves, until the binds phase, so a fork
+  // source's use cases still gate every join, in every order. Only a true
+  // retarget (SetRoleModel) — a role routing exactly this one use case that
+  // nothing falls back to — moves the role itself, so only then has a route
+  // sent to ANOTHER selector left it (a change onto THIS selector is in the
+  // group, governed by construction). An unassigned route is still bound at
+  // every join too. Ceiling, not mirrored here: a retarget whose plan sorts
+  // after the join is a transient conflict the backend still refuses.
   const staged = stagedRoutes(changes);
   const groups = new Map<string, SelectorGroup>();
+  const currentOf = (change: RouteChange): ModelProjection | undefined => {
+    const role = roleOf.get(change.useCase);
+    return role === undefined ? undefined : modelOf.get(role);
+  };
   for (const change of changes) {
     if (change.kind !== 'route') continue;
     const key = selectorKey(change.modelFacts.provider, change.modelFacts.model);
@@ -1627,35 +1644,47 @@ function selectorGroups(
     group.changes.push(change);
     group.affected.add(change.useCase);
     group.governed.add(change.useCase);
-
-    const role = roleOf.get(change.useCase);
-    const current = role === undefined ? undefined : modelOf.get(role);
     // The current role feeds the confirmation set only.
-    for (const useCase of current?.routedUseCases ?? []) group.affected.add(useCase);
-    const override = current !== undefined && sameModelFacts(current, change.modelFacts);
-    // [#311] Whether the selector's roles are GATED mirrors what the backend
-    // sends for what is actually staged: an override goes through
-    // SetRoleOverrides, which gates every role on the selector (the editor is
-    // what keeps an override that changes nothing from being staged at all);
-    // a join widens upstream's gate to the selector's roles only when it
-    // asserts an explicit override (`assertsOverride`).
-    const gates = override || assertsOverride(base, staged, change);
+    for (const useCase of currentOf(change)?.routedUseCases ?? []) group.affected.add(useCase);
+  }
+  for (const [key, group] of groups) {
+    // [#311] What the backend receives is the group as COALESCED: every change
+    // carries the authority's exposure (`coalesceRouteChange`), so whether the
+    // selector's roles are gated is judged on that exposure, never on what an
+    // earlier change in the group asserted before it was overwritten. An
+    // override goes through SetRoleOverrides, which gates every role on the
+    // selector (the editor is what keeps an override that changes nothing
+    // from being staged at all); a join widens upstream's gate to the
+    // selector's roles only when it asserts an explicit override
+    // (`assertsOverride`), judged at its own place in stable-id order.
+    const authority = group.changes[group.changes.length - 1];
+    const overrides = group.changes.some((change) => {
+      const current = currentOf(change);
+      return current !== undefined && sameModelFacts(current, change.modelFacts);
+    });
+    const gates =
+      overrides ||
+      group.changes.some((change) => {
+        const current = currentOf(change);
+        return (
+          !(current !== undefined && sameModelFacts(current, change.modelFacts)) &&
+          assertsOverride(base, staged, { ...change, exposedCaps: authority.exposedCaps })
+        );
+      });
     // The CONFIRMATION set stays the wide one the backend's gateRolesFor asks
     // for: every change the editor stages carries a non-empty exposure [W5-1],
     // so the roles already on the selector feed it for every real change; the
     // guard stays for hand-built changes (probes, tests).
-    if (override || change.exposedCaps.length > 0) {
-      for (const model of base.models) {
-        if (selectorKey(model.provider, model.modelName) !== key) continue;
-        const retarget = retargetOf(base, staged, model);
-        for (const useCase of model.routedUseCases) {
-          group.affected.add(useCase);
-          // A fork keeps the source role bound to every one of its use cases
-          // until the binds phase; only a true retarget — a role routing
-          // exactly this one use case — actually leaves.
-          if (gates && (retarget === undefined || retarget.useCase !== useCase))
-            group.governed.add(useCase);
-        }
+    if (!overrides && authority.exposedCaps.length === 0) continue;
+    for (const model of base.models) {
+      if (selectorKey(model.provider, model.modelName) !== key) continue;
+      const retarget = retargetOf(base, staged, model);
+      for (const useCase of model.routedUseCases) {
+        group.affected.add(useCase);
+        // A fork keeps the source role bound to every one of its use cases
+        // until the binds phase; only a true retarget actually leaves.
+        if (gates && (retarget === undefined || retarget.useCase !== useCase))
+          group.governed.add(useCase);
       }
     }
   }
@@ -1899,6 +1928,7 @@ function reachGroupsOf(
         .sort(compareString),
       factsChanged: [...factsChanged].sort(compareString),
       changeId: changeStableID(group.changes[0]),
+      governed: [...group.governed].sort(compareString),
     });
   }
   return out;

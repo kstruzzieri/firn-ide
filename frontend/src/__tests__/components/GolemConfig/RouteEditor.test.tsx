@@ -3482,6 +3482,82 @@ describe('RouteEditor union floor (wave 4c)', () => {
     expect(onStage).not.toHaveBeenCalled();
   });
 
+  it('stages a real selector edit that happens to match the applied exposure', async () => {
+    // summarize already stages +thinking on gpt-5-mini, which chat shares.
+    // Opening chat seeds that staged exposure; unticking thinking returns to
+    // the APPLIED set, but the selector would still hold thinking through
+    // summarize's change — so this is an edit to stage (and it becomes the
+    // group's authority), never a "kept" no-op that drops nothing.
+    const summarizeAdds: RouteChange = {
+      kind: 'route',
+      useCase: 'summarize',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+      capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream', 'thinking'],
+      thinkMode: 'auto',
+      confirmUnknown: true,
+    };
+    const { onStage } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'summarize', role: 'chat-role' },
+      ],
+      models: [model({ routedUseCases: ['chat', 'summarize'] })],
+      draft: draftWith(summarizeAdds),
+    });
+    await openRoute('chat');
+    expect(screen.getByLabelText(/^thinking/)).toBeChecked();
+    await userEvent.click(screen.getByLabelText(/^thinking/));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Apply anyway' }));
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    const [staged, dropped] = onStage.mock.calls[0];
+    expect(dropped).toEqual([]);
+    expect(staged[0].useCase).toBe('chat');
+    expect(staged[0].exposedCaps).toEqual(['chat', 'stream']);
+  });
+
+  it('explains a refusal on a row the staged group gates without changing what it shows', async () => {
+    // summarize joins gpt-5-mini, an owned selector, with exactly the owner's
+    // exposure: nothing displayed changes anywhere, yet the explicit list is
+    // sent and agent — reaching gpt-5-mini through its chain — is gated and
+    // fails. The row's explanation follows the gate, not the displayed change.
+    const join: RouteChange = {
+      kind: 'route',
+      useCase: 'summarize',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+      capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: true,
+    };
+    renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'summarize', role: 'sum-role' },
+      ],
+      models: [
+        model({ capabilityOverride: ['chat', 'stream'], routedUseCases: ['agent', 'chat'] }),
+        { ...agentModel, fallbacks: ['chat-role'] },
+        model({ role: 'sum-role', modelName: 'gpt-5-sum', routedUseCases: ['summarize'] }),
+      ],
+      draft: draftWith(join),
+      diagnostics: [
+        {
+          code: 'eligibility_ineligible',
+          subjectKind: 'use_case',
+          subjectName: 'agent',
+          blocking: true,
+        },
+      ],
+    });
+    const row = routeCells('agent');
+    expect(within(row.parentElement!).getByText(/does not meet/)).toHaveTextContent(
+      'This model does not meet every affected use-case requirement. agent (via agent-role → chat-role) needs tool_call.'
+    );
+  });
+
   it('explains a refusal on a row from the staged group that fails, not the one that edits it', async () => {
     // agent is retargeted (an edited group that meets its floor) while chat's
     // override removes tool_call from gpt-5-mini, which agent-role still falls

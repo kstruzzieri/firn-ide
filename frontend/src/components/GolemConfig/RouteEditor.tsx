@@ -415,20 +415,27 @@ export function RouteEditor({
 
   /**
    * [#311] A change that keeps the applied model with the exposure and Think
-   * the document already holds would change nothing: Done is never offered
-   * for it (an acknowledgement alone is no change — see `unknownUseCases`),
-   * and if the row holds a staged change, Done drops that change instead of
-   * staging an override the backend would gate selector-wide. So it gates
-   * nothing beyond the route's own floor — not the siblings a real override
-   * reaches, which is what refused the model a route already used at open.
+   * the SELECTOR will hold without this row's own staging — the group's
+   * staged values when another route is staged onto it ([W5-5]), else the
+   * applied document's — would change nothing: Done is never offered for it
+   * (an acknowledgement alone is no change — see `unknownUseCases`), and if
+   * the row holds a staged change, Done drops that change instead of staging
+   * an override the backend would gate selector-wide. So it gates nothing
+   * beyond the route's own floor — not the siblings a real override reaches,
+   * which is what refused the model a route already used at open. Returning
+   * to the APPLIED exposure while a sibling stages a different one is a real
+   * edit — it becomes the group's authority — and is staged and gated.
    */
+  const held = heldSeed(undefined, current, models, base, others);
+  const heldExposed = held.exposed.join(',');
+  const heldThink = held.think;
   const unchanged = useCallback(
     (change: RouteChange): boolean =>
       current !== null &&
       sameModelFacts(current, change.modelFacts) &&
-      sameCaps(change.exposedCaps, current.exposedCapabilities) &&
-      change.thinkMode === current.thinkMode,
-    [current]
+      change.exposedCaps.join(',') === heldExposed &&
+      change.thinkMode === heldThink,
+    [current, heldExposed, heldThink]
   );
   /** The use cases `change` gates: the route alone when it changes nothing. */
   const governedBy = useCallback(
@@ -551,9 +558,8 @@ export function RouteEditor({
    * lock; overrides run in a later phase and meet nothing here. So a rewrite
    * or a departure counts only when it sorts before every other mutation of
    * the group, not merely before this join.
-   * Ceiling: a sibling routed by exactly one use case that an unrouted role
-   * lists as a fallback is forked too (`fallbacks[role]`), invisible here —
-   * the pre-check may mark it gone and the backend refuses late.
+   * A sibling any role lists as a fallback is forked too (`fallbacks[role]`,
+   * read from the projection's `fallbacks` since #311), so it is never gone.
    *
    * [#335] A capability override conflicts the same way — selectorPairConflict
    * compares two EXPLICIT sets — and is judged by the same staying rule,

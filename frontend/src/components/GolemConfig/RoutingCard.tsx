@@ -471,10 +471,11 @@ export function RoutingCard({
    * [#311][#338] The backend refuses an ineligible route on the USE CASE whose
    * floor fails. On that row, say what fails and how the route reaches the
    * staged model — the same clause the editor's pre-check and the picker's
-   * blocked card use — from EVERY staged group that reaches this row and
-   * falls short of its floor, not only the one the row's marker names (a
-   * route edited onto an eligible model can still be broken by an override on
-   * a selector it falls back to).
+   * blocked card use — from EVERY staged group that GATES this row and falls
+   * short of its floor, not only the one the row's marker names (a route
+   * edited onto an eligible model can still be broken by an override on a
+   * selector it falls back to, and a join that changes nothing anyone can see
+   * still gates the routes its selector's roles reach).
    */
   const rowDiagnosticText = (useCase: string, diagnostic: SettingsDiagnostic): string => {
     const { text } = formatSettingsDiagnostic(
@@ -484,11 +485,10 @@ export function RoutingCard({
     );
     if (diagnostic.code !== 'eligibility_ineligible') return text;
     const clauses = reachGroups.flatMap((group) => {
-      const reaches =
-        group.edited.some((edit) => edit.useCase === useCase) ||
-        group.sameModel.includes(useCase) ||
-        group.fallback.includes(useCase);
-      if (!reaches) return [];
+      // Gate membership, not displayed change: a join onto an owned selector
+      // with the owner's own exposure changes nothing anyone can see and still
+      // gates every route the selector's roles reach.
+      if (!group.governed.includes(useCase)) return [];
       const short = withReach(floorShortfalls(group.staged.exposedCaps, [useCase]), base, {
         provider: group.provider,
         model: group.model,
