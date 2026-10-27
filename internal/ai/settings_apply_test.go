@@ -2919,36 +2919,6 @@ const chainTargetJSON = `{
   "defaults": {"agent": "agent-m", "analysis": "pro-m", "chat": "chat-m"}
 }`
 
-// writtenModels parses the target the harness wrote, as raw JSON objects, so a
-// test can assert on the PRESENCE of a key and not only its value.
-func writtenModels(t *testing.T, h *applyHarness) map[string]map[string]json.RawMessage {
-	t.Helper()
-	var doc struct {
-		Models   map[string]map[string]json.RawMessage `json:"models"`
-		Defaults map[string]string                     `json:"defaults"`
-	}
-	if err := json.Unmarshal(h.targetBytes(t), &doc); err != nil {
-		t.Fatalf("written target: %v", err)
-	}
-	return doc.Models
-}
-
-// writtenCapabilities decodes a written role's `capabilities`; (nil, false)
-// when the key is absent — the file is pretty-printed, so compare values,
-// never bytes.
-func writtenCapabilities(t *testing.T, role map[string]json.RawMessage) ([]string, bool) {
-	t.Helper()
-	raw, ok := role["capabilities"]
-	if !ok {
-		return nil, false
-	}
-	var caps []string
-	if err := json.Unmarshal(raw, &caps); err != nil {
-		t.Fatalf("written capabilities %s: %v", raw, err)
-	}
-	return caps, true
-}
-
 // TestApplySettingsForkWithRedundantExposureSendsNoOverride is #311 defect 2,
 // Keith's reproduction: analysis moves to mimo-model, whose only other role
 // `mimo-m` the agent chain reaches. The exposure is exactly what a dense model
