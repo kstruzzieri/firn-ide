@@ -7,7 +7,9 @@
  * (`facetsOf`) feeds it and the test oracle `snapshotOf`: every facet that
  * differs is named by a clause (the model's identity facets share one), and
  * routeEdit.test.ts pins that biconditional. A new stageable field belongs in
- * `facetsOf` first, then in `pendingOf`'s wording.
+ * `facetsOf` first, then in `pendingOf`'s wording. Beside it, the helpers the
+ * editor's notices and the model cards read: `usedByOf` for the routes a model
+ * runs, `editReachOf` for who else an edit changes on the model it picks.
  */
 import {
   CAPABILITY_NAMES,
@@ -18,7 +20,7 @@ import {
   type RouteProjection,
   type ThinkMode,
 } from '../../types/golem';
-import { modelFactsOf } from '../../types/golemConfig';
+import { modelFactsOf, type EditReachGroup } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
 
 /** A hand-declared model: authoritative facts, not detected ones (§4.4). */
@@ -88,6 +90,42 @@ export const usedByOf = (routes: readonly RouteProjection[], roles: readonly str
   [
     ...new Set(routes.filter((route) => roles.includes(route.role)).map((route) => route.useCase)),
   ].sort(compareString);
+
+/** Who else a route edit changes on the model it picks, by how each reaches the model. Sorted. */
+export interface EditReach {
+  /** The model's name, as the sentence names it. */
+  model: string;
+  /** Routes that run on the model: other routes staged onto it, applied routes whose role on it changes. */
+  uses: string[];
+  /** Routes whose own model stays but whose fallback chain reaches a changed role on the model. */
+  fallsBack: string[];
+  /** Roles on the model that route nothing (the Defined models list) whose values change. */
+  definedAs: string[];
+}
+
+/**
+ * [#307][#349] `usedByOf`'s counterpart for the editor's reach sentence: who
+ * else an edit to `useCase` changes, read from `editReachFor` — the reach the
+ * row markers and the Defined models list read, measured from the rest of the
+ * draft — so the notice names what Done changes and nothing it leaves as the
+ * draft already shows it. `definedAs` is the model's unrouted roles a
+ * selector-wide write rewrites, which no route row shows. Undefined when the
+ * edit changes nothing beyond its own route.
+ */
+export const editReachOf = (
+  reach: EditReachGroup | undefined,
+  useCase: string
+): EditReach | undefined => {
+  if (reach === undefined) return undefined;
+  const { group, peersChange } = reach;
+  const peers = peersChange
+    ? group.edited.map((edit) => edit.useCase).filter((other) => other !== useCase)
+    : [];
+  const uses = [...peers, ...group.sameModel].sort(compareString);
+  return uses.length + group.fallback.length + group.affectedRoles.length === 0
+    ? undefined
+    : { model: group.model, uses, fallsBack: group.fallback, definedAs: group.affectedRoles };
+};
 
 /** A card's abilities as one line; the line never reads empty. */
 export const abilitiesLine = (caps: readonly CapabilityName[]): string =>

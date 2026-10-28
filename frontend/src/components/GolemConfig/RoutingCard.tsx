@@ -196,9 +196,10 @@ export interface RoutingCardProps {
   /** Role-identity row markers from `projectDraft`. */
   roleRows: ReadonlyMap<string, RowMarkers>;
   /**
-   * Staged use case → every use case its selector governs (`projectDraft`).
-   * A shared-selector change retargets siblings; the row says so before the
-   * editor is opened.
+   * Staged use case → the use cases the backend asks the user to confirm for
+   * it (`projectDraft`'s `selectorUseCases`), wider than what the change
+   * alters. A row reads it to find the staged change on its own model whose
+   * values it paints (`governingChange`).
    */
   selectorUseCases: ReadonlyMap<string, readonly string[]>;
   /** [W6] Use case → how a staged model change reaches its row (`projectDraft`). */
