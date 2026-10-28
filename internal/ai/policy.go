@@ -82,11 +82,11 @@ var firnSensitiveFloor = []string{
 	"**/*secret*",
 	"**/*secret*/**",
 	// go-llm v0.5.0's credential set (agent/interceptor IsCredentialPath),
-	// which its read_file invariant refuses and its search skips. v0.3.0's
-	// invariant covers only .env and the four directories, and its search
-	// skips none. Firn builds its own orchestrator without go-llm's
-	// interceptors, so the floor carries the set. A trailing "**" also
-	// matches zero segments: "**/.ssh/**" denies the directory itself.
+	// which its read_file invariant refuses and its search skips.
+	// newGolemRunner installs that invariant, but it inspects read_file only
+	// and nothing in go-llm filters list or glob, so the floor carries the set
+	// for every tool and backs the invariant up on read_file. A trailing "**"
+	// also matches zero segments: "**/.ssh/**" denies the directory itself.
 	"**/.netrc",
 	"**/_netrc",
 	"**/.npmrc",
