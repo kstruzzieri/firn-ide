@@ -1411,7 +1411,8 @@ describe('governed set under the asserted-override rule (#311)', () => {
     };
     expect(governedUseCasesOf(earlier, stage([away('analysis')]), joinChat)).toEqual(['chat']);
 
-    // `route:planning` sorts after `route:chat`: the owner is still there.
+    // `route:planning` sorts after `route:chat`: the owner is still there,
+    // still serving planning.
     const later: DraftBaseProjection = {
       routes: [
         { useCase: 'agent', role: 'agent-role' },
@@ -1423,6 +1424,7 @@ describe('governed set under the asserted-override rule (#311)', () => {
     expect(governedUseCasesOf(later, stage([away('planning')]), joinChat)).toEqual([
       'chat',
       'agent',
+      'planning',
     ]);
   });
 });
@@ -1540,13 +1542,11 @@ describe('governed set across a coalesced selector group (#311, round 2)', () =>
       ...probeRouteChange('chat', base.models[2]),
       exposedCaps: DERIVED,
     };
-    // The fork leaves analysis-role bound to analysis until the binds phase,
-    // so analysis is gated too, beside agent through spare-role.
-    expect(governedUseCasesOf(base, stage([away]), joinChat)).toEqual([
-      'chat',
-      'agent',
-      'analysis',
-    ]);
+    // The fork binds analysis to its copy where it runs (#474), and
+    // route:analysis sorts before route:chat: analysis has left analysis-role
+    // by the time the join is gated, which still meets agent through
+    // spare-role.
+    expect(governedUseCasesOf(base, stage([away]), joinChat)).toEqual(['chat', 'agent']);
     expect(retargetOf(base, stagedRoutes([away]), base.models[1])).toBeUndefined();
   });
 });
@@ -1841,10 +1841,11 @@ describe('floors across a selector (wave 4c)', () => {
     ).toEqual(['chat', 'planning']);
   });
 
-  it('keeps every use case a fork source still serves once one of its routes leaves', () => {
-    // pair-role routes planning AND summarize on gpt-5: forking planning away
-    // leaves pair-role's Defaults bound to BOTH until the binds phase, so
-    // chat joining gpt-5 still gates on everything pair-role still serves.
+  it('keeps a use case a fork moves off the selector only for a join that runs before the fork', () => {
+    // pair-role routes planning AND summarize on gpt-5. A fork binds the
+    // moved use case to its copy where the fork runs (#474), in stable-id
+    // order: route:chat sorts before route:planning, so chat joining gpt-5
+    // still meets pair-role serving both.
     const gpt5 = byRole('agent-role');
     const pairRole: ModelProjection = {
       ...gpt5,
@@ -1867,6 +1868,93 @@ describe('floors across a selector (wave 4c)', () => {
     expect(
       governedUseCasesOf(forked, stage([planningAway]), probeRouteChange('chat', pairRole))
     ).toEqual(['chat', 'planning', 'summarize']);
+
+    // route:analysis sorts before route:chat: analysis has left pair-role by
+    // the time chat's join is gated, and only summarize is still served.
+    const analysisPair: ModelProjection = {
+      ...pairRole,
+      routedUseCases: ['analysis', 'summarize'],
+    };
+    const forkedFirst: DraftBaseProjection = {
+      routes: [
+        { useCase: 'analysis', role: 'pair-role' },
+        { useCase: 'summarize', role: 'pair-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [analysisPair, modelRow({ routedUseCases: ['chat'] })],
+    };
+    const analysisAway: RouteChange = { ...planningAway, useCase: 'analysis' };
+    expect(
+      governedUseCasesOf(forkedFirst, stage([analysisAway]), probeRouteChange('chat', analysisPair))
+    ).toEqual(['chat', 'summarize']);
+  });
+
+  it('keeps a use case a retarget moves off the selector for a join that runs before the retarget', () => {
+    // plan-role routes planning alone, so moving planning retargets the role
+    // itself. route:chat sorts before route:planning: when chat's join is
+    // gated, plan-role still sits on gpt-5 serving planning.
+    const gpt5 = byRole('agent-role');
+    const planRole: ModelProjection = { ...gpt5, role: 'plan-role', routedUseCases: ['planning'] };
+    const retargeted: DraftBaseProjection = {
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'plan-role' },
+      ],
+      models: [modelRow({ routedUseCases: ['chat'] }), planRole],
+    };
+    const planningAway = routeChange({
+      useCase: 'planning',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+    });
+    expect(retargetOf(retargeted, stagedRoutes([planningAway]), planRole)).toBe(planningAway);
+    expect(
+      governedUseCasesOf(retargeted, stage([planningAway]), probeRouteChange('chat', planRole))
+    ).toEqual(['chat', 'planning']);
+  });
+
+  it('drops a use case a fork moves off the selector from an override, in either staging order (#474)', () => {
+    // shared-role routes agent AND chat on gpt-5. Moving agent elsewhere
+    // forks the role and binds agent to the copy; overrides run after every
+    // route plan, so chat narrowing gpt-5 no longer governs agent — whichever
+    // of the two the user staged first.
+    const gpt5 = byRole('agent-role');
+    const shared: ModelProjection = {
+      ...gpt5,
+      role: 'shared-role',
+      routedUseCases: ['agent', 'chat'],
+    };
+    const sharedBase: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'shared-role' },
+        { useCase: 'chat', role: 'shared-role' },
+      ],
+      models: [shared],
+    };
+    const agentAway = routeChange({
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+    });
+    const narrow: RouteChange = {
+      ...probeRouteChange('chat', shared),
+      exposedCaps: ['chat', 'stream'],
+    };
+    expect(retargetOf(sharedBase, stagedRoutes([agentAway]), shared)).toBeUndefined();
+    // Without the fork, agent stays on gpt-5 and the override governs it.
+    expect(governedUseCasesOf(sharedBase, cleanDraft(REVISION_A), narrow)).toEqual([
+      'chat',
+      'agent',
+    ]);
+    for (const draft of [stage([agentAway]), stage([narrow, agentAway])]) {
+      expect(governedUseCasesOf(sharedBase, draft, narrow)).toEqual(['chat']);
+      // The confirmation set is the backend's gateRolesFor on the applied
+      // document, and stays wide.
+      expect(affectedUseCases(sharedBase, draft, narrow)).toEqual(['chat', 'agent']);
+    }
+    expect(
+      projectDraft(sharedBase, stage([narrow, agentAway])).governedUseCases.get('chat')
+    ).toEqual(['chat']);
   });
 
   it('keeps a route the draft moves off a role it reaches only as a fallback', () => {

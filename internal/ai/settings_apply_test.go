@@ -3087,6 +3087,152 @@ func TestApplySettingsJoinAfterTheOwnerMovesAwaySendsNoOverride(t *testing.T) {
 	}
 }
 
+const overrideAfterForkAwayJSON = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "x-m": {"name": "shared-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]}
+  },
+  "defaults": {"agent": "x-m", "chat": "x-m"}
+}`
+
+// TestApplySettingsOverrideAfterAForkAwayJudgesTheMovedUseCaseOnItsNewRole
+// is #474: agent forks off x-m onto tool-model, and chat keeps shared-model
+// without tool_call — one Apply whose finished document meets every floor.
+// The override gates every role on shared-model, so it has to see agent on
+// its forked role already; were the fork's bind still pending, x-m would
+// carry agent into the override's gate and the request be refused for
+// agent's tool_call.
+func TestApplySettingsOverrideAfterAForkAwayJudgesTheMovedUseCaseOnItsNewRole(t *testing.T) {
+	h := newApplyHarness(t, overrideAfterForkAwayJSON)
+	res, err := h.svc.ApplySettings(h.request(t,
+		routeChange("agent", "ollama", "tool-model", "chat", "stream", "tool_call"),
+		routeChange("chat", "ollama", "shared-model", "chat", "stream"),
+	))
+	if err != nil {
+		t.Fatalf("ApplySettings(fork away, override): %v", err)
+	}
+	if res.Status != "applied" {
+		t.Fatalf("ApplySettings(fork away, override) = %+v, want applied", res)
+	}
+	var written struct {
+		Defaults map[string]string `json:"defaults"`
+	}
+	if err := json.Unmarshal(h.targetBytes(t), &written); err != nil {
+		t.Fatalf("written target: %v", err)
+	}
+	if want := map[string]string{"agent": "agent-m", "chat": "x-m"}; !maps.Equal(written.Defaults, want) {
+		t.Fatalf("defaults = %v, want %v", written.Defaults, want)
+	}
+	models := writtenModels(t, h)
+	if string(models["agent-m"]["name"]) != `"tool-model"` {
+		t.Fatalf("forked role name = %s", models["agent-m"]["name"])
+	}
+	if caps, _ := writtenCapabilities(t, models["agent-m"]); !slices.Equal(caps, []string{"chat", "stream", "tool_call"}) {
+		t.Fatalf("forked role capabilities = %v", caps)
+	}
+	if caps, _ := writtenCapabilities(t, models["x-m"]); !slices.Equal(caps, []string{"chat", "stream"}) {
+		t.Fatalf("overridden role capabilities = %v", caps)
+	}
+}
+
+const joinAroundForkAwayJSON = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "x-m": {"name": "shared-model", "provider": "ollama", "type": "dense"}
+  },
+  "defaults": {"agent": "agent-m", "chat": "x-m", "summarize": "x-m"}
+}`
+
+// TestApplySettingsJoinMeetsAForkAwayOnlyIfItRunsFirst pins #474 for joins:
+// chat forks off x-m, and a new route joins shared-model asserting chat,
+// generate, below chat's floor. The fork binds chat to its copy where it
+// runs, in stable-id order, so a join sorting after route:chat no longer
+// meets chat on x-m and is applied; one sorting before still does and is
+// refused, naming chat. The editor's governed set (selectorGroups) mirrors
+// both orders.
+func TestApplySettingsJoinMeetsAForkAwayOnlyIfItRunsFirst(t *testing.T) {
+	cases := []struct {
+		join    string
+		applied bool
+	}{
+		{join: "translate", applied: true}, // route:translate sorts after route:chat
+		{join: "analysis", applied: false}, // route:analysis sorts before route:chat
+	}
+	for _, tc := range cases {
+		t.Run(tc.join, func(t *testing.T) {
+			h := newApplyHarness(t, joinAroundForkAwayJSON)
+			before := h.targetBytes(t)
+			res, err := h.svc.ApplySettings(h.request(t,
+				confirmUnknown(routeChange("chat", "ollama", "chat-model", "chat", "stream"), "summarize"),
+				confirmUnknown(routeChange(tc.join, "ollama", "shared-model", "chat", "generate"),
+					tc.join, "summarize"),
+			))
+			if err != nil {
+				t.Fatalf("ApplySettings(fork away, join): %v", err)
+			}
+			if !tc.applied {
+				if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+					res.Diagnostics[0].Code != codeEligibilityIneligible ||
+					res.Diagnostics[0].SubjectKind != "use_case" ||
+					res.Diagnostics[0].SubjectName != "chat" {
+					t.Fatalf("ApplySettings(join first) = %+v, want one use_case chat %s",
+						res, codeEligibilityIneligible)
+				}
+				if got := h.targetBytes(t); !bytes.Equal(got, before) {
+					t.Fatal("refused request changed the target")
+				}
+				return
+			}
+			if res.Status != "applied" {
+				t.Fatalf("ApplySettings(fork first) = %+v, want applied", res)
+			}
+			var written struct {
+				Defaults map[string]string `json:"defaults"`
+			}
+			if err := json.Unmarshal(h.targetBytes(t), &written); err != nil {
+				t.Fatalf("written target: %v", err)
+			}
+			want := map[string]string{
+				"agent": "agent-m", "chat": "chat-m", "summarize": "x-m", tc.join: tc.join + "-m",
+			}
+			if !maps.Equal(written.Defaults, want) {
+				t.Fatalf("defaults = %v, want %v", written.Defaults, want)
+			}
+		})
+	}
+}
+
+// TestApplySettingsOverrideAfterAForkAwayStillGatesTheUseCasesThatStay is
+// #474's negative control: the earlier bind takes only the moved use case
+// out of the override's gate. planning stays on x-m and needs tool_call, so
+// the override is still refused, naming planning and not agent.
+func TestApplySettingsOverrideAfterAForkAwayStillGatesTheUseCasesThatStay(t *testing.T) {
+	h := newApplyHarness(t, strings.Replace(overrideAfterForkAwayJSON,
+		`"chat": "x-m"`, `"chat": "x-m", "planning": "x-m"`, 1))
+	before := h.targetBytes(t)
+	res, err := h.svc.ApplySettings(h.request(t,
+		routeChange("agent", "ollama", "tool-model", "chat", "stream", "tool_call"),
+		routeChange("chat", "ollama", "shared-model", "chat", "stream"),
+	))
+	if err != nil {
+		t.Fatalf("ApplySettings(fork away, override): %v", err)
+	}
+	if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+		res.Diagnostics[0].Code != codeEligibilityIneligible ||
+		res.Diagnostics[0].SubjectKind != "use_case" ||
+		res.Diagnostics[0].SubjectName != config.UseCasePlanning ||
+		!res.Diagnostics[0].Blocking {
+		t.Fatalf("ApplySettings(fork away, override) = %+v, want one blocking use_case planning %s",
+			res, codeEligibilityIneligible)
+	}
+	if got := h.targetBytes(t); !bytes.Equal(got, before) {
+		t.Fatal("refused request changed the target")
+	}
+}
+
 const ownFloorRetargetJSON = `{
   "providers": {"ollama": {"base_url": "http://localhost:11434"}},
   "models": {
