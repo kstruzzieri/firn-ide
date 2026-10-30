@@ -655,7 +655,8 @@ export function RouteEditor({
    * is fallback-inclusive and two roles can name the same route.
    *
    * [W4-10] The backend applies a request in phases — route plans in
-   * stable-id order, then overrides, binds, unassigns, removals — and
+   * stable-id order, each create or fork bound as it runs (#474), then
+   * overrides, unassigns, removals — and
    * validates every mutation, so what counts is the selector as it stands
    * when THIS join runs. A sibling is skipped only when its lock is gone or
    * replaced by then: its one routed use case has a staged route onto

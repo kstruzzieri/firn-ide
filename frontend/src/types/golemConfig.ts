@@ -1522,8 +1522,9 @@ export const overridesSelector = (
  * a provider serve once the WHOLE request has landed? Both kinds have left by
  * then. The gates ask a narrower question — what is still bound when one
  * route plan runs — and read `stagedRoutes` instead: the apply phases are
- * route plans (stable-id order) → overrides → binds → unassigns → removals,
- * so an unassigned route is still bound at every join.
+ * route plans (stable-id order, each create or fork bound as it runs, #474)
+ * → overrides → unassigns → removals, so an unassigned route is still bound
+ * at every join.
  */
 const stagedAwayUseCases = (changes: readonly Change[]): Set<string> =>
   new Set(

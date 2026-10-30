@@ -2044,8 +2044,9 @@ describe('RouteEditor', () => {
   it('names a shared edited role without the rewrite note: a fork keeps it', async () => {
     // chat-role routes chat and summarize; summarize is staged away, so the
     // sibling has no route left to name. Editing chat as a same-selector
-    // declaration FORKS chat-role (it still routes summarize until the binds
-    // phase) rather than rewriting it, so its lock simply holds — no "rewritten
+    // declaration FORKS chat-role (plans are classified against the document
+    // before any mutation, where it still routes summarize) rather than
+    // rewriting it, so its lock simply holds — no "rewritten
     // after an earlier change" note, which is for an unshared role overtaken
     // by an earlier mutation of its group.
     const { onStage } = renderRouting({
