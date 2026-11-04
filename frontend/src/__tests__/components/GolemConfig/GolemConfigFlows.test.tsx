@@ -350,7 +350,7 @@ describe('Apply bar', () => {
     await clickApply();
     expect(await screen.findByText('Configuration applied.', { selector: 'p' })).toBeVisible();
     expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
-    expect(document.body).toHaveFocus();
+    expect(sourceTrigger()).toHaveFocus();
   });
 
   it('blocks Apply while an editor holds unstaged fields', async () => {
@@ -1493,9 +1493,74 @@ describe('notice announcements (#314)', () => {
     await clickApply();
 
     await waitFor(() => expect(region).toHaveTextContent('Configuration applied.'));
+    expect(sourceTrigger()).toHaveFocus();
     expect(screen.getByText('Configuration applied.', { selector: 'p' })).not.toHaveAttribute(
       'role'
     );
+  });
+
+  it('recovers focus before publishing Apply completion, without repeating on navigation', async () => {
+    let finish!: (result: unknown) => void;
+    (ApplyGolemSettings as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    await mountWorkspace();
+    await stageKey();
+    const region = announcement();
+    await clickApply();
+    expect(region).toBeEmptyDOMElement();
+    const statusAtFocus: (string | null)[] = [];
+    sourceTrigger().addEventListener('focus', () => statusAtFocus.push(region.textContent), {
+      once: true,
+    });
+
+    // Capture the actual live-region mutation, rather than only its final text.
+    const published: { text: string | null; focus: Element | null }[] = [];
+    const observer = new MutationObserver(() => {
+      if (region.textContent !== '')
+        published.push({ text: region.textContent, focus: document.activeElement });
+    });
+    observer.observe(region, { childList: true, subtree: true, characterData: true });
+    try {
+      await act(async () => {
+        finish({
+          status: 'applied',
+          projection: { ...readyProjection, revision: movedRevision },
+        });
+      });
+      await waitFor(() => expect(published).toHaveLength(1));
+      expect(statusAtFocus).toEqual(['']);
+      expect(published[0]).toEqual({ text: 'Configuration applied.', focus: sourceTrigger() });
+      expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument();
+
+      await userEvent.tab();
+      await userEvent.tab();
+      await userEvent.tab();
+      expect(published).toHaveLength(1);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
+  it('keeps a user-selected focus target when Apply finishes', async () => {
+    let finish!: (result: unknown) => void;
+    (ApplyGolemSettings as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    const title = screen.getByRole('heading', { name: 'Golem Configuration' });
+    act(() => title.focus());
+    await act(async () => {
+      finish({ status: 'applied', projection: { ...readyProjection, revision: movedRevision } });
+    });
+    await waitFor(() => expect(announcement()).toHaveTextContent('Configuration applied.'));
+    expect(title).toHaveFocus();
   });
 
   it('announces a grant notice through the same region', async () => {

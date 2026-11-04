@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RoutingCard, type RoutingCardProps } from '../../../components/GolemConfig/RoutingCard';
 import { routeRowKey, routeUseCases } from '../../../components/GolemConfig/routingRows';
@@ -2362,7 +2362,7 @@ describe('RouteEditor', () => {
   // Done is what refuses, so the refusal answers beside it: after the Pending
   // line, directly above the footer — not at the top of an editor whose
   // acknowledgement sits forty rows down.
-  it('answers a refused Done directly above the footer', async () => {
+  it('clears and republishes repeated keyboard Done refusals while keeping the visible message and focus', async () => {
     renderRouting({
       routes: [
         { useCase: 'chat', role: 'chat-role' },
@@ -2379,21 +2379,130 @@ describe('RouteEditor', () => {
     expect(announcement).toHaveAttribute('aria-atomic', 'true');
     expect(announcement).not.toHaveFocus();
     await pickModel('gpt-5');
-    await stage();
-
-    const refusal = screen.getByRole('alert');
-    expect(refusal).toBe(announcement);
-    expect(refusal).toHaveTextContent(/requirements are unknown/i);
-    expect(refusal).toHaveFocus();
-    await userEvent.tab();
-    expect(screen.getByRole('button', { name: 'Done' })).toHaveFocus();
+    const done = screen.getByRole('button', { name: 'Done' });
+    act(() => done.focus());
     await userEvent.keyboard('{Enter}');
-    expect(refusal).toHaveFocus();
-    expect(screen.getByTestId('editor-changes').nextElementSibling).toBe(refusal);
-    expect(refusal.nextElementSibling).toContainElement(
-      screen.getByRole('button', { name: 'Done' })
-    );
+
+    await waitFor(() => expect(announcement).toHaveTextContent(/requirements are unknown/i));
+    expect(done).toHaveFocus();
+    const message = announcement.textContent;
+    const visibleRefusal = screen.getByTestId('editor-changes').nextElementSibling;
+    const updates: { live: string | null; visible: string | null; focus: Element | null }[] = [];
+    const observer = new MutationObserver(() => {
+      updates.push({
+        live: announcement.textContent,
+        visible: visibleRefusal?.textContent ?? null,
+        focus: document.activeElement,
+      });
+    });
+    observer.observe(announcement, { childList: true, subtree: true, characterData: true });
+    try {
+      await userEvent.keyboard('{Enter}');
+      // Replacing a node with identical text was silent in native VoiceOver.
+      // Verify a real empty update before publishing the same message again.
+      await waitFor(() => expect(updates.map(({ live }) => live)).toEqual(['', message]));
+      expect(updates.every(({ visible, focus }) => visible === message && focus === done)).toBe(
+        true
+      );
+      expect(screen.getAllByRole('alert')).toEqual([announcement]);
+      expect(visibleRefusal).not.toHaveAttribute('role');
+      expect(visibleRefusal?.nextElementSibling).toContainElement(done);
+      expect(done).toHaveFocus();
+    } finally {
+      observer.disconnect();
+    }
   });
+
+  it.each(['edited', 'closed'] as const)(
+    'cancels a pending refusal announcement when the editor is %s',
+    async (action) => {
+      renderRouting({
+        routes: [
+          { useCase: 'chat', role: 'chat-role' },
+          { useCase: 'summarize', role: 'summarize-role' },
+        ],
+        models: [
+          model(),
+          model({ role: 'summarize-role', modelName: 'gpt-5', routedUseCases: ['summarize'] }),
+        ],
+      });
+      await openRoute('chat');
+      await pickModel('gpt-5');
+      const announcement = screen.getByRole('alert');
+      jest.useFakeTimers();
+      try {
+        fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+        act(() => jest.advanceTimersByTime(0));
+        expect(announcement).toHaveTextContent(/requirements are unknown/i);
+        fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+        expect(announcement).toBeEmptyDOMElement();
+        expect(screen.getByText(/requirements are unknown/i, { selector: 'p' })).toBeVisible();
+        expect(jest.getTimerCount()).toBe(1);
+
+        if (action === 'edited') fireEvent.click(screen.getByLabelText('Apply anyway'));
+        else fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+        expect(jest.getTimerCount()).toBe(0);
+        act(() => jest.runOnlyPendingTimers());
+        expect(announcement).toBeEmptyDOMElement();
+        expect(screen.queryByText(/requirements are unknown/i)).not.toBeInTheDocument();
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it.each([false, true])(
+    'keeps repeated refusal empty through WebKit settling (cleared by edit: %s)',
+    async (clearByEdit) => {
+      renderRouting({
+        routes: [
+          { useCase: 'chat', role: 'chat-role' },
+          { useCase: 'summarize', role: 'summarize-role' },
+        ],
+        models: [
+          model(),
+          model({ role: 'summarize-role', modelName: 'gpt-5', routedUseCases: ['summarize'] }),
+        ],
+      });
+      await openRoute('chat');
+      await pickModel('gpt-5');
+      const announcement = screen.getByRole('alert');
+      const done = screen.getByRole('button', { name: 'Done' });
+      act(() => done.focus());
+      jest.useFakeTimers();
+      try {
+        fireEvent.click(done);
+        act(() => jest.advanceTimersByTime(0));
+        expect(announcement).toHaveTextContent(/requirements are unknown/i);
+        const message = announcement.textContent;
+
+        if (clearByEdit) {
+          fireEvent.click(screen.getByLabelText('Apply anyway'));
+          fireEvent.click(screen.getByLabelText('Apply anyway'));
+          expect(announcement).toBeEmptyDOMElement();
+        }
+        fireEvent.click(done);
+        expect(announcement).toBeEmptyDOMElement();
+        const visibleRefusal = screen.getByTestId('editor-changes').nextElementSibling;
+        act(() => jest.advanceTimersByTime(399));
+        expect(announcement).toBeEmptyDOMElement();
+        expect(visibleRefusal?.textContent).toBe(message);
+        expect(done).toHaveFocus();
+        act(() => jest.advanceTimersByTime(1));
+        expect(announcement.textContent).toBe(message);
+        expect(jest.getTimerCount()).toBe(0);
+
+        // Different feedback needs no settling gap.
+        fireEvent.change(screen.getByLabelText('Provider'), { target: { value: '' } });
+        fireEvent.click(done);
+        act(() => jest.advanceTimersByTime(0));
+        expect(announcement).toHaveTextContent('Choose a provider first');
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  );
 
   it('stages a capability and think-mode override, hiding Think until thinking is exposed', async () => {
     const { onStage } = renderRouting({

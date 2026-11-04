@@ -376,9 +376,30 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    * announced twice.
    */
   const [announcement, setAnnouncement] = useState({ seq: 0, text: '' });
+  const [liveAnnouncement, setLiveAnnouncement] = useState(announcement);
   const announce = useCallback((text: string) => {
     if (text !== '') setAnnouncement((current) => ({ seq: current.seq + 1, text }));
   }, []);
+  useEffect(() => {
+    // Success removes the Apply bar. Recover its lost focus before publishing
+    // the result, without taking focus from a user who moved during the write.
+    if (
+      (announcement.text === APPLIED || announcement.text === APPLIED_UNCERTAIN) &&
+      document.activeElement === document.body
+    ) {
+      const source = document.getElementById(SOURCE_PICKER_ID);
+      // An overlapping profile Save can still disable Source after Apply ends.
+      // The stable heading can take focus immediately, without a later retry.
+      if (source instanceof HTMLButtonElement && !source.disabled) source.focus();
+      else headingRef.current?.focus();
+    }
+    setLiveAnnouncement({ seq: announcement.seq, text: '' });
+    if (announcement.text === '') return;
+    // Let the completed redraw and focus recovery reach the accessibility tree
+    // before the polite update. The empty turn also separates identical notices.
+    const timer = window.setTimeout(() => setLiveAnnouncement(announcement), 0);
+    return () => window.clearTimeout(timer);
+  }, [announcement]);
   const showGrantNotice = (text: string): void => {
     setGrantNotice(text);
     announce(text);
@@ -1658,7 +1679,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
           aria-atomic="true"
           data-testid="golem-config-notice-announcement"
         >
-          {announcement.text !== '' && <span key={announcement.seq}>{announcement.text}</span>}
+          {liveAnnouncement.text !== '' && (
+            <span key={liveAnnouncement.seq}>{liveAnnouncement.text}</span>
+          )}
         </div>
 
         {phase.kind === 'loading' && <p className={styles.loading}>Loading configuration…</p>}
