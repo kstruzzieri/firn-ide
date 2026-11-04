@@ -45,14 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Golem route refusals focus an existing alert region when Done is pressed,
-  including repeated attempts, so keyboard users reach the error. (#311, #338)
+- Golem route refusals keep keyboard focus on Done and are announced on every
+  press, so a keyboard or VoiceOver user can press Done again and hear the
+  error again. An identical refusal is spoken again after about 400ms, while
+  the visible refusal stays in place. (#311, #338, #505)
 - Double-clicking a file tree row opens the file or toggles the folder without
   highlighting the row's name, and dragging across rows no longer selects
   their text. The rows never turned text selection off, so a double-click also
   selected the word under the pointer, which read as an editable name Firn
-  does not have. Keyboard navigation, focus outlines and what a screen reader
-  reads for each row are unchanged. (#462)
+  does not have. (#462)
 - The route editor in Golem Configuration no longer refuses the model a route
   already uses. Opening a route showed a red "does not declare tool_call"
   notice and disabled the assigned model's card whenever another use case
@@ -154,6 +155,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has dialed this way since #418 through go-llm's destination guard; chat
   builds its own transport, which now applies the same rule. Any other host
   keeps the ordinary dial. (#427)
+- Commit message generation works with OpenCode Go, which refuses a request
+  without a session header. Each generation sends a new random session ID that
+  is kept in memory, is never reused and carries no repository or user
+  identity; every destination on the generation's route receives it. When every
+  configured model is refused for context, the error now says the context is
+  unknown or too small and names `context_window`. A model with no known
+  context is still refused (#506). (#505)
+- The Git panel shows that a message is being generated. The Generate button
+  reads "Generating…", screen readers hear "Generating commit message…", and
+  the message box is read-only until generation ends. The commit controls wrap
+  in a narrow sidebar, where the Commit button used to clip. (#505)
+- VoiceOver speaks the result of a successful Apply in Golem Configuration.
+  Success removes the Apply bar, which used to drop keyboard focus and the
+  announcement with it. Focus now moves to the Source picker, or to the heading
+  while that picker is disabled, unless you have already moved elsewhere, and
+  the result is announced after that. (#505)
+- The file tree moves keyboard focus to each row, with one Tab stop for the
+  whole tree, and VoiceOver reads each row's name, level and expanded or
+  collapsed state. (#505)
 
 ## [0.14.0] - 2026-10-25
 
