@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { FileExplorer, rowDomId } from '../../../components/FileExplorer';
+import userEvent from '@testing-library/user-event';
+import { FileExplorer } from '../../../components/FileExplorer';
 import { useIDEStore } from '../../../stores/ideStore';
 import { useGitStore } from '../../../stores/gitStore';
 import { ReadDirectory, ReadFile } from '../../../wails/bindings';
@@ -90,6 +91,8 @@ describe('FileExplorer', () => {
       expandedPaths: new Set<string>(),
       isLoadingTree: false,
       treeError: null,
+      activeFileId: null,
+      selectedPath: null,
     });
   });
 
@@ -173,6 +176,20 @@ describe('FileExplorer', () => {
       expect(screen.getByText('package.json')).toBeInTheDocument();
     });
 
+    it('keeps virtual layout wrappers from breaking WebKit tree ownership', () => {
+      render(<FileExplorer />);
+      const tree = screen.getByRole('tree');
+      // WebKit's isValidTree accepts only treeitem, group, or presentation
+      // roles along this path; a plain layout div demotes the tree to Generic.
+      // This pins the markup contract, not VoiceOver's spoken output.
+      for (const row of screen.getAllByRole('treeitem')) {
+        for (let parent = row.parentElement; parent !== tree; parent = parent!.parentElement) {
+          expect(parent).not.toBeNull();
+          expect(['presentation', 'group']).toContain(parent!.getAttribute('role'));
+        }
+      }
+    });
+
     it('decorates rows from the gitStore status map', () => {
       act(() => {
         useGitStore.setState({
@@ -241,6 +258,166 @@ describe('FileExplorer', () => {
       });
     });
 
+    it.each(['click', 'focus'] as const)(
+      'focuses the actual row while navigating from a backslash folder (%s)',
+      async (activation) => {
+        const user = userEvent.setup();
+        act(() => {
+          useIDEStore.setState({
+            expandedPaths: new Set(),
+            directoryTree: [
+              filesystem.FileEntry.createFrom({
+                name: 'a\\b',
+                path: '/workspace/a\\b',
+                isDir: true,
+                children: [
+                  { name: 'readme.txt', path: '/workspace/a\\b/readme.txt', isDir: false },
+                ],
+              }),
+              filesystem.FileEntry.createFrom({
+                name: 'last.txt',
+                path: '/workspace/last.txt',
+                isDir: false,
+              }),
+            ],
+          });
+        });
+        render(<FileExplorer />);
+        const tree = screen.getByRole('tree');
+        const folder = screen.getByText('a\\b').closest<HTMLElement>('[role="treeitem"]')!;
+
+        if (activation === 'click') await user.click(screen.getByText('a\\b'));
+        else act(() => folder.focus());
+
+        expect(folder).toHaveFocus();
+        expect(folder).toHaveAttribute('tabindex', '0');
+        expect(tree).not.toHaveAttribute('aria-activedescendant');
+        expect(folder).toHaveAccessibleName(/a\\b/);
+        expect(folder).toHaveAttribute('aria-level', '2');
+        expect(folder).toHaveAttribute('aria-expanded', 'false');
+
+        await user.keyboard('{ArrowRight}{ArrowRight}');
+
+        const child = screen.getByRole('treeitem', { name: 'readme.txt' });
+        expect(child).toHaveFocus();
+        expect(folder).toHaveAttribute('tabindex', '-1');
+        expect(child).toHaveAttribute('aria-level', '3');
+        expect(folder).toHaveAttribute('aria-expanded', 'true');
+
+        await user.keyboard('{ArrowLeft}{ArrowLeft}{ArrowDown}');
+
+        expect(folder).toHaveAttribute('aria-expanded', 'false');
+        expect(screen.getByRole('treeitem', { name: 'last.txt' })).toHaveFocus();
+      }
+    );
+
+    it('keeps focus and the active row together after clicking a folder chevron', async () => {
+      const user = userEvent.setup();
+      render(<FileExplorer />);
+      const folder = screen.getByText('src').closest('[role="treeitem"]')!;
+
+      await user.click(screen.getByRole('button', { name: 'Toggle src' }));
+
+      expect(folder).toHaveFocus();
+      expect(folder).toHaveAttribute('aria-expanded', 'false');
+      await user.keyboard('{ArrowDown}');
+      expect(screen.getByRole('treeitem', { name: 'package.json' })).toHaveFocus();
+    });
+
+    it('enters and leaves the tree in one Tab stop and returns to its active row', async () => {
+      const user = userEvent.setup();
+      render(
+        <>
+          <FileExplorer />
+          <button>After tree</button>
+        </>
+      );
+      const folder = screen.getByText('src').closest<HTMLElement>('[role="treeitem"]')!;
+      await user.click(screen.getByText('src'));
+      await user.keyboard('{ArrowDown}');
+      const child = screen.getByRole('treeitem', { name: 'App.tsx' });
+      expect(child).toHaveFocus();
+
+      await user.tab();
+      expect(screen.getByRole('button', { name: 'After tree' })).toHaveFocus();
+      await user.tab({ shift: true });
+      expect(child).toHaveFocus();
+      await user.tab({ shift: true });
+      expect(screen.getByRole('button', { name: 'Hide Panel' })).toHaveFocus();
+      await user.tab();
+      expect(child).toHaveFocus();
+      expect(folder).toHaveAttribute('tabindex', '-1');
+    });
+
+    it('updates the tree entry row without stealing focus from the editor or workspace controls', async () => {
+      const user = userEvent.setup();
+      render(
+        <>
+          <FileExplorer />
+          <textarea aria-label="Editor" />
+        </>
+      );
+      const editor = screen.getByRole('textbox', { name: 'Editor' });
+      await user.click(screen.getByRole('treeitem', { name: 'App.tsx' }));
+      act(() => editor.focus());
+      act(() => useIDEStore.setState({ activeFileId: '/workspace/src/App.tsx' }));
+      await waitFor(() =>
+        expect(screen.getByRole('treeitem', { name: 'App.tsx' })).toHaveAttribute('tabindex', '0')
+      );
+      expect(editor).toHaveFocus();
+
+      act(() =>
+        useIDEStore.setState({
+          workspace: { name: 'second', path: '/second' },
+          activeFileId: null,
+          selectedPath: null,
+          directoryTree: [
+            filesystem.FileEntry.createFrom({
+              name: 'other.txt',
+              path: '/second/other.txt',
+              isDir: false,
+            }),
+          ],
+        })
+      );
+      expect(screen.getByRole('treeitem', { name: 'other.txt' })).toBeInTheDocument();
+      expect(editor).toHaveFocus();
+    });
+
+    it('keeps focus in the tree when its focused row is removed', async () => {
+      const user = userEvent.setup();
+      render(<FileExplorer />);
+      await user.click(screen.getByRole('treeitem', { name: 'App.tsx' }));
+      const removed = screen.getByRole('treeitem', { name: 'App.tsx' });
+      expect(removed).toHaveFocus();
+
+      act(() => useIDEStore.setState({ directoryTree: [mockDirectoryTree[1]] }));
+
+      expect(removed).not.toBeInTheDocument();
+      expect(screen.getAllByRole('treeitem')[0]).toHaveFocus();
+      await user.keyboard('{ArrowDown}');
+      expect(screen.getByRole('treeitem', { name: 'package.json' })).toHaveFocus();
+    });
+
+    it('does not reclaim focus after leaving the tree and then removing its last focused row', async () => {
+      const user = userEvent.setup();
+      render(
+        <>
+          <FileExplorer />
+          <textarea aria-label="Editor" />
+        </>
+      );
+      await user.click(screen.getByRole('treeitem', { name: 'App.tsx' }));
+      const editor = screen.getByRole('textbox', { name: 'Editor' });
+      await user.click(editor);
+      act(() => editor.blur());
+      expect(document.body).toHaveFocus();
+
+      act(() => useIDEStore.setState({ directoryTree: [mockDirectoryTree[1]] }));
+
+      expect(document.body).toHaveFocus();
+    });
+
     it('toggles folder expansion when chevron is clicked', () => {
       render(<FileExplorer />);
       // TreeRow renders a toggle button with aria-label "Toggle <name>" for dirs.
@@ -286,7 +463,7 @@ describe('FileExplorer', () => {
       });
     });
 
-    it('reveals the active file by marking its row the active descendant', async () => {
+    it('reveals the active file as the tree entry row without focusing it', async () => {
       act(() => {
         useIDEStore.setState({
           isRootExpanded: true,
@@ -297,12 +474,10 @@ describe('FileExplorer', () => {
 
       render(<FileExplorer />);
 
-      // The reveal effect locates the selected row and marks it the active
-      // descendant (and keeps it within the rendered window).
       await waitFor(() => {
-        const tree = screen.getByRole('tree');
-        expect(tree).toHaveAttribute('aria-activedescendant', rowDomId('/workspace/src/App.tsx'));
+        expect(screen.getByRole('treeitem', { name: 'App.tsx' })).toHaveAttribute('tabindex', '0');
       });
+      expect(document.body).toHaveFocus();
     });
 
     it('does not open folder when folder name is clicked', () => {

@@ -1,5 +1,5 @@
 // src/components/FileExplorer/useTreeKeyboardNav.ts
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { FlatRow } from '../../utils/flattenTree';
 import { rowDomId } from './TreeRow';
 
@@ -12,36 +12,28 @@ export interface TreeKeyboardActions {
   open: (row: FlatRow) => void;
 }
 
-/** Minimal slice of the virtualizer the hook needs. */
-export interface ScrollToIndex {
-  scrollToIndex: (index: number, options?: { align?: 'auto' | 'start' | 'center' | 'end' }) => void;
-}
-
 export interface UseTreeKeyboardNavArgs {
   rows: FlatRow[];
   actions: TreeKeyboardActions;
-  virtualizer: ScrollToIndex;
 }
 
 export interface TreeKeyboardNav {
   activeKey: string | null;
   setActiveKey: (key: string) => void;
-  /** DOM id of the active row for aria-activedescendant; undefined if none. */
+  /** DOM id of the active row; undefined if none. */
   activeId: string | undefined;
+  /** Changes even for a navigation key that keeps the same boundary row active. */
+  navigationVersion: number;
   onKeyDown: (e: React.KeyboardEvent) => void;
 }
 
 /**
- * WAI-ARIA tree keyboard navigation over the flat row list. The container is the
- * single tab stop; this hook tracks the active descendant and translates arrow
- * keys to focus moves / expand-collapse, keeping the active row scrolled in view.
+ * WAI-ARIA tree keyboard navigation over the flat row list. The explorer moves
+ * DOM focus and scrolls after this hook changes the active row.
  */
-export function useTreeKeyboardNav({
-  rows,
-  actions,
-  virtualizer,
-}: UseTreeKeyboardNavArgs): TreeKeyboardNav {
+export function useTreeKeyboardNav({ rows, actions }: UseTreeKeyboardNavArgs): TreeKeyboardNav {
   const [storedKey, setStoredKey] = useState<string | null>(rows[0]?.key ?? null);
+  const [navigationVersion, requestNavigation] = useReducer((version: number) => version + 1, 0);
 
   // Derive the effective active key in-render: if storedKey is no longer in the
   // visible row list (rows collapsed, workspace changed), fall back to the first row.
@@ -63,17 +55,14 @@ export function useTreeKeyboardNav({
     rowsRef.current = rows;
   });
 
-  const moveTo = useCallback(
-    (index: number) => {
-      const list = rowsRef.current;
-      const clamped = Math.max(0, Math.min(index, list.length - 1));
-      const row = list[clamped];
-      if (!row) return;
-      setStoredKey(row.key);
-      virtualizer.scrollToIndex(clamped, { align: 'auto' });
-    },
-    [virtualizer]
-  );
+  const moveTo = useCallback((index: number) => {
+    const list = rowsRef.current;
+    const clamped = Math.max(0, Math.min(index, list.length - 1));
+    const row = list[clamped];
+    if (!row) return;
+    setStoredKey(row.key);
+    requestNavigation();
+  }, []);
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -144,6 +133,7 @@ export function useTreeKeyboardNav({
     activeKey,
     setActiveKey: setStoredKey,
     activeId: activeKey ? rowDomId(activeKey) : undefined,
+    navigationVersion,
     onKeyDown,
   };
 }

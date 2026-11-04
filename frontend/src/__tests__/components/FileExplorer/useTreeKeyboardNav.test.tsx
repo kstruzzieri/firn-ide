@@ -32,12 +32,9 @@ const key = (k: string): React.KeyboardEvent =>
   ({ key: k, preventDefault: jest.fn() }) as unknown as React.KeyboardEvent;
 
 function setup(over: Partial<Parameters<typeof useTreeKeyboardNav>[0]> = {}) {
-  const scrollToIndex = jest.fn();
   const actions = { toggle: jest.fn(), select: jest.fn(), open: jest.fn() };
-  const hook = renderHook(() =>
-    useTreeKeyboardNav({ rows, actions, virtualizer: { scrollToIndex }, ...over })
-  );
-  return { hook, scrollToIndex, actions };
+  const hook = renderHook(() => useTreeKeyboardNav({ rows, actions, ...over }));
+  return { hook, actions };
 }
 
 describe('useTreeKeyboardNav', () => {
@@ -47,11 +44,10 @@ describe('useTreeKeyboardNav', () => {
     expect(hook.result.current.activeId).toBe(rowDomId(ROOT_ROW_KEY));
   });
 
-  it('ArrowDown moves to the next row and scrolls it into view', () => {
-    const { hook, scrollToIndex } = setup();
+  it('ArrowDown moves to the next row', () => {
+    const { hook } = setup();
     act(() => hook.result.current.onKeyDown(key('ArrowDown')));
     expect(hook.result.current.activeKey).toBe('/repo/src');
-    expect(scrollToIndex).toHaveBeenCalledWith(1, expect.anything());
   });
 
   it('ArrowUp clamps at the top', () => {
