@@ -147,30 +147,146 @@ func TestMessageGenerator_Generate_RuntimeFailure(t *testing.T) {
 	}
 }
 
-// The commit-message path never submits a thread id, so go-llm has no
-// session id to send and no destination -- opencode included -- receives an
-// x-opencode-session header from it (#306). It does not pass through the chat
-// runner's destination policy, so this pins the absence where it is decided.
-func TestMessageGenerator_Generate_SendsNoOpencodeSessionHeader(t *testing.T) {
-	headers := make(chan http.Header, 4)
-	gittest.Start(t, "", func(w http.ResponseWriter, r *http.Request) {
-		headers <- r.Header.Clone()
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"chore: no session\"},\"finish_reason\":\"stop\"}]}\n\n")
-		_, _ = fmt.Fprint(w, "data: {\"model\":\"qwen3-coder-next:latest\",\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n")
-		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
-	})
+func TestMessageGenerator_Generate_ContextBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		primaryWindow  int
+		fallbackWindow int
+		wantMessage    string
+	}{
+		{name: "missing context"},
+		{name: "insufficient context", primaryWindow: 1024, fallbackWindow: 1024},
+		{name: "usable fallback", fallbackWindow: 32768, wantMessage: "feat: fallback"},
+		{name: "usable primary", primaryWindow: 32768, wantMessage: "feat: primary"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var primaryCalls, fallbackCalls atomic.Int32
+			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/chat/completions" {
+					primaryCalls.Add(1)
+				}
+				chatStubHandler("feat: primary").ServeHTTP(w, r)
+			}))
+			t.Cleanup(primary.Close)
+			fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/chat/completions" {
+					fallbackCalls.Add(1)
+				}
+				chatStubHandler("feat: fallback").ServeHTTP(w, r)
+			}))
+			t.Cleanup(fallback.Close)
+			writeModelsConfig(t, fmt.Sprintf(`{
+				"providers":{
+					"primary":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"},
+					"backup":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}
+				},
+				"models":{
+					"primary":{"name":"chat-model","provider":"primary","type":"dense","context_window":%d,"capabilities":["chat","stream","tool_call"],"fallbacks":["backup"]},
+					"backup":{"name":"chat-model","provider":"backup","type":"dense","context_window":%d,"capabilities":["chat","stream","tool_call"]}
+				},
+				"defaults":{"agent":"primary"}
+			}`, primary.URL, fallback.URL, tc.primaryWindow, tc.fallbackWindow))
 
-	if _, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, "", nil); err != nil {
-		t.Fatalf("Generate() error = %v", err)
+			message, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), sampleDiff, 0, "", nil)
+			if tc.wantMessage == "feat: primary" {
+				if err != nil || message != tc.wantMessage || primaryCalls.Load() != 1 || fallbackCalls.Load() != 0 {
+					t.Fatalf("Generate() = %q, %v; primary/fallback calls = %d/%d, want usable primary", message, err, primaryCalls.Load(), fallbackCalls.Load())
+				}
+				return
+			}
+			if primaryCalls.Load() != 0 {
+				t.Fatal("model with unknown or insufficient context received a completion request")
+			}
+			if tc.wantMessage != "" {
+				if err != nil || message != tc.wantMessage || fallbackCalls.Load() != 1 {
+					t.Fatalf("Generate() = %q, %v; fallback calls = %d, want usable fallback", message, err, fallbackCalls.Load())
+				}
+				return
+			}
+			if message != "" || !errors.Is(err, provider.ErrBudgetExceeded) || fallbackCalls.Load() != 0 {
+				t.Fatalf("Generate() = %q, %v; fallback calls = %d, want budget rejection before completion", message, err, fallbackCalls.Load())
+			}
+			for _, hint := range []string{"context_window", "fallback", "staged"} {
+				if !strings.Contains(err.Error(), hint) {
+					t.Errorf("Generate() error = %v, missing recovery hint %q", err, hint)
+				}
+			}
+		})
 	}
-	if len(headers) == 0 {
-		t.Fatal("no chat request reached the provider")
+}
+
+// OpenCode Go requires a stable session for a conversation, including auxiliary
+// requests. A generation is its own conversation: its random ID must remain the
+// same through fallback, rotate on the next generation, and never persist.
+func TestMessageGenerator_Generate_UsesEphemeralSessionAcrossFallbacks(t *testing.T) {
+	type observedRequest struct{ provider, path, session string }
+	requests := make(chan observedRequest, 32)
+	startProvider := func(name string, fail bool) *httptest.Server {
+		handler := chatStubHandler("chore: generated message")
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests <- observedRequest{name, r.URL.Path, r.Header.Get("x-opencode-session")}
+			if fail && r.URL.Path == "/v1/chat/completions" {
+				http.Error(w, "primary unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			handler.ServeHTTP(w, r)
+		}))
+		t.Cleanup(server.Close)
+		return server
 	}
-	for len(headers) > 0 {
-		if got, ok := (<-headers)["X-Opencode-Session"]; ok {
-			t.Fatalf("x-opencode-session = %q, want the header absent", got)
+	primary := startProvider("primary", true)
+	fallback := startProvider("backup", false)
+	writeModelsConfig(t, fmt.Sprintf(`{
+		"providers":{
+			"primary":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"},
+			"backup":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}
+		},
+		"models":{
+			"primary":{"name":"chat-model","provider":"primary","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"],"fallbacks":["backup"]},
+			"backup":{"name":"chat-model","provider":"backup","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}
+		},
+		"defaults":{"agent":"primary"}
+	}`, primary.URL, fallback.URL))
+	dataDir := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataDir)
+	root := t.TempDir()
+	gen := NewMessageGenerator()
+	var previousSession string
+	for range 2 {
+		message, err := gen.generate(context.Background(), root, sampleDiff, 0, "", nil)
+		if err != nil || message != "chore: generated message" {
+			t.Fatalf("Generate() = %q, %v, want fallback message", message, err)
 		}
+		var session string
+		called := make(map[string]bool)
+		for len(requests) > 0 {
+			request := <-requests
+			if request.path != "/v1/chat/completions" {
+				if request.session != "" {
+					t.Error("model discovery received a generation session")
+				}
+				continue
+			}
+			called[request.provider] = true
+			if !strings.HasPrefix(request.session, "firn-commit-") || len(request.session) < len("firn-commit-")+26 || strings.Contains(request.session, root) {
+				t.Fatalf("session = %q, want an opaque per-generation ID", request.session)
+			}
+			if session != "" && session != request.session {
+				t.Fatal("generation session changed between primary and fallback")
+			}
+			session = request.session
+		}
+		if !called["primary"] || !called["backup"] {
+			t.Fatalf("called providers = %v, want primary and fallback", called)
+		}
+		if session == previousSession {
+			t.Fatal("separate generations reused a session")
+		}
+		previousSession = session
+	}
+	entries, err := os.ReadDir(dataDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("generation persisted data: entries = %v, err = %v", entries, err)
 	}
 }
 
