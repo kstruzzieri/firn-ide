@@ -22,6 +22,7 @@ jest.mock('../../../utils/editorNavigation', () => ({
 }));
 
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { GitPanel } from '../../../components/GitPanel';
 import { useGitStore } from '../../../stores/gitStore';
 import { useIDEStore } from '../../../stores/ideStore';
@@ -531,8 +532,66 @@ describe('GitPanel AI message generation', () => {
   const generated = (message: string, withheld: string[] = []) =>
     ({ message, withheld }) as git.CommitMessageResult;
 
+  it.each([
+    ['generated', 'feat: generated', []],
+    ['all withheld', '', ['.env']],
+    ['failed', null, []],
+  ] as const)(
+    'shows progress and protects the draft until generation finishes (%s)',
+    async (_outcome, message, withheld) => {
+      const user = userEvent.setup();
+      let resolve!: (result: git.CommitMessageResult) => void;
+      let reject!: (error: Error) => void;
+      mockGenerate.mockReturnValueOnce(
+        new Promise<git.CommitMessageResult>((res, rej) => {
+          resolve = res;
+          reject = rej;
+        }) as unknown as ReturnType<typeof GitGenerateCommitMessage>
+      );
+      seed([file('main.go', 'A', '.')]);
+      act(() => {
+        useGitStore.setState({ aiAvailable: true, commitMessage: 'my draft' });
+      });
+      render(<GitPanel />);
+      const input = screen.getByRole('textbox', { name: /commit message/i });
+      const generate = screen.getByRole('button', { name: /generate message/i });
+      const status = screen.getByRole('status');
+
+      await user.click(generate);
+
+      expect(generate).toHaveTextContent('Generating…');
+      expect(generate).toBeDisabled();
+      expect(screen.getByRole('button', { name: /^commit$/i })).toBeDisabled();
+      expect(status).toHaveTextContent('Generating commit message…');
+      expect(status).toBeVisible();
+      expect(input).toHaveAttribute('readonly');
+      expect(input).toBeEnabled();
+      await user.type(input, ' accidental edit');
+      expect(input).toHaveFocus();
+      expect(input).toHaveValue('my draft');
+
+      await act(async () => {
+        if (message === null) reject(new Error('model unavailable'));
+        else resolve(generated(message, [...withheld]));
+      });
+
+      expect(generate).toHaveTextContent('Generate');
+      expect(generate).toBeEnabled();
+      expect(status).not.toHaveTextContent('Generating commit message…');
+      expect(input).not.toHaveAttribute('readonly');
+      await user.type(input, ' continued');
+      expect(input).toHaveValue('my draft continued');
+      if (message) expect(screen.getByTestId('ai-suggestion')).toHaveTextContent(message);
+      else if (withheld.length) expect(screen.getByTestId('ai-withheld')).toHaveTextContent('.env');
+      else expect(screen.getByTestId('git-error')).toHaveTextContent('model unavailable');
+    }
+  );
+
   it('hides the generate button when golem is unavailable', () => {
     seed([file('staged.ts', 'M', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: false });
+    });
 
     render(<GitPanel />);
 
@@ -585,35 +644,40 @@ describe('GitPanel AI generation preserves current drafts', () => {
     ['generated', 'feat: generated', []],
     ['all withheld', '', ['.env']],
     ['failed', null, []],
-  ] as const)('keeps edits made during a %s request', async (_outcome, message, withheld) => {
-    let resolve!: (result: git.CommitMessageResult) => void;
-    let reject!: (error: Error) => void;
-    mockGenerate.mockReturnValueOnce(
-      new Promise<git.CommitMessageResult>((res, rej) => {
-        resolve = res;
-        reject = rej;
-      }) as unknown as ReturnType<typeof GitGenerateCommitMessage>
-    );
-    seed([file('.env', 'A', '.'), file('main.go', 'A', '.')]);
-    act(() => {
-      useGitStore.setState({ aiAvailable: true });
-    });
-    render(<GitPanel />);
-    const input = screen.getByRole('textbox', { name: /commit message/i });
-    fireEvent.change(input, { target: { value: 'my draft' } });
-    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
-    fireEvent.change(input, { target: { value: 'my completed draft' } });
-    await act(async () => {
-      if (message === null) reject(new Error('model unavailable'));
-      else resolve({ message, withheld: [...withheld] } as git.CommitMessageResult);
-    });
+  ] as const)(
+    'keeps store updates made during a %s request',
+    async (_outcome, message, withheld) => {
+      let resolve!: (result: git.CommitMessageResult) => void;
+      let reject!: (error: Error) => void;
+      mockGenerate.mockReturnValueOnce(
+        new Promise<git.CommitMessageResult>((res, rej) => {
+          resolve = res;
+          reject = rej;
+        }) as unknown as ReturnType<typeof GitGenerateCommitMessage>
+      );
+      seed([file('.env', 'A', '.'), file('main.go', 'A', '.')]);
+      act(() => {
+        useGitStore.setState({ aiAvailable: true });
+      });
+      render(<GitPanel />);
+      const input = screen.getByRole('textbox', { name: /commit message/i });
+      fireEvent.change(input, { target: { value: 'my draft' } });
+      fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+      act(() => {
+        useGitStore.getState().setCommitMessage('my completed draft');
+      });
+      await act(async () => {
+        if (message === null) reject(new Error('model unavailable'));
+        else resolve({ message, withheld: [...withheld] } as git.CommitMessageResult);
+      });
 
-    expect(input).toHaveValue('my completed draft');
-    if (message) expect(screen.getByTestId('ai-suggestion')).toHaveTextContent(message);
-    else expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
-  });
+      expect(input).toHaveValue('my completed draft');
+      if (message) expect(screen.getByTestId('ai-suggestion')).toHaveTextContent(message);
+      else expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
+    }
+  );
 
-  it('offers a suggestion when an empty draft is filled while generation is pending', async () => {
+  it('offers a suggestion when the store fills an empty draft while generation is pending', async () => {
     let resolve!: (result: git.CommitMessageResult) => void;
     mockGenerate.mockReturnValueOnce(
       new Promise<git.CommitMessageResult>((res) => {
@@ -627,7 +691,9 @@ describe('GitPanel AI generation preserves current drafts', () => {
     render(<GitPanel />);
     fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
     const input = screen.getByRole('textbox', { name: /commit message/i });
-    fireEvent.change(input, { target: { value: 'new draft' } });
+    act(() => {
+      useGitStore.getState().setCommitMessage('new draft');
+    });
     await act(async () => {
       resolve({ message: 'feat: generated', withheld: [] } as git.CommitMessageResult);
     });

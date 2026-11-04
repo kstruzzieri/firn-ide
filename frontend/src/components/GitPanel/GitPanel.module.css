@@ -171,6 +171,7 @@
 
 .commitControls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -238,6 +239,11 @@
    otherwise add between the message box and its controls. */
 .statusRegion:empty {
   margin-top: -6px;
+}
+
+.generationStatus {
+  color: var(--text-primary);
+  font-size: 12px;
 }
 
 .aiWithheldList {
