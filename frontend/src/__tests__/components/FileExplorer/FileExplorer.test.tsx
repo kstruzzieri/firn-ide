@@ -423,6 +423,37 @@ describe('FileExplorer', () => {
       expect(screen.getByRole('treeitem', { name: 'App.tsx' })).toHaveFocus();
     });
 
+    it('does not reclaim focus that moved elsewhere while an error had removed the tree', async () => {
+      const user = userEvent.setup();
+      render(
+        <>
+          <FileExplorer />
+          <textarea aria-label="Editor" />
+        </>
+      );
+      await user.click(screen.getByRole('treeitem', { name: 'App.tsx' }));
+
+      act(() => useIDEStore.setState({ treeError: 'read failed' }));
+      const editor = screen.getByRole('textbox', { name: 'Editor' });
+      act(() => editor.focus());
+      act(() => useIDEStore.setState({ treeError: null }));
+      act(() => editor.blur());
+      act(() =>
+        useIDEStore.setState({
+          directoryTree: [
+            filesystem.FileEntry.createFrom({
+              name: 'aaa.txt',
+              path: '/workspace/aaa.txt',
+              isDir: false,
+            }),
+            ...mockDirectoryTree,
+          ],
+        })
+      );
+
+      expect(document.body).toHaveFocus();
+    });
+
     it('does not reclaim focus after leaving the tree and then removing its last focused row', async () => {
       const user = userEvent.setup();
       render(

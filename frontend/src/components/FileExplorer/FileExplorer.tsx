@@ -270,6 +270,18 @@ export function FileExplorer() {
     rangeExtractor,
   });
 
+  useEffect(() => {
+    // Focus landing outside the tree cancels removal recovery, including while
+    // an error has removed the tree and its own blur handler cannot run.
+    const cancelRecovery = (event: FocusEvent) => {
+      if (!(event.target instanceof Node) || !scrollRef.current?.contains(event.target)) {
+        focusedElementRef.current = null;
+      }
+    };
+    document.addEventListener('focusin', cancelRecovery);
+    return () => document.removeEventListener('focusin', cancelRecovery);
+  }, []);
+
   const lastNavigation = useRef({ activeKey, navigationVersion });
   useLayoutEffect(() => {
     const navigated =
