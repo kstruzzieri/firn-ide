@@ -272,19 +272,19 @@ export function FileExplorer() {
 
   const lastNavigation = useRef({ activeKey, navigationVersion });
   useLayoutEffect(() => {
-    // A refresh can shift the active row's index without moving focus: the row
-    // keeps its DOM node by key, and the viewport stays where the user left it.
     const navigated =
       lastNavigation.current.activeKey !== activeKey ||
       lastNavigation.current.navigationVersion !== navigationVersion;
     lastNavigation.current = { activeKey, navigationVersion };
-    if (!navigated) return;
     const tree = scrollRef.current;
     const focusedElement = focusedElementRef.current;
     const focusedRowRemoved =
       document.activeElement === document.body &&
       focusedElement !== null &&
       !focusedElement.isConnected;
+    // A refresh can shift the active row's index without moving focus: the row
+    // keeps its DOM node by key, and the viewport stays where the user left it.
+    if (!navigated && !focusedRowRemoved) return;
     // Editor-driven reveals update the entry tab stop without taking focus
     // from the editor or controls used to switch workspaces. A removed focused
     // row drops browser focus to body, so carry that focus to a surviving row.

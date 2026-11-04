@@ -399,6 +399,30 @@ describe('FileExplorer', () => {
       expect(screen.getByRole('treeitem', { name: 'package.json' })).toHaveFocus();
     });
 
+    it('recovers focus when an error removed the tree and a later refresh only shifts the row', async () => {
+      const user = userEvent.setup();
+      render(<FileExplorer />);
+      await user.click(screen.getByRole('treeitem', { name: 'App.tsx' }));
+
+      act(() => useIDEStore.setState({ treeError: 'read failed' }));
+      expect(document.body).toHaveFocus();
+      act(() => useIDEStore.setState({ treeError: null }));
+      act(() =>
+        useIDEStore.setState({
+          directoryTree: [
+            filesystem.FileEntry.createFrom({
+              name: 'aaa.txt',
+              path: '/workspace/aaa.txt',
+              isDir: false,
+            }),
+            ...mockDirectoryTree,
+          ],
+        })
+      );
+
+      expect(screen.getByRole('treeitem', { name: 'App.tsx' })).toHaveFocus();
+    });
+
     it('does not reclaim focus after leaving the tree and then removing its last focused row', async () => {
       const user = userEvent.setup();
       render(
