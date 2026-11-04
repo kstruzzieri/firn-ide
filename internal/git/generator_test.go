@@ -215,6 +215,29 @@ func TestMessageGenerator_Generate_ContextBudget(t *testing.T) {
 	}
 }
 
+func TestRunError_CancellationOutranksBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		err         error
+		wantSentry  error
+		wantContext bool
+	}{
+		{"budget alone", provider.ErrBudgetExceeded, provider.ErrBudgetExceeded, true},
+		{"budget joined with cancel", errors.Join(provider.ErrBudgetExceeded, context.Canceled), context.Canceled, false},
+		{"budget joined with deadline", errors.Join(provider.ErrBudgetExceeded, context.DeadlineExceeded), context.DeadlineExceeded, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runError(tc.err)
+			if !errors.Is(got, tc.wantSentry) {
+				t.Errorf("runError() = %v, want it to wrap %v", got, tc.wantSentry)
+			}
+			if strings.Contains(got.Error(), "context_window") != tc.wantContext {
+				t.Errorf("runError() = %v, context_window advice want %v", got, tc.wantContext)
+			}
+		})
+	}
+}
+
 // OpenCode Go requires a stable session for a conversation, including auxiliary
 // requests. A generation is its own conversation: its random ID must remain the
 // same through fallback, rotate on the next generation, and never persist.

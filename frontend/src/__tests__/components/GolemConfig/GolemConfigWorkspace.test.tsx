@@ -884,7 +884,7 @@ describe('GolemConfigWorkspace', () => {
     const notice = await screen.findByText(/Golem is busy/, { selector: 'p' });
     expect(notice).not.toHaveAttribute('role');
     expect(announcement).toHaveAttribute('role', 'status');
-    expect(announcement).toHaveTextContent(notice.textContent ?? '');
+    await waitFor(() => expect(announcement).toHaveTextContent(notice.textContent ?? ''));
   });
 
   it('announces a repeated busy Refresh again and nothing once Golem is idle (#314)', async () => {
@@ -898,12 +898,12 @@ describe('GolemConfigWorkspace', () => {
     await waitFor(() => expect(announcement).toHaveTextContent(/Golem is busy/));
     const first = announcement.firstElementChild;
 
-    // The same words again are a new node in the region, which is what a
-    // screen reader speaks; an unchanged text node would be silent.
+    // The same words again clear the region and publish after a gap, which is
+    // what a screen reader speaks; an unchanged text node would be silent.
     await waitFor(() => expect(refresh).toBeEnabled());
     await userEvent.click(refresh);
     await waitFor(() => expect(announcement.firstElementChild).not.toBe(first));
-    expect(announcement).toHaveTextContent(/Golem is busy/);
+    await waitFor(() => expect(announcement).toHaveTextContent(/Golem is busy/));
 
     resolve(readyProjection, false);
     await waitFor(() => expect(refresh).toBeEnabled());

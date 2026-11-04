@@ -41,6 +41,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useLiveAnnouncement } from '../../hooks/useLiveAnnouncement';
 import {
   CAPABILITY_NAMES,
   compareString,
@@ -108,11 +109,6 @@ const INELIGIBLE = copy('eligibility_ineligible');
 /** [W5-1] What an all-unticked checklist would actually persist. */
 const EMPTY_EXPOSURE =
   "Mark at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing.";
-
-// WebKit's repeated-text-after-clear test uses this gap to distinguish a
-// deliberate repeat from a render in progress; a next-task refill stays silent.
-// https://github.com/WebKit/WebKit/commit/6d28d6994a1f3178058782606b1145197aadaa08
-const REPEATED_REFUSAL_DELAY_MS = 400;
 
 /** Transport order, the order the backend's drop set is compared in. */
 const DROP_ORDER: readonly DropField[] = ['slots', 'think_tags'];
@@ -408,19 +404,7 @@ export function RouteEditor({
     (_previous: { text: string }, text: string) => ({ text }),
     { text: '' }
   );
-  const [liveRefusal, setLiveRefusal] = useState('');
-  // Retain the last published text across field edits that clear the notice.
-  const publishedRefusal = useRef('');
-  useEffect(() => {
-    setLiveRefusal('');
-    if (refusal.text === '') return;
-    const delay = refusal.text === publishedRefusal.current ? REPEATED_REFUSAL_DELAY_MS : 0;
-    const timer = window.setTimeout(() => {
-      publishedRefusal.current = refusal.text;
-      setLiveRefusal(refusal.text);
-    }, delay);
-    return () => window.clearTimeout(timer);
-  }, [refusal]);
+  const liveRefusal = useLiveAnnouncement(refusal);
 
   // The facts the picker currently yields. `null` means "not choosable yet";
   // submit() names which half is missing.

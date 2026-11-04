@@ -26,6 +26,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useLiveAnnouncement } from '../../hooks/useLiveAnnouncement';
 import {
   ApplyGolemSettings,
   CancelGolemSettingsApply,
@@ -370,19 +371,18 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const [grantNotice, setGrantNotice] = useState('');
   /**
    * #314: the notices below are announced as their results land, through one
-   * live region that is always in the tree. Each announcement renders as a new
-   * node, so a result that repeats the last one (Busy, Retry, Busy) is still an
-   * addition to the region, and a notice that only stays on screen is never
-   * announced twice.
+   * live region that is always in the tree. A result that repeats the last one
+   * (Busy, Retry, Busy, or a second Apply) clears the region and is published
+   * again, and a notice that only stays on screen is never announced twice.
    */
-  const [announcement, setAnnouncement] = useState({ seq: 0, text: '' });
-  const [liveAnnouncement, setLiveAnnouncement] = useState(announcement);
+  const [announcement, setAnnouncement] = useState({ text: '' });
+  const liveAnnouncement = useLiveAnnouncement(announcement);
   const announce = useCallback((text: string) => {
-    if (text !== '') setAnnouncement((current) => ({ seq: current.seq + 1, text }));
+    if (text !== '') setAnnouncement({ text });
   }, []);
   useEffect(() => {
-    // Success removes the Apply bar. Recover its lost focus before publishing
-    // the result, without taking focus from a user who moved during the write.
+    // Success removes the Apply bar. Recover its lost focus before the result
+    // publishes, without taking focus from a user who moved during the write.
     if (
       (announcement.text === APPLIED || announcement.text === APPLIED_UNCERTAIN) &&
       document.activeElement === document.body
@@ -393,12 +393,6 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       if (source instanceof HTMLButtonElement && !source.disabled) source.focus();
       else headingRef.current?.focus();
     }
-    setLiveAnnouncement({ seq: announcement.seq, text: '' });
-    if (announcement.text === '') return;
-    // Let the completed redraw and focus recovery reach the accessibility tree
-    // before the polite update. The empty turn also separates identical notices.
-    const timer = window.setTimeout(() => setLiveAnnouncement(announcement), 0);
-    return () => window.clearTimeout(timer);
   }, [announcement]);
   const showGrantNotice = (text: string): void => {
     setGrantNotice(text);
@@ -1264,7 +1258,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     projection ? outcome.notice : '',
   ];
   if (announcement.text !== '' && !visibleNotices.includes(announcement.text)) {
-    setAnnouncement({ seq: announcement.seq, text: '' });
+    setAnnouncement({ text: '' });
   }
   /**
    * §4.6a: while challenged, the only enabled draft actions are Confirm,
@@ -1679,9 +1673,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
           aria-atomic="true"
           data-testid="golem-config-notice-announcement"
         >
-          {liveAnnouncement.text !== '' && (
-            <span key={liveAnnouncement.seq}>{liveAnnouncement.text}</span>
-          )}
+          {liveAnnouncement !== '' && <span>{liveAnnouncement}</span>}
         </div>
 
         {phase.kind === 'loading' && <p className={styles.loading}>Loading configuration…</p>}

@@ -270,7 +270,15 @@ export function FileExplorer() {
     rangeExtractor,
   });
 
+  const lastNavigation = useRef({ activeKey, navigationVersion });
   useLayoutEffect(() => {
+    // A refresh can shift the active row's index without moving focus: the row
+    // keeps its DOM node by key, and the viewport stays where the user left it.
+    const navigated =
+      lastNavigation.current.activeKey !== activeKey ||
+      lastNavigation.current.navigationVersion !== navigationVersion;
+    lastNavigation.current = { activeKey, navigationVersion };
+    if (!navigated) return;
     const tree = scrollRef.current;
     const focusedElement = focusedElementRef.current;
     const focusedRowRemoved =

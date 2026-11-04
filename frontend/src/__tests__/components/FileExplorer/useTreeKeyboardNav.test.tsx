@@ -1,7 +1,6 @@
 // src/__tests__/components/FileExplorer/useTreeKeyboardNav.test.tsx
 import { renderHook, act } from '@testing-library/react';
 import { useTreeKeyboardNav } from '../../../components/FileExplorer/useTreeKeyboardNav';
-import { rowDomId } from '../../../components/FileExplorer/TreeRow';
 import { ROOT_ROW_KEY } from '../../../utils/flattenTree';
 import type { FlatRow } from '../../../utils/flattenTree';
 
@@ -41,7 +40,6 @@ describe('useTreeKeyboardNav', () => {
   it('initializes active to the first row', () => {
     const { hook } = setup();
     expect(hook.result.current.activeKey).toBe(ROOT_ROW_KEY);
-    expect(hook.result.current.activeId).toBe(rowDomId(ROOT_ROW_KEY));
   });
 
   it('ArrowDown moves to the next row', () => {

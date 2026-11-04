@@ -158,19 +158,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit message generation works with OpenCode Go, which refuses a request
   without a session header. Each generation sends a new random session ID that
   is kept in memory, is never reused and carries no repository or user
-  identity; every destination on the generation's route receives it. When every
-  configured model is refused for context, the error now says the context is
-  unknown or too small and names `context_window`. A model with no known
+  identity. Unlike chat, which sends a session header only to opencode,
+  generation sends it to every OpenAI-compatible endpoint it contacts. When
+  every configured model is refused for context, the error now says the context
+  is unknown or too small and names `context_window`. A model with no known
   context is still refused (#506). (#505)
 - The Git panel shows that a message is being generated. The Generate button
   reads "Generating…", screen readers hear "Generating commit message…", and
   the message box is read-only until generation ends. The commit controls wrap
   in a narrow sidebar, where the Commit button used to clip. (#505)
-- VoiceOver speaks the result of a successful Apply in Golem Configuration.
-  Success removes the Apply bar, which used to drop keyboard focus and the
-  announcement with it. Focus now moves to the Source picker, or to the heading
-  while that picker is disabled, unless you have already moved elsewhere, and
-  the result is announced after that. (#505)
+- VoiceOver speaks the result of a successful Apply in Golem Configuration,
+  including a second Apply with the same result. Success removes the Apply bar,
+  which used to drop keyboard focus and the announcement with it. Focus now
+  moves to the Source picker, or to the heading while that picker is disabled,
+  unless you have already moved elsewhere, and the result is announced after
+  that. (#505)
 - The file tree moves keyboard focus to each row, with one Tab stop for the
   whole tree, and VoiceOver reads each row's name, level and expanded or
   collapsed state. (#505)

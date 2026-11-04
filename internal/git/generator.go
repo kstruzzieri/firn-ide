@@ -221,6 +221,22 @@ func scrubField(s string) string {
 
 // destinationDeniedMessage renders a boundary-safe description from the
 // TYPED error's own fields only — never from the surrounding chain (F14).
+// runError words a failed generation run for the Git panel.
+func runError(err error) error {
+	if msg, ok := destinationDeniedMessage(err); ok {
+		return fmt.Errorf("commit message generation blocked: %s; use Approve missing destinations in the Golem configuration view: %w", msg, provider.ErrDestinationDenied)
+	}
+	// Golem joins a cancellation that lands before it commits the run's end onto
+	// the run's error, and that is no reason to send anyone to their config.
+	if errors.Is(err, provider.ErrBudgetExceeded) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// The router uses this sentinel for both unknown context metadata and
+		// an input that exceeds every candidate's budget. Do not guess which
+		// happened or replace a model's capacity with our prompt ceiling.
+		return fmt.Errorf("commit message generation blocked: model context is unknown or too small; verify context_window for the agent model and its fallbacks in the Golem model configuration, or reduce the staged diff: %w", provider.ErrBudgetExceeded)
+	}
+	return fmt.Errorf("golem runtime run: %w", err)
+}
+
 func destinationDeniedMessage(err error) (string, bool) {
 	var denied *provider.DestinationDeniedError
 	if !errors.As(err, &denied) {
@@ -322,16 +338,7 @@ func (g *MessageGenerator) generate(ctx context.Context, root, diff string, with
 		Context:  []golem.ContextItem{stagedDiff},
 	}, func(golem.Event) error { return nil })
 	if err != nil {
-		if msg, ok := destinationDeniedMessage(err); ok {
-			return "", fmt.Errorf("commit message generation blocked: %s; use Approve missing destinations in the Golem configuration view: %w", msg, provider.ErrDestinationDenied)
-		}
-		if errors.Is(err, provider.ErrBudgetExceeded) {
-			// The router uses this sentinel for both unknown context metadata and
-			// an input that exceeds every candidate's budget. Do not guess which
-			// happened or replace a model's capacity with our prompt ceiling.
-			return "", fmt.Errorf("commit message generation blocked: model context is unknown or too small; verify context_window for the agent model and its fallbacks in the Golem model configuration, or reduce the staged diff: %w", provider.ErrBudgetExceeded)
-		}
-		return "", fmt.Errorf("golem runtime run: %w", err)
+		return "", runError(err)
 	}
 
 	message = strings.TrimSpace(result.Answer)

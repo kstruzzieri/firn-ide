@@ -1,7 +1,6 @@
 // src/components/FileExplorer/useTreeKeyboardNav.ts
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { FlatRow } from '../../utils/flattenTree';
-import { rowDomId } from './TreeRow';
 
 export interface TreeKeyboardActions {
   /** Toggle expand/collapse (root → root toggle, entry dir → expandedPaths). */
@@ -20,8 +19,6 @@ export interface UseTreeKeyboardNavArgs {
 export interface TreeKeyboardNav {
   activeKey: string | null;
   setActiveKey: (key: string) => void;
-  /** DOM id of the active row; undefined if none. */
-  activeId: string | undefined;
   /** Changes even for a navigation key that keeps the same boundary row active. */
   navigationVersion: number;
   onKeyDown: (e: React.KeyboardEvent) => void;
@@ -132,7 +129,6 @@ export function useTreeKeyboardNav({ rows, actions }: UseTreeKeyboardNavArgs): T
   return {
     activeKey,
     setActiveKey: setStoredKey,
-    activeId: activeKey ? rowDomId(activeKey) : undefined,
     navigationVersion,
     onKeyDown,
   };

@@ -1100,8 +1100,10 @@ describe('nonterminal apply results', () => {
     expect(await screen.findByText(/could not be cancelled/, { selector: 'p' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeInTheDocument();
     // #314: the failure is announced, not only shown.
-    expect(screen.getByTestId('golem-config-notice-announcement')).toHaveTextContent(
-      /could not be cancelled/
+    await waitFor(() =>
+      expect(screen.getByTestId('golem-config-notice-announcement')).toHaveTextContent(
+        /could not be cancelled/
+      )
     );
   });
 });
@@ -1563,6 +1565,36 @@ describe('notice announcements (#314)', () => {
     expect(title).toHaveFocus();
   });
 
+  it('speaks a second successful Apply after an empty settling interval', async () => {
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await mountWorkspace();
+    await stageKey();
+    const region = announcement();
+    await clickApply();
+    await waitFor(() => expect(region).toHaveTextContent('Configuration applied.'));
+
+    // A next-task refill of identical text stays silent in WebKit, so the empty
+    // interval has to outlast its settling delay.
+    const updates: { text: string | null; at: number }[] = [];
+    const observer = new MutationObserver(() => {
+      updates.push({ text: region.textContent, at: performance.now() });
+    });
+    observer.observe(region, { childList: true, subtree: true, characterData: true });
+    try {
+      await stageKey();
+      await clickApply();
+      await waitFor(() =>
+        expect(updates.map(({ text }) => text)).toEqual(['', 'Configuration applied.'])
+      );
+      expect(updates[1].at - updates[0].at).toBeGreaterThanOrEqual(350);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
   it('announces a grant notice through the same region', async () => {
     (PrepareGolemDestinationGrants as jest.Mock).mockRejectedValue('service unavailable');
     await mountWorkspace();
@@ -1573,7 +1605,7 @@ describe('notice announcements (#314)', () => {
 
     const notice = await screen.findByTestId('golem-grant-notice');
     expect(notice).not.toHaveAttribute('role');
-    expect(region).toHaveTextContent(notice.textContent ?? '');
+    await waitFor(() => expect(region).toHaveTextContent(notice.textContent ?? ''));
   });
 
   it('announces a repeated busy result again', async () => {
@@ -1587,9 +1619,9 @@ describe('notice announcements (#314)', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
-    // A new node, not the old text node left in place, so it is spoken again.
+    // Cleared and published again, not the old text left in place.
     await waitFor(() => expect(region.firstElementChild).not.toBe(first));
-    expect(region).toHaveTextContent(/Nothing was written; retry when idle/);
+    await waitFor(() => expect(region).toHaveTextContent(/Nothing was written; retry when idle/));
   });
 
   it('announces a repeated local refusal again', async () => {
@@ -1606,7 +1638,7 @@ describe('notice announcements (#314)', () => {
     await clickApply();
 
     await waitFor(() => expect(region.firstElementChild).not.toBe(first));
-    expect(region).toHaveTextContent(/A staged change is invalid/);
+    await waitFor(() => expect(region).toHaveTextContent(/A staged change is invalid/));
   });
 
   it('does not announce an old outcome again when a failed reload recovers', async () => {

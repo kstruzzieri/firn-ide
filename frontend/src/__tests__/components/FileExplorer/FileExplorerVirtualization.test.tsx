@@ -123,6 +123,18 @@ describe('FileExplorer virtualization', () => {
     expect(screen.getByRole('treeitem', { name: 'file-0.ts' })).toBeInTheDocument();
     expect(screen.getAllByRole('treeitem').length).toBeLessThan(100);
 
+    // A refresh that shifts the focused row leaves the viewport where it is.
+    act(() =>
+      useIDEStore.setState({
+        directoryTree: [
+          { name: 'a-new.ts', path: '/repo/a-new.ts', isDir: false, size: 0, modTime: '' },
+          ...makeFlatTree(5000),
+        ] as filesystem.FileEntry[],
+      })
+    );
+    expect(tree.scrollTop).toBe(0);
+    expect(last).toHaveFocus();
+
     await user.keyboard('{End}');
     expect(last).toHaveFocus();
     expect(tree.scrollTop).toBeGreaterThan(100000);
