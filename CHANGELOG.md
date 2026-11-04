@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Clicking a file tab focuses the editor so typing reaches the selected file,
+  including when clicking the current tab or returning from another editor
+  surface. Keyboard tab navigation keeps focus in the tab strip. (#505)
 - Golem route refusals keep keyboard focus on Done and are announced on every
   press, so a keyboard or VoiceOver user can press Done again and hear the
   error again. An identical refusal is spoken again after about 400ms, while
