@@ -370,6 +370,13 @@ export function FileExplorer() {
         role="tree"
         aria-label="File explorer"
         onKeyDown={onKeyDown}
+        onClick={(event) => {
+          // The rows hold the tree's focus, so a click on its blank space hands
+          // focus to the active row instead of dropping it to the page.
+          if (event.target === event.currentTarget && activeKey !== null) {
+            document.getElementById(rowDomId(activeKey))?.focus({ preventScroll: true });
+          }
+        }}
         onBlurCapture={(event) => {
           // Intentionally leaving the tree cancels removal recovery. DOM
           // removal itself does not dispatch blur for the disconnected row.
