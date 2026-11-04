@@ -1127,7 +1127,8 @@ func TestGolemRuntimeTransportDialsLoopbackForLocalhost(t *testing.T) {
 			}
 			target := testTarget("local-ollama", "big-coder")
 			target.destination.Endpoint = endpoint
-			base := &http.Transport{DialContext: standInDialer(decoy.Listener.Addr().String(), tc.refused...)}
+			rec := &dialRecorder{next: standInDialer(decoy.Listener.Addr().String(), tc.refused...)}
+			base := &http.Transport{DialContext: rec.dial}
 			backend, transport, err := buildProviderOn(base, target, "")
 			if err != nil {
 				t.Fatalf("buildProviderOn: %v", err)
@@ -1139,6 +1140,13 @@ func TestGolemRuntimeTransportDialsLoopbackForLocalhost(t *testing.T) {
 			}
 			if chatErr != nil {
 				t.Fatalf("Chat: %v", chatErr)
+			}
+			wantDials := []string{net.JoinHostPort("127.0.0.1", fmt.Sprint(port))}
+			if tc.name == "ipv6" {
+				wantDials = append(wantDials, net.JoinHostPort("::1", fmt.Sprint(port)))
+			}
+			if got := rec.seen(); !slices.Equal(got, wantDials) {
+				t.Errorf("Chat(%q) dialed %q, want %q", endpoint, got, wantDials)
 			}
 			if got, want := srv.requestHosts(), []string{fmt.Sprintf("localhost:%d", port)}; !slices.Equal(got, want) {
 				t.Fatalf("loopback listener saw Host %q, want %q: one request that still names localhost", got, want)
