@@ -177,3 +177,11 @@ Write it down next to the generate command or it gets re-litigated as a review f
   timeout or later inventory showing it stopped does not prove startup failed.
   Treat user confirmation of runtime state as authoritative; verify spoken
   announcements separately from AX text. Leave it off after the user closes it.
+
+- RC VoiceOver checks: distinguish automatic completion announcements from manual readability. If user replies appear contradictory, clarify that distinction before recording a failure. App inventory/AX text does not establish audible output, and repeated automated focus changes can obscure announcements; use a prepared control plus a user-performed activation when needed.
+
+- Native tree semantics: when WebKit exposes role=tree as a generic container, inspect required descendant roles before changing focus or adding spoken fallback text. Plain virtualizer wrappers fail WebKit tree validation; jsdom role/attribute assertions alone cannot prove native accessibility mapping or speech.
+
+- Repeated live announcements: native focus retention and changed React child identity do not prove an accessibility text-change event. When identical alerts are silent on repeat, test an observable empty update before publishing again, keep focus stable, and rerun actual VoiceOver.
+
+- A zero-delay empty→text DOM mutation is not a sufficient repeat-announcement signal in WebKit. Check native upstream live-region settling/deduplication tests and calibrate the repeat gap against those rules; retain immediate visible validation and verify actual speech.

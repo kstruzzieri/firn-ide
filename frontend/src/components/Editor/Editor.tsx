@@ -94,6 +94,7 @@ export function Editor() {
   const tabPressRef = useRef(false);
   const restoreFocusAfterCloseRef = useRef(false);
   const [mergeFinalizing, setMergeFinalizing] = useState(false);
+  const [fileFocusRevision, setFileFocusRevision] = useState(0);
 
   // Handle content changes from the editor
   const handleContentChange = useCallback(
@@ -401,7 +402,10 @@ export function Editor() {
                   className={`${styles.tab} ${owner ? styles.workspaceTab : ''} ${isActive ? styles.active : ''}`}
                   style={tabAccentStyle(owner)}
                   title={`${file.path}\n${languageName}`}
-                  onClick={activateFileTab}
+                  onClick={() => {
+                    activateFileTab();
+                    setFileFocusRevision((revision) => revision + 1);
+                  }}
                 >
                   <div
                     id={editorTabId(file.id)}
@@ -607,6 +611,7 @@ export function Editor() {
           >
             <CodeMirrorEditor
               fileId={activeFile.id}
+              focusRevision={fileFocusRevision}
               filename={activeFile.name}
               content={activeFile.content || ''}
               openFileIds={openFiles.map((f) => f.id)}

@@ -41,6 +41,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useLiveAnnouncement } from '../../hooks/useLiveAnnouncement';
 import {
   CAPABILITY_NAMES,
   compareString,
@@ -397,15 +398,13 @@ export function RouteEditor({
   const [think, setThink] = useState<ThinkMode>(seed.think);
   const [ackUnknown, setAckUnknown] = useState(seed.ackUnknown);
   const [ackDrops, setAckDrops] = useState(seed.ackDrops);
-  const refusalRef = useRef<HTMLParagraphElement>(null);
-  // A fresh notice lets repeated Done presses focus the same refusal again.
+  // A fresh request for every Done press, including an identical refusal.
+  // Keep the visible message and keyboard focus stable while the alert clears.
   const [refusal, setRefusal] = useReducer(
     (_previous: { text: string }, text: string) => ({ text }),
     { text: '' }
   );
-  useEffect(() => {
-    if (refusal.text !== '') refusalRef.current?.focus();
-  }, [refusal]);
+  const liveRefusal = useLiveAnnouncement(refusal);
 
   // The facts the picker currently yields. `null` means "not choosable yet";
   // submit() names which half is missing.
@@ -1320,6 +1319,11 @@ export function RouteEditor({
         </div>
       )}
 
+      {/* Mounted before any refusal; only this region announces the result. */}
+      <span className={styles.srOnly} role="alert" aria-atomic="true">
+        {liveRefusal}
+      </span>
+
       {/* What Done would stage, said before it is pressed: the same facts
           `unstaged` reads, so an edit undone by hand reads as no change. */}
       {unstaged && (
@@ -1330,16 +1334,7 @@ export function RouteEditor({
         </p>
       )}
 
-      {/* Keep the live region mounted before its text changes. */}
-      <p
-        ref={refusalRef}
-        tabIndex={-1}
-        className={refusal.text === '' ? styles.srOnly : styles.fieldError}
-        role="alert"
-        aria-atomic="true"
-      >
-        {refusal.text}
-      </p>
+      {refusal.text !== '' && <p className={styles.fieldError}>{refusal.text}</p>}
 
       <div className={styles.editorFooter}>
         {/* Always enabled once something differs: this button IS the

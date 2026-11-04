@@ -261,6 +261,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
   const commitMessage = useGitStore((s) => s.commitMessage);
   const aiAvailable = useGitStore((s) => s.aiAvailable);
   const withheldFromAI = useGitStore((s) => s.withheldFromAI);
+  const generating = useGitStore((s) => s.opInFlight === 'generate');
   const [amend, setAmend] = useState(false);
   const [suggestion, setSuggestion] = useState<string | null>(null);
 
@@ -273,7 +274,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
     const generated = await git.generateMessage();
     const after = useGitStore.getState();
     if (after.epoch !== epoch || !generated) return;
-    // Decide against the current draft: it may have been edited while waiting.
+    // Other callers may have updated the current draft while waiting.
     if (after.commitMessage.trim() === '') after.setCommitMessage(generated);
     else setSuggestion(generated);
   };
@@ -292,6 +293,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
         placeholder={`Commit message${stagedCount === 0 ? ' (stage changes first)' : ''}`}
         aria-label="Commit message"
         value={commitMessage}
+        readOnly={generating}
         onChange={(e) => useGitStore.getState().setCommitMessage(e.target.value)}
         rows={3}
       />
@@ -315,8 +317,9 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
           </div>
         </div>
       )}
-      {/* Mounted empty so screen readers announce the notice when it fills. */}
+      {/* Mounted empty so screen readers announce progress and withheld files. */}
       <div role="status" className={styles.statusRegion}>
+        {generating && <div className={styles.generationStatus}>Generating commit message…</div>}
         {withheldFromAI && (
           <div className={styles.aiWithheld} data-testid="ai-withheld">
             {withheldFromAI.allWithheld
@@ -349,10 +352,10 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
             className={styles.smallBtn}
             onClick={() => void handleGenerate()}
             disabled={disabled}
-            aria-label="Generate message"
+            aria-label={generating ? 'Generating commit message' : 'Generate message'}
             title="Generate a commit message with golem"
           >
-            Generate
+            {generating ? 'Generating…' : 'Generate'}
           </button>
         )}
         <button

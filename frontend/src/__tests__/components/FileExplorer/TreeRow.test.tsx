@@ -14,6 +14,7 @@ const baseProps = {
   unreadable: false,
   fileAccent: null,
   onToggle: noop,
+  onActivate: noop,
   onSelect: noop,
   onOpen: noop,
 };
@@ -262,7 +263,7 @@ describe('TreeRow', () => {
     expect(row).toHaveAttribute('aria-expanded', 'false');
     expect(row).toHaveAttribute('aria-selected', 'true');
     expect(row).toHaveAttribute('aria-level', '2');
-    expect(row).toHaveAttribute('tabindex', '-1');
+    expect(row).toHaveAttribute('tabindex', '0');
     expect(row.className).toContain('active');
     expect(row.style.getPropertyValue('--region-accent')).toBe('var(--accent-frontend)');
     expect(row).toHaveAttribute('data-git', 'modified');

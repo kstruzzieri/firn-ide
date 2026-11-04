@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
 	"github.com/kstruzzieri/go-llm/golem"
 	"github.com/kstruzzieri/go-llm/provider"
+
+	"firn/internal/ai"
 )
 
 // maxPromptBytes bounds the serialized staged-diff context handed to golem.
@@ -218,6 +221,22 @@ func scrubField(s string) string {
 
 // destinationDeniedMessage renders a boundary-safe description from the
 // TYPED error's own fields only — never from the surrounding chain (F14).
+// runError words a failed generation run for the Git panel.
+func runError(err error) error {
+	if msg, ok := destinationDeniedMessage(err); ok {
+		return fmt.Errorf("commit message generation blocked: %s; use Approve missing destinations in the Golem configuration view: %w", msg, provider.ErrDestinationDenied)
+	}
+	// Golem joins a cancellation that lands before it commits the run's end onto
+	// the run's error, and that is no reason to send anyone to their config.
+	if errors.Is(err, provider.ErrBudgetExceeded) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// The router uses this sentinel for both unknown context metadata and
+		// an input that exceeds every candidate's budget. Do not guess which
+		// happened or replace a model's capacity with our prompt ceiling.
+		return fmt.Errorf("commit message generation blocked: model context is unknown or too small; verify context_window for the agent model and its fallbacks in the Golem model configuration, or reduce the staged diff: %w", provider.ErrBudgetExceeded)
+	}
+	return fmt.Errorf("golem runtime run: %w", err)
+}
+
 func destinationDeniedMessage(err error) (string, bool) {
 	var denied *provider.DestinationDeniedError
 	if !errors.As(err, &denied) {
@@ -264,14 +283,16 @@ func (g *MessageGenerator) generate(ctx context.Context, root, diff string, with
 		ScopeGuard: func(string, bool) error { return errNoToolAccess },
 		System:     generateSystem,
 		MaxSteps:   1, // Never send built-in read-tool output in a second provider request.
-		// No ThreadID is ever submitted, so history compression cannot run for
-		// this consumer; disabling it keeps the summarize route OUT of
-		// destination admission entirely (spec D3a).
+		// Every generation is one isolated conversation. Keep its session only
+		// in memory; a non-empty ThreadID otherwise opens golem's durable store.
+		SessionStore: ai.NewMemorySessionStore(),
+		// No history is reused; disabling compression also keeps the summarize
+		// route OUT of destination admission entirely (spec D3a).
 		DisableCompression: true,
 		// InputCeiling is tokens, not bytes: the 48 KiB byte-bounded context is
 		// ~12K tokens, well under it. It does not track the configured model's
-		// real context window; an undersized model rejects at the provider and
-		// that error surfaces from Run.
+		// real context window; the router checks each candidate's known capacity
+		// separately and tries configured fallbacks before rejecting the run.
 		Budget:            agent.Budget{InputCeiling: 32 * 1024},
 		DestinationPolicy: policy,
 		OnWarning:         func(warning error) { log.Printf("git: golem warning: %v", warning) },
@@ -307,15 +328,17 @@ func (g *MessageGenerator) generate(ctx context.Context, root, diff string, with
 		}
 	}
 	result, err := runtime.Run(ctx, golem.Turn{
-		RunID:   "firn-commit-message",
-		Message: instruction,
-		Context: []golem.ContextItem{stagedDiff},
+		// OpenCode Go requires a session even for an auxiliary coding request.
+		// go-llm forwards it through primary/fallback calls. Unlike chat's
+		// repo-derived thread ID, this carries no repository or user identity
+		// and cannot correlate separate generations (#306).
+		ThreadID: "firn-commit-" + rand.Text(),
+		RunID:    "firn-commit-message",
+		Message:  instruction,
+		Context:  []golem.ContextItem{stagedDiff},
 	}, func(golem.Event) error { return nil })
 	if err != nil {
-		if msg, ok := destinationDeniedMessage(err); ok {
-			return "", fmt.Errorf("commit message generation blocked: %s; use Approve missing destinations in the Golem configuration view: %w", msg, provider.ErrDestinationDenied)
-		}
-		return "", fmt.Errorf("golem runtime run: %w", err)
+		return "", runError(err)
 	}
 
 	message = strings.TrimSpace(result.Answer)
