@@ -265,6 +265,8 @@ hints match the keys. Building Firn needs Go 1.27 or later.
   (#512).
 - With a subfolder of a repository open, the Git panel says Golem's file access
   rules withheld a staged file that is only outside that folder (#513).
+- When commit message generation finishes, keyboard focus falls to the page, so
+  a keyboard or VoiceOver user loses their place in Source Control (#515).
 
 ## [0.14.0] - 2026-10-25
 
