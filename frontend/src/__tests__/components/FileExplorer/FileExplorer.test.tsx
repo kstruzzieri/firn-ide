@@ -324,6 +324,25 @@ describe('FileExplorer', () => {
       expect(screen.getByRole('treeitem', { name: 'package.json' })).toHaveFocus();
     });
 
+    it('takes keyboard focus when its blank space is clicked', async () => {
+      const user = userEvent.setup();
+      render(
+        <>
+          <FileExplorer />
+          <button>After tree</button>
+        </>
+      );
+      await user.click(screen.getByText('src'));
+      await user.keyboard('{ArrowDown}');
+      const child = screen.getByRole('treeitem', { name: 'App.tsx' });
+      await user.click(screen.getByRole('button', { name: 'After tree' }));
+      const { selectedPath } = useIDEStore.getState();
+
+      await user.click(screen.getByRole('tree'));
+      expect(child).toHaveFocus();
+      expect(useIDEStore.getState().selectedPath).toBe(selectedPath);
+    });
+
     it('enters and leaves the tree in one Tab stop and returns to its active row', async () => {
       const user = userEvent.setup();
       render(
