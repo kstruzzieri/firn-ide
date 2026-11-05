@@ -113,9 +113,10 @@ commit messages under the same sensitive-path rules: a staged file the policy
 denies is withheld from the model by name and content, and the Git panel lists
 it locally.
 
-Still ahead: durable multi-conversation history (#264), token and context usage
-once `go-llm` emits it (#265), and a guarded preview-and-apply mode for
-mutating edits (#261).
+Still ahead: one model for Golem's answers and commit messages (#490, #491),
+durable multi-conversation history (#264), token and context usage once
+`go-llm` emits it (#265), and a guarded preview-and-apply mode for mutating
+edits (#261).
 
 ## Architecture
 
@@ -299,7 +300,7 @@ If the Golem consent store becomes unavailable — a banner appears, and remote 
 - [ ] Git merge follow-ups — auto-merged region hints (#220), key-hold preview (#219), multi-file conflict rail (#221), bulk take-Current/Incoming (#223), pre-stage diagnostics check (#240), base-relative word marks (#241)
 - [ ] Git — richer branch/VCS menu (#166)
 - [ ] Context menus (#45) and breadcrumb navigation (#46)
-- [ ] Golem — #263's add-use-case control, role picker (#353), profile Export and Delete (gated on upstream `go-llm`) and Slice D inventory-backed picker, durable multi-conversation history (#264), token and context usage (#265), guarded preview-and-apply mode (#261)
+- [ ] Golem — one model for answers and commit messages (#490, #491), Apply checks limited to agent and the routes a change touches (#350, #493), #263's add-use-case control, role picker (#353), profile Export and Delete (gated on upstream `go-llm`) and Slice D inventory-backed picker, durable multi-conversation history (#264), token and context usage (#265), guarded preview-and-apply mode (#261)
 - [ ] Linux — GTK4 and WebKitGTK 6.0 (#281), required before Wails v3.1, which drops the GTK3 path this release targets
 
 ## Project Structure
@@ -404,7 +405,7 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 Active tracks:
 
-1. **Golem:** the configuration UI epic (#263) stays open for the add-use-case control, the role picker (#353), profile Export and Delete (gated on upstream `go-llm`) and the Slice D inventory-backed picker. Next are durable multi-conversation history (#264) and token/context usage (#265), which waits on `go-llm` emitting usage; guarded preview mode (#261) follows. Readability and contrast follow-ups (#291, #293) and the panel/undock follow-ups (#289) are queued behind them.
+1. **Golem:** v0.16.0 is planned around one Golem model: pick the model Golem answers with in one step (#490), send every commit message to that model and no other (#491), and have Apply check only agent and the routes a change touches, asking only when a change can narrow a use case (#350, #493). The configuration UI epic (#263) stays open for the add-use-case control, the role picker (#353), profile Export and Delete (gated on upstream `go-llm`) and the Slice D inventory-backed picker. After those come durable multi-conversation history (#264), whose design comes first, and token/context usage (#265), which waits on `go-llm` emitting usage; guarded preview mode (#261) follows. Model card contrast (#293) is on v0.16.0's Stretch list; readability follow-ups (#291) and the panel/undock follow-ups (#289) are queued behind the rest.
 2. **Platform:** Linux must move to GTK4 and WebKitGTK 6.0 (#281) before Wails v3.1 can be adopted, since v3.1 drops the GTK3 path this release still targets. Migration hygiene follow-ups are tracked in #282.
 3. **Git merge:** #164 is closed; the remaining backlog is auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), bulk take-Current/Incoming (#223), and the phase 3 diagnostics follow-ups (#240, #241). Destructive VCS operations (#166) come after.
 4. **Command UX:** context menus (#45) and breadcrumbs (#46), both reusing the #44 command registry.
