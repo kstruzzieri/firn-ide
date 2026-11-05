@@ -265,8 +265,14 @@ hints match the keys. Building Firn needs Go 1.27 or later.
   (#512).
 - With a subfolder of a repository open, the Git panel says Golem's file access
   rules withheld a staged file that is only outside that folder (#513).
-- When commit message generation finishes, keyboard focus falls to the page, so
-  a keyboard or VoiceOver user loses their place in Source Control (#515).
+- Generating a commit message drops keyboard focus to the page, so a keyboard
+  or VoiceOver user loses their place in Source Control (#515).
+- When the file at the file tree's active row is deleted or renamed from outside
+  the tree while the tree holds keyboard focus, the tree jumps to its top and
+  focus moves to its root row (#521).
+- After a failed directory read replaces the file tree with its error, a refresh
+  that restores the same contents leaves keyboard focus on the page until a
+  click or Tab (#522).
 
 ## [0.14.0] - 2026-10-25
 
