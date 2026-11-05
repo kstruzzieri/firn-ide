@@ -205,7 +205,11 @@ hints match the keys. Building Firn needs Go 1.27 or later.
   of a protected file counts as protected. The Git panel lists the withheld
   files under the message box, on this machine only, so you know the message
   may not mention them. When every staged file is withheld, no request is sent
-  and the draft in the message box is kept. (#384)
+  and the draft in the message box is kept. With a subfolder of a repository
+  open, staged files outside that folder are withheld too. When too many files
+  changed for Git to pair renames and copies, no request is sent and the error
+  asks you to write the message by hand, because those pairs could not be
+  checked against the rules. (#384)
 
 ### Known limitations
 
@@ -247,6 +251,20 @@ hints match the keys. Building Firn needs Go 1.27 or later.
   though Golem chat accepts the same model. The error names the cause; set
   `context_window` for the agent model and its fallbacks, using a value verified
   with the provider (#506).
+- On macOS and Linux, a folder named `a\b` and a folder `a/b` holding a file of
+  the same name count as one open file when Resolve saves first: pressing
+  Resolve on a conflicted `a\b/x.ts` while `a/b/x.ts` has unsaved edits writes
+  those edits over the conflicted file and marks `a/b/x.ts` saved, so closing
+  its tab loses them (#510).
+- Commit message generation fails in a repository whose folder name ends in a
+  space, because Firn trims the space from the path (#511).
+- In Golem Configuration, a route that joins a shared model and declares a
+  different type for it can make an unchanged route on that model read
+  Incompatible, and that route's editor say its model does not declare a
+  capability the route needs, though the staged change does not remove it
+  (#512).
+- With a subfolder of a repository open, the Git panel says Golem's file access
+  rules withheld a staged file that is only outside that folder (#513).
 
 ## [0.14.0] - 2026-10-25
 
