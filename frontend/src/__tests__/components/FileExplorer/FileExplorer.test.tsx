@@ -343,6 +343,23 @@ describe('FileExplorer', () => {
       expect(useIDEStore.getState().selectedPath).toBe(selectedPath);
     });
 
+    it('takes keyboard focus when its scrollbar is pressed', async () => {
+      const user = userEvent.setup();
+      render(<FileExplorer />);
+      await user.click(screen.getByText('src'));
+      await user.keyboard('{ArrowDown}');
+      act(() => (document.activeElement as HTMLElement).blur());
+
+      // A press on a scrollbar focuses the nearest focusable ancestor and sends
+      // no click, and jsdom has no scrollbar to press.
+      const tree = screen.getByRole('tree');
+      act(() => tree.focus());
+      expect(tree).toHaveFocus();
+
+      await user.keyboard('{ArrowDown}');
+      expect(screen.getByRole('treeitem', { name: 'components' })).toHaveFocus();
+    });
+
     it('enters and leaves the tree in one Tab stop and returns to its active row', async () => {
       const user = userEvent.setup();
       render(
@@ -440,6 +457,32 @@ describe('FileExplorer', () => {
       );
 
       expect(screen.getByRole('treeitem', { name: 'App.tsx' })).toHaveFocus();
+    });
+
+    it('recovers focus when an error removed the tree while the tree itself held it', async () => {
+      const user = userEvent.setup();
+      render(<FileExplorer />);
+      await user.click(screen.getByText('src'));
+      act(() => (document.activeElement as HTMLElement).blur());
+      act(() => screen.getByRole('tree').focus());
+
+      act(() => useIDEStore.setState({ treeError: 'read failed' }));
+      expect(document.body).toHaveFocus();
+      act(() => useIDEStore.setState({ treeError: null }));
+      act(() =>
+        useIDEStore.setState({
+          directoryTree: [
+            filesystem.FileEntry.createFrom({
+              name: 'aaa.txt',
+              path: '/workspace/aaa.txt',
+              isDir: false,
+            }),
+            ...mockDirectoryTree,
+          ],
+        })
+      );
+
+      expect(screen.getByText('src').closest('[role="treeitem"]')).toHaveFocus();
     });
 
     it('does not reclaim focus that moved elsewhere while an error had removed the tree', async () => {
