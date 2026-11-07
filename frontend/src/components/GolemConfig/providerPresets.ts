@@ -25,7 +25,10 @@
  * - Anthropic: platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk
  *   (base `https://api.anthropic.com/v1/`; no prompt caching; "The response
  *   doesn't include Claude's thinking"; a key not scoped to a workspace needs
- *   the `anthropic-workspace-id` header, which go-llm cannot send).
+ *   the `anthropic-workspace-id` header, which go-llm cannot send). Live
+ *   check passed 2026-11-07: claude-sonnet-5-5, workspace-scoped personal key,
+ *   one tool call and its result through go-llm v0.5.0's openai-compat client.
+ * - OpenRouter: not checked (no key), so it ships disabled.
  * - Gemini: its compatible API lives under `/v1beta/openai/`, so no base URL
  *   works until go-llm accepts one that carries its own version path (#322).
  * - llama.cpp: `common/common.h` `port = 9931`, host 127.0.0.1.
@@ -128,7 +131,6 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
       'Needs a key scoped to a workspace: Golem cannot send the workspace header.',
       'No prompt caching, and no thinking output.',
     ],
-    disabledReason: UNCHECKED,
   },
   {
     id: 'gemini',

@@ -10,14 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - The Add provider form in Golem Configuration starts with a Preset field.
-  Picking Command Code, OpenCode Go, OpenAI, llama.cpp, llama-swap, Ollama or
-  LM Studio fills the provider name, API format and endpoint, marks each filled
-  field "from preset" until you edit it, and says whether the provider needs a
-  key, where it issues one, and what its model list shows. Picking a preset
-  sends no request, and the name and key stay yours to edit. Gemini is listed
-  but cannot be picked until Golem accepts its endpoint, and Anthropic and
-  OpenRouter are listed but cannot be picked until each passes a live check
-  with Golem; each says why in the list. (#322)
+  Picking Command Code, OpenCode Go, OpenAI, Anthropic, llama.cpp, llama-swap,
+  Ollama or LM Studio fills the provider name, API format and endpoint, marks
+  each filled field "from preset" until you edit it, and says whether the
+  provider needs a key, where it issues one, and what its model list shows.
+  Picking a preset sends no request, and the name and key stay yours to edit.
+  The Anthropic preset uses Anthropic's OpenAI compatibility layer: it needs a
+  key scoped to a workspace, and has no prompt caching or thinking output.
+  Gemini is listed but cannot be picked until Golem accepts its endpoint, and
+  OpenRouter is listed but cannot be picked until it passes a live check with
+  Golem; each says why in the list. (#322)
 
 ### Changed
 

@@ -795,6 +795,27 @@ describe('Add provider presets (#322)', () => {
     expect(within(editor).queryByText(listing)).not.toBeInTheDocument();
   });
 
+  it('shows the Anthropic preset’s three facts as visible text', async () => {
+    const { editor } = await openAddForm();
+    await pick(editor, 'anthropic');
+
+    expect(within(editor).getByLabelText('Endpoint')).toHaveValue('https://api.anthropic.com');
+    for (const fact of [
+      'Uses Anthropic’s OpenAI compatibility layer, not its native API.',
+      'Needs a key scoped to a workspace: Golem cannot send the workspace header.',
+      'No prompt caching, and no thinking output.',
+    ]) {
+      expect(within(editor).getByText(fact)).toBeVisible();
+    }
+  });
+
+  it('keeps OpenRouter listed but disabled until its live check runs', async () => {
+    const { editor } = await openAddForm();
+    expect(
+      within(editor).getByRole('option', { name: 'OpenRouter (not yet checked with Golem)' })
+    ).toBeDisabled();
+  });
+
   it('drops a field’s from-preset mark once the user edits it', async () => {
     const { editor } = await openAddForm();
     await pick(editor, 'commandcode');
