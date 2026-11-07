@@ -40,7 +40,15 @@ export const routingOwnsDiagnostic = (
  * only selectors the first already kept. Read-only: Shared configuration
  * shows it; nothing stages from it.
  */
-export function roleChain(role: string, models: readonly ModelProjection[]): string[] {
+export function roleChain(
+  role: string,
+  models: readonly ModelProjection[],
+  /**
+   * The model the role will run once a staged change applies: a fork or a
+   * retarget keeps the role's fallbacks under a new primary model.
+   */
+  primary?: { provider: string; model: string }
+): string[] {
   const byRole = new Map(models.map((model) => [model.role, model]));
   const selectors = new Set<string>();
   const walked = new Set<string>();
@@ -49,7 +57,11 @@ export function roleChain(role: string, models: readonly ModelProjection[]): str
     const model = byRole.get(name);
     if (model === undefined || walked.has(name)) return;
     walked.add(name);
-    const selector = `${model.provider}\u0000${model.modelName}`;
+    const own =
+      name === role && primary !== undefined
+        ? primary
+        : { provider: model.provider, model: model.modelName };
+    const selector = `${own.provider}\u0000${own.model}`;
     if (!selectors.has(selector)) {
       selectors.add(selector);
       if (name !== role) chain.push(name);

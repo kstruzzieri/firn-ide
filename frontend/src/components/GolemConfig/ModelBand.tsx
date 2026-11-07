@@ -37,7 +37,7 @@ import {
 } from '../../types/golem';
 import { shortfallLine, type FloorShortfall } from '../../types/golemConfig';
 import { AbilityChips } from './AbilityChips';
-import { GOLEM_FLOOR, golemModelVerdict } from './golemModel';
+import { GOLEM_FLOOR, golemModelVerdict, type GolemModelVerdict } from './golemModel';
 import styles from './GolemConfig.module.css';
 import { ModelCardPopup, type CardInfo } from './ModelCardPopup';
 import { buildModelRows, canonicalCaps, rowKey, selectorKey, type ModelRow } from './modelRows';
@@ -265,12 +265,20 @@ export function ModelBand({
         ? { ...row, model: golem.current }
         : row
     )
-    .map((row) => ({
-      ...row,
-      short: shortfalls(row.model),
-    }));
-  const eligible = judged.filter((row) => row.short.length === 0);
-  const blocked = judged.filter((row) => row.short.length > 0);
+    .map((row) => {
+      const short = shortfalls(row.model);
+      // [#490] The picker's groups are `golemModelVerdict`'s, the one function
+      // #493 pins to Apply's gates; a route editor reads the shortfall.
+      const verdict: GolemModelVerdict =
+        golem === undefined
+          ? short.length === 0
+            ? { eligible: true }
+            : { eligible: false, reason: shortfallLine(short) }
+          : golemModelVerdict(row.model, short);
+      return { ...row, short, verdict };
+    });
+  const eligible = judged.filter((row) => row.verdict.eligible);
+  const blocked = judged.filter((row) => !row.verdict.eligible);
 
   const needle = query.trim().toLowerCase();
   const named = (row: ModelRow): boolean => row.model.modelName.toLowerCase().includes(needle);
@@ -1215,7 +1223,7 @@ export function ModelBand({
           </button>
           <ul id={`${id}-cannot`} className={styles.cannotList} hidden={!showHidden}>
             {shownBlocked.map((row) => {
-              const verdict = golemModelVerdict(row.model, row.short);
+              const verdict = row.verdict;
               return (
                 <li key={rowKey(row.model)} className={styles.cannotItem}>
                   <span className={styles.modelName} data-model-name>

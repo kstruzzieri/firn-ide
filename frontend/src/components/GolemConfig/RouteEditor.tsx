@@ -230,6 +230,11 @@ export interface RouteEditorProps {
   queryRequest?: { query: string; nonce: number };
   /** #490: render as the Golem model picker (design 5.1). */
   golem?: GolemPicker;
+  /**
+   * [#490] Why Done may not stage now: the route's other editor holds
+   * unfinished input that staging here would replace. '' when it may.
+   */
+  stageBlocked?: string;
 }
 
 /**
@@ -376,6 +381,7 @@ export function RouteEditor({
   onStaged,
   queryRequest,
   golem,
+  stageBlocked = '',
 }: RouteEditorProps) {
   /** Siblings the backend forks away from, rather than changing under them. */
   const sharedRole = (current?.routedUseCases ?? []).filter((other) => other !== useCase);
@@ -993,6 +999,10 @@ export function RouteEditor({
   const clearRefusal = () => setRefusal('');
 
   const submit = () => {
+    if (stageBlocked !== '') {
+      setRefusal(stageBlocked);
+      return;
+    }
     if (provider === '') {
       setRefusal('Choose a provider first — a model needs the endpoint it runs on.');
       return;
@@ -1094,6 +1104,10 @@ export function RouteEditor({
   // a confirmation when nothing is dropped any more, and with no drops this
   // editor asks no question that could correct it.
   const keep = () => {
+    if (stageBlocked !== '') {
+      setRefusal(stageBlocked);
+      return;
+    }
     const retained = draft.changes.find((change) => changeStableID(change) === `route:${useCase}`);
     if (retained?.kind === 'route') {
       const { confirmDrops, ...answered } = retained;

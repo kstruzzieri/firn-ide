@@ -224,6 +224,11 @@ export interface RoutingCardProps {
   onToggle?: () => void;
   /** Why nothing here can be edited, as visible text; '' when it can. */
   lockReason?: string;
+  /**
+   * [#490] Why the agent route editor may not stage right now: the Golem
+   * model picker holds an unfinished choice for the same route. '' when it may.
+   */
+  agentStageBlocked?: string;
 }
 
 /** The DOM id of the Shared configuration fold. */
@@ -251,6 +256,7 @@ export function RoutingCard({
   open: foldOpen,
   onToggle,
   lockReason = '',
+  agentStageBlocked = '',
 }: RoutingCardProps) {
   const [ownFold, setOwnFold] = useState(true);
   const shared = foldOpen ?? ownFold;
@@ -651,7 +657,19 @@ export function RoutingCard({
     const keepsRole =
       staged?.kind !== 'route' || (applied !== null && sameModelFacts(applied, staged.modelFacts));
     const shownRole = view !== null && keepsRole ? role : null;
-    const chain = shownRole === null ? null : roleChain(shownRole, models);
+    // [#490] The chain the route will run: a staged retarget or fork keeps the
+    // applied role's fallbacks under its new model, even before the role
+    // it lands on has a name.
+    const chain =
+      view === null || role === null
+        ? null
+        : roleChain(
+            role,
+            models,
+            staged?.kind === 'route'
+              ? { provider: staged.modelFacts.provider, model: staged.modelFacts.model }
+              : undefined
+          );
     const row = (
       <div
         key={`row:${useCase}`}
@@ -836,6 +854,7 @@ export function RoutingCard({
                 staged={staged}
                 preselect={preselect.get(useCase)}
                 queryRequest={queries.get(useCase)}
+                stageBlocked={useCase === GOLEM_USE_CASE ? agentStageBlocked : ''}
                 rowKey={routeRowKey(useCase)}
                 onStage={onStage}
                 onClose={() => close(useCase, `${editorId}-edit`)}

@@ -103,6 +103,17 @@ describe('roleChain', () => {
     expect(roleChain('main', models)).toEqual(['backup']);
   });
 
+  it("starts from a staged model when one replaces the role's own", () => {
+    const models = [
+      model({ role: 'fast', modelName: 'qwen', fallbacks: ['light', 'coder'] }),
+      model({ role: 'light', modelName: 'glm' }),
+      model({ role: 'coder', modelName: 'kimi' }),
+    ];
+    // Staged onto glm, the role keeps its fallbacks; light's glm is already first.
+    expect(roleChain('fast', models, { provider: 'p', model: 'glm' })).toEqual(['coder']);
+    expect(roleChain('fast', models)).toEqual(['light', 'coder']);
+  });
+
   it('never revisits the role it starts from', () => {
     expect(roleChain('a', [role('a', ['b']), role('b', ['a'])])).toEqual(['b']);
   });

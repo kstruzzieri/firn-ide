@@ -54,6 +54,8 @@ export interface GolemModelCardProps {
   onUse: () => void;
   /** A name the picker does not list: open the agent route editor on it. */
   onNotListed: (name: string) => void;
+  /** Why the picker may not stage now (Shared configuration holds unfinished input). */
+  stageBlocked: string;
 }
 
 export function GolemModelCard({
@@ -74,6 +76,7 @@ export function GolemModelCard({
   onUnstagedChange,
   onUse,
   onNotListed,
+  stageBlocked,
 }: GolemModelCardProps) {
   /**
    * The picker mounts on first open and stays mounted while folded, so an
@@ -191,6 +194,7 @@ export function GolemModelCard({
             staged={staged}
             rowKey={GOLEM_ROW_KEY}
             golem={{ applies, onNotListed }}
+            stageBlocked={stageBlocked}
             onStage={onStage}
             onUnstagedChange={onUnstagedChange}
             onClose={() => {

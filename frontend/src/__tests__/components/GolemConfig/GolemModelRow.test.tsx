@@ -12,6 +12,7 @@ import path from 'path';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
+import * as golemModel from '../../../components/GolemConfig/golemModel';
 
 jest.mock('../../../wails/bindings', () => ({
   ReloadGolemSettings: jest.fn(),
@@ -546,12 +547,22 @@ describe('Codex round 2: the picker and the agent route editor stay in step', ()
     // Walk the picker away and back.
     await userEvent.click(optionNamed(can(), 'zai-org/GLM-5.2'));
     await userEvent.click(optionNamed(can(), 'qwen3.6:35b-a3b'));
-    // Withdraw the edit in Shared configuration: the draft is empty again.
+    // Withdraw the edit in Shared configuration. The walk left the picker
+    // with an unfinished choice (re-picking drops its acknowledgement), so
+    // the route editor asks for that first rather than replacing it.
     editor = await editAgent();
     await userEvent.click(within(editor).getByLabelText(/^thinking/));
     await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+    expect(
+      within(editor).getByText(/Golem model picker has a model chosen but not used/, {
+        selector: 'p',
+      })
+    ).toBeInTheDocument();
+    await userEvent.click(within(picker()).getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
     expect(screen.queryByRole('group', { name: 'Route agent' })).toBeNull();
     expect(screen.queryByText(/staged change/)).toBeNull();
+    await openPicker();
 
     // The picker holds nothing the user did not pick there.
     expect(within(picker()).queryByRole('button', { name: 'Use model' })).toBeNull();
@@ -609,6 +620,104 @@ describe('Codex round 2: the picker and the agent route editor stay in step', ()
     await userEvent.click(optionNamed(within(editor).getByRole('listbox'), 'qwen3.6:35b-a3b'));
     await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
     expect(screen.getByText('1 staged change')).toBeInTheDocument();
+  });
+});
+
+describe('Codex round 3', () => {
+  const can = () => within(picker()).getByRole('listbox', { name: 'Can run Golem' });
+  const openAgentEditor = async () => {
+    await userEvent.click(sharedToggle());
+    await userEvent.click(screen.getByRole('button', { name: 'Edit route agent' }));
+    return screen.getByRole('group', { name: 'Route agent' });
+  };
+
+  it('will not replace an unfinished Shared configuration edit from the picker', async () => {
+    await mount();
+    const editor = await openAgentEditor();
+    await userEvent.selectOptions(within(editor).getByLabelText('Provider'), 'commandcode');
+    await userEvent.type(within(editor).getByLabelText('Filter models'), 'gpt-9');
+    await userEvent.click(within(editor).getByRole('option', { name: /Declare "gpt-9"/ }));
+
+    await openPicker();
+    await userEvent.click(optionNamed(can(), 'zai-org/GLM-5.2'));
+    await tickApplyAnywayIfAsked(picker());
+    await userEvent.click(within(picker()).getByRole('button', { name: /^(Done|Use model)$/ }));
+    expect(
+      await within(picker()).findByText(
+        /unfinished changes to this route in Shared configuration/,
+        { selector: 'p' }
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/staged change/)).toBeNull();
+    // The declaration is still there.
+    expect(
+      within(screen.getByRole('group', { name: 'Route agent' })).getByLabelText('Model name')
+    ).toHaveValue('gpt-9');
+  });
+
+  it('will not replace an unfinished picker choice from Shared configuration', async () => {
+    await mount();
+    await openPicker();
+    await userEvent.click(optionNamed(can(), 'zai-org/GLM-5.2'));
+
+    const editor = await openAgentEditor();
+    await userEvent.selectOptions(within(editor).getByLabelText('Provider'), 'commandcode');
+    await userEvent.click(
+      optionNamed(within(editor).getByRole('listbox'), 'moonshotai/Kimi-K2.7-Code')
+    );
+    await tickApplyAnywayIfAsked(editor);
+    await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+    expect(
+      await within(editor).findByText(/Golem model picker has a model chosen but not used/, {
+        selector: 'p',
+      })
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/staged change/)).toBeNull();
+    // The picker's choice is still there.
+    expect(optionNamed(can(), 'zai-org/GLM-5.2')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('shows the fallbacks a staged model keeps under Shared configuration', async () => {
+    await mount();
+    await userEvent.click(screen.getByRole('button', { name: 'Edit provider llamacpp' }));
+    const endpoint = screen.getByLabelText('Endpoint');
+    await userEvent.clear(endpoint);
+    await userEvent.type(endpoint, 'http://127.0.0.1:8091');
+    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await openPicker();
+    await userEvent.click(optionNamed(can(), 'zai-org/GLM-5.2'));
+    await tickApplyAnywayIfAsked(picker());
+    await userEvent.click(within(picker()).getByRole('button', { name: 'Done' }));
+
+    await userEvent.click(sharedToggle());
+    const agentRow = screen.getByTestId('route-row-agent');
+    expect(within(agentRow).getByTestId('route-chain').textContent).toBe(
+      'Falls back to lightweight, cc-coder, cc-pro, cc-flash, cc-mimo'
+    );
+    expect(
+      within(agentRow).getByText('Firn sends only to the first; the golem CLI uses the rest')
+    ).toBeInTheDocument();
+  });
+
+  it('groups the picker by golemModelVerdict', async () => {
+    const verdict = jest
+      .spyOn(golemModel, 'golemModelVerdict')
+      .mockImplementation((model, short) =>
+        model.modelName === 'qwen3.6:35b-a3b'
+          ? { eligible: false, reason: 'Held back by the verdict' }
+          : short.length === 0
+            ? { eligible: true }
+            : { eligible: false, reason: 'Tool support not verified' }
+      );
+    try {
+      await mount();
+      const fold = await openPicker();
+      expect(optionNames(can())).not.toContain('qwen3.6:35b-a3b');
+      await userEvent.click(within(fold).getByRole('button', { name: "10 can't run Golem" }));
+      expect(within(fold).getByText('Held back by the verdict')).toBeInTheDocument();
+    } finally {
+      verdict.mockRestore();
+    }
   });
 });
 

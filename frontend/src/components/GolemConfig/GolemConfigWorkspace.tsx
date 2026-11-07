@@ -111,7 +111,7 @@ import { GOLEM_CHANGE_ID, GOLEM_ROW_KEY, GolemModelCard } from './GolemModelCard
 import { GOLEM_USE_CASE } from './golemModel';
 import { ProvidersCard } from './ProvidersCard';
 import { RoutingCard } from './RoutingCard';
-import { routingOwnsDiagnostic } from './routingRows';
+import { routeRowKey, routingOwnsDiagnostic } from './routingRows';
 import { StatusText, type StatusTone } from './StatusText';
 
 const STATE_LABEL: Record<SettingsProjection['state'], string> = {
@@ -197,6 +197,14 @@ const GOLEM_READ_ONLY =
   "This configuration is read-only in Firn, so Golem's model can't be changed here. The notices above say why.";
 const SHARED_READ_ONLY =
   "This configuration is read-only in Firn, so its routes can't be edited here. The notices above say why.";
+/**
+ * [#490] The picker and the agent route editor both stage `route:agent`.
+ * Neither replaces the other's unfinished input: it asks for it first.
+ */
+const GOLEM_BLOCKED_BY_SHARED =
+  'There are unfinished changes to this route in Shared configuration. Stage or cancel them there first.';
+const SHARED_BLOCKED_BY_GOLEM =
+  'The Golem model picker has a model chosen but not used. Use it or cancel it under Golem model first.';
 const BOOTSTRAP_GATE =
   'A blank configuration needs one provider and an agent route that meets chat, stream, and tool_call.';
 
@@ -2143,6 +2151,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   onUnstagedChange={noteUnstaged}
                   onUse={() => setGolemApplyPending(true)}
                   onNotListed={(name) => requestEditor(`route:${GOLEM_USE_CASE}`, name)}
+                  stageBlocked={
+                    unstagedEditors.has(routeRowKey(GOLEM_USE_CASE)) ? GOLEM_BLOCKED_BY_SHARED : ''
+                  }
                 />
                 <ProvidersCard
                   // Remount when the surface locks and on every document the open
@@ -2189,6 +2200,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   open={sharedOpen}
                   onToggle={() => setSharedOpen((current) => !current)}
                   lockReason={documentLocked ? SHARED_READ_ONLY : ''}
+                  agentStageBlocked={
+                    unstagedEditors.has(GOLEM_ROW_KEY) ? SHARED_BLOCKED_BY_GOLEM : ''
+                  }
                 />
               </>
             )}
