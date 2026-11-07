@@ -1274,7 +1274,23 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    * resent on their behalf. The change is answered where it stands: moving it
    * to the end would make it its selector group's authority.
    */
+  /**
+   * [#490] Restaging a drop set rewrites the agent route's staged change,
+   * which re-seeds both editors of that route; while either holds unfinished
+   * input, the panel says so instead of discarding it. '' when it may run.
+   */
+  const dropsBlocked: string = !(outcome.drops ?? []).some(
+    (set) => set.changeId === `route:${GOLEM_USE_CASE}`
+  )
+    ? ''
+    : unstagedEditors.has(GOLEM_ROW_KEY)
+      ? SHARED_BLOCKED_BY_GOLEM
+      : unstagedEditors.has(routeRowKey(GOLEM_USE_CASE))
+        ? GOLEM_BLOCKED_BY_SHARED
+        : '';
+
   const restageDrops = () => {
+    if (dropsBlocked !== '') return;
     const sets = outcome.drops ?? [];
     setDraft((current) =>
       replaceStagedChanges(
@@ -1651,6 +1667,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             These changes remove model-specific settings the file authors. Confirm the exact set and
             the changes are re-staged with it; nothing is written until you Apply.
           </p>
+          {dropsBlocked !== '' && (
+            <p id="golem-config-drops-blocked" className={styles.panelText}>
+              {dropsBlocked}
+            </p>
+          )}
           <ul className={styles.dropList}>
             {outcome.drops.map((drop) => (
               <li key={drop.changeId} className={styles.panelText}>
@@ -1662,7 +1683,8 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               className={`${styles.button} ${styles.primary}`}
-              disabled={inFlight || sourceLoading || sending}
+              disabled={inFlight || sourceLoading || sending || dropsBlocked !== ''}
+              aria-describedby={dropsBlocked !== '' ? 'golem-config-drops-blocked' : undefined}
               onClick={restageDrops}
             >
               Confirm and restage

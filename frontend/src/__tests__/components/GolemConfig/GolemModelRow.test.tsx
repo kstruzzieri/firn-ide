@@ -721,6 +721,67 @@ describe('Codex round 3', () => {
   });
 });
 
+describe('Codex round 4: drop confirmation', () => {
+  const can = () => within(picker()).getByRole('listbox', { name: 'Can run Golem' });
+  const dropsRequired = () =>
+    (ApplyGolemSettings as jest.Mock).mockResolvedValue({
+      status: 'drop_confirmation_required',
+      drops: [{ changeId: 'route:agent', fields: ['think_tags'] }],
+    });
+  /** Use model on GLM, answered with a drop set for the agent route. */
+  async function reachDropPanel() {
+    await mount();
+    await openPicker();
+    await userEvent.click(optionNamed(can(), 'zai-org/GLM-5.2'));
+    dropsRequired();
+    await tickApplyAnywayIfAsked(picker());
+    await userEvent.click(within(picker()).getByRole('button', { name: 'Use model' }));
+    return await screen.findByRole('button', { name: 'Confirm and restage' });
+  }
+
+  it('waits for an unfinished picker choice before restaging the drop set', async () => {
+    let confirm = await reachDropPanel();
+    await userEvent.click(optionNamed(can(), 'moonshotai/Kimi-K2.7-Code'));
+    confirm = screen.getByRole('button', { name: 'Confirm and restage' });
+    expect(confirm).toBeDisabled();
+    expect(document.getElementById(confirm.getAttribute('aria-describedby')!)!.textContent).toMatch(
+      /Golem model picker has a model chosen but not used/
+    );
+    await userEvent.click(confirm);
+    expect(optionNamed(can(), 'moonshotai/Kimi-K2.7-Code')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+  });
+
+  it('waits for an unfinished agent route edit before restaging the drop set', async () => {
+    await reachDropPanel();
+    await userEvent.click(sharedToggle());
+    await userEvent.click(screen.getByRole('button', { name: 'Edit route agent' }));
+    const editor = screen.getByRole('group', { name: 'Route agent' });
+    await userEvent.type(within(editor).getByLabelText('Filter models'), 'gpt-9');
+    await userEvent.click(within(editor).getByRole('option', { name: /Declare "gpt-9"/ }));
+
+    const confirm = screen.getByRole('button', { name: 'Confirm and restage' });
+    expect(confirm).toBeDisabled();
+    expect(document.getElementById(confirm.getAttribute('aria-describedby')!)!.textContent).toMatch(
+      /unfinished changes to this route in Shared configuration/
+    );
+    await userEvent.click(confirm);
+    expect(
+      within(screen.getByRole('group', { name: 'Route agent' })).getByLabelText('Model name')
+    ).toHaveValue('gpt-9');
+  });
+
+  it('restages once nothing is unfinished', async () => {
+    const confirm = await reachDropPanel();
+    expect(confirm).toBeEnabled();
+    await userEvent.click(confirm);
+    expect(screen.queryByRole('button', { name: 'Confirm and restage' })).toBeNull();
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
+  });
+});
+
 describe('a model the picker does not list', () => {
   it('points to Shared configuration and opens the agent route editor on that name', async () => {
     await mount();

@@ -839,10 +839,16 @@ export function RoutingCard({
             {/* [C21] Visual spanning is not accessible spanning: name the span. */}
             <div role="cell" aria-colspan={6} className={styles.editorCell}>
               <RouteEditor
-                // [#490] Two surfaces edit the agent route: re-seed this editor
-                // when its route's raw staged change moves under it, so it never
-                // compares against a row that is gone.
-                key={`${editorId}:${JSON.stringify(rawStaged(useCase) ?? null)}`}
+                // [#490] Two surfaces edit the agent route: re-seed its editor
+                // when the route's raw staged change moves under it, so it never
+                // compares against a row that is gone. Every path that moves it
+                // waits while either editor holds unfinished input. Other routes
+                // have one editor and keep the identity they always had.
+                key={
+                  useCase === GOLEM_USE_CASE
+                    ? `${editorId}:${JSON.stringify(rawStaged(useCase) ?? null)}`
+                    : editorId
+                }
                 id={editorId}
                 useCase={useCase}
                 role={role}
