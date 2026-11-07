@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -313,8 +312,9 @@ func TestMessageGenerator_Generate_PrimaryFailureDoesNotFallBack(t *testing.T) {
 
 	primary.Close()
 	message, err = NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil)
-	if message != "" || !errors.Is(err, syscall.ECONNREFUSED) {
-		t.Fatalf("Generate() with a closed primary = %q, %v, want connection refused", message, err)
+	var dialErr *net.OpError
+	if message != "" || !errors.As(err, &dialErr) || dialErr.Op != "dial" || dialErr.Timeout() {
+		t.Fatalf("Generate() with a closed primary = %q, %v, want a non-timeout dial error", message, err)
 	}
 	if got := fallbackCalls.Load(); got != 0 {
 		t.Fatalf("fallback stubs received %d request(s) after the primary closed", got)
