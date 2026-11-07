@@ -180,6 +180,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole tree, and VoiceOver reads each row's name, level and expanded or
   collapsed state. (#505)
 
+### Security
+
+- A `models.json` in the folder Firn was started from can no longer read
+  environment variables. Firn checks that folder before your own
+  configuration, so a Firn started from a terminal inside a cloned repository
+  used the repository's `models.json`, and a `${NAME}` API key there could send
+  any variable in Firn's environment, such as another service's token, to the
+  endpoint the file names; a loopback endpoint needs no approval. Golem chat,
+  Golem Configuration and commit message generation now refuse such a file,
+  say that it cannot use `${NAME}` keys, and send nothing, and it cannot be
+  saved as a profile. Literal keys in that file keep working, as do `${NAME}` keys in your user
+  configuration. To use the file as it is, set `GO_LLM_CONFIG` to its path. A
+  Firn opened from Finder or the Dock starts in `/` and was not exposed. (#524)
+
 ## [0.14.0] - 2026-10-25
 
 Defect release. Golem moves to go-llm v0.3.0, which marks tool results as

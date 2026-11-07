@@ -577,6 +577,7 @@ export type SettingsDiagnosticCode =
   | 'defaults_invalid'
   | 'key_reference_malformed'
   | 'key_reference_unavailable'
+  | 'key_reference_refused'
   | 'selector_conflict'
   | 'identifier_not_editable'
   // Write/action codes: produced by the apply pipeline, never by a load.
@@ -740,6 +741,7 @@ const DIAGNOSTIC_CODES: readonly SettingsDiagnosticCode[] = [
   'defaults_invalid',
   'key_reference_malformed',
   'key_reference_unavailable',
+  'key_reference_refused',
   'selector_conflict',
   'identifier_not_editable',
   'invalid_argument',

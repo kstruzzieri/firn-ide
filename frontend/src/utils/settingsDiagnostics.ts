@@ -34,6 +34,8 @@ const DIAGNOSTIC_TEXT: Record<SettingsDiagnosticCode, string> = {
   defaults_invalid: 'A default route is invalid.',
   key_reference_malformed: 'An API-key environment reference is malformed.',
   key_reference_unavailable: 'An API-key environment variable is unavailable.',
+  key_reference_refused:
+    "A models.json in Firn's working directory cannot use API-key environment references; set GO_LLM_CONFIG to its path to use them.",
   selector_conflict: 'Models sharing a provider/model selector disagree.',
   identifier_not_editable:
     'An identifier is empty or contains unsafe control characters; edit the file externally.',

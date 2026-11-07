@@ -353,14 +353,20 @@ type StagedScope struct {
 	// Protected reports a path whose content the policy protects: inside the
 	// open project the full policy, outside it the floor alone.
 	Protected func(path string) bool
-	// ConfigPath is the go-llm config source Guard protects.
+	// ConfigPath is the go-llm config the runtime loads: the source Guard
+	// protects, or a private copy of the bytes checked here when that source
+	// is the working directory's, or of go-llm's built-in fallback when there
+	// is no source (#524). Release removes a copy.
 	ConfigPath string
+	// Release removes that copy once the runtime has loaded it.
+	Release func()
 }
 
 // StagedScope returns the scope commit-message generation applies to the git
 // working tree at gitRoot (#384): the bound repository's own chat policy, over
 // paths relative to gitRoot, and the go-llm config source that policy now
-// protects, for the runtime to load. One policy instance serves both features,
+// protects, for the runtime to load, or the private copy it loads in that
+// source's place (#524). One policy instance serves both features,
 // so they cannot drift: the floor, the manifests (reloaded here, so an edit
 // applies without a watcher event), and the config source as discovery finds
 // it now, not as a cached snapshot recorded it. The guard reads live policy
@@ -373,10 +379,7 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 	if err != nil {
 		return StagedScope{}, fmt.Errorf("%w: canonicalizing the repository: %w", ErrWorkspaceUnavailable, err)
 	}
-	// ponytail: "" means discovery found no file, and golem.New then
-	// discovers again; a config created and staged between the two is not
-	// protected. go-llm has no option to pin "no config".
-	configPath, err := currentConfigSource()
+	configPath, pinned, err := currentConfigSource()
 	if err != nil {
 		return StagedScope{}, err
 	}
@@ -431,6 +434,13 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 			return filepath.ToSlash(bound), true
 		}
 	}
+	runtimeConfig, release := configPath, func() {}
+	if pinned != nil {
+		if runtimeConfig, release, err = privateConfigCopy(pinned); err != nil {
+			log.Printf("ai: golem config copy: %v", err)
+			return StagedScope{}, fmt.Errorf("%w: the configuration could not be copied for the runtime", ErrAgentConfigInvalid)
+		}
+	}
 	return StagedScope{
 		Guard: func(rel string, write bool) error {
 			bound, ok := toBound(rel)
@@ -448,7 +458,8 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 			}
 			return floorDenies(rel) || isConfigSource(filepath.Join(top, filepath.FromSlash(rel)))
 		},
-		ConfigPath: configPath,
+		ConfigPath: runtimeConfig,
+		Release:    release,
 	}, nil
 }
 
