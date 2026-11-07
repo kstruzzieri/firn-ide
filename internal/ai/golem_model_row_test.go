@@ -76,7 +76,8 @@ func TestGolemModelRowHybridCCProjection(t *testing.T) {
 // The picker's Use model sends the request the frontend test pins in
 // hybrid-cc.use-glm.request.json — the same request the agent route editor and
 // the page's Apply send for that pick. Through the existing planner and
-// revision check it writes exactly hybrid-cc.use-glm.written.json.
+// revision check and destination approval it writes exactly
+// hybrid-cc.use-glm.written.json.
 func TestGolemModelRowUseModelWritesTheRouteEditorDocument(t *testing.T) {
 	h := newApplyHarness(t, string(readGolemModelRowFixture(t, "hybrid-cc.models.json")))
 	var pinned struct {
@@ -88,14 +89,26 @@ func TestGolemModelRowUseModelWritesTheRouteEditorDocument(t *testing.T) {
 	if len(pinned.Changes) != 1 || pinned.Changes[0].UseCase != "agent" {
 		t.Fatalf("request fixture carries %+v; want the picker's one agent route change", pinned.Changes)
 	}
-	// commandcode is already reachable through agent's fallbacks, so the
-	// reachable destination set does not grow and no challenge is issued.
-	res, err := h.svc.ApplySettings(h.request(t, pinned.Changes...))
+	// #491: only the primary destination counts; a remote fallback grants nothing.
+	request := h.request(t, pinned.Changes...)
+	before := h.targetBytes(t)
+	res, err := h.svc.ApplySettings(request)
 	if err != nil {
 		t.Fatalf("ApplySettings: %v", err)
 	}
+	if res.Status != "consent_required" || res.Challenge == nil || len(res.Challenge.Destinations) != 1 {
+		t.Fatalf("ApplySettings = %+v, want approval for the one new primary destination", res)
+	}
+	destination := res.Challenge.Destinations[0]
+	if destination.Provider != pinned.Changes[0].ModelFacts.Provider || destination.Model != pinned.Changes[0].ModelFacts.Model {
+		t.Fatalf("ApplySettings destination = %+v, want the picked model %+v", destination, pinned.Changes[0].ModelFacts)
+	}
+	if !bytes.Equal(h.targetBytes(t), before) {
+		t.Fatal("ApplySettings wrote the configuration before destination approval")
+	}
+	res = h.confirm(t, res.Challenge.Token, request)
 	if res.Status != "applied" {
-		t.Fatalf("ApplySettings status = %q (%+v), want applied", res.Status, res)
+		t.Fatalf("ConfirmSettingsApply status = %q (%+v), want applied", res.Status, res)
 	}
 	got := indentJSON(t, h.targetBytes(t))
 	want := indentJSON(t, readGolemModelRowFixture(t, "hybrid-cc.use-glm.written.json"))

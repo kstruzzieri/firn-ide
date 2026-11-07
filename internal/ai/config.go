@@ -195,70 +195,23 @@ func discoverAgentConfigSource() (string, sourceOrigin, error) {
 	return "", originNone, fmt.Errorf("%w: no configuration found at any discovery location", ErrAgentConfigMissing)
 }
 
-// noConfigFallback is go-llm's built-in config for when none exists (one
-// Ollama provider at its default URL, every route recommended), written out
-// so commit generation can pin it: go-llm's own discovery would otherwise run
-// inside golem.New and could read a models.json created in the working
-// directory since, expanding its ${NAME} keys (#524).
-// ponytail: mirrors unexported go-llm v0.5.0 defaults
-// (providerbootstrap.Materialize, defaultOllamaURL); re-check on every bump.
-const noConfigFallback = `{"providers":{"ollama":{"base_url":"http://localhost:11434","api_format":"ollama"}}}`
-
 // currentConfigSource is the canonical config source discovery finds now; ""
-// when there is none. pinned, when set, is what golem.New must load instead,
-// from a private copy: it takes a path and reads it with go-llm's ambient
-// environment, and with no path it runs go-llm's own discovery. For a
-// working-directory source pinned holds the bytes read and checked here, since
-// the file can change after this check; with no source, the built-in
-// fallback.
-func currentConfigSource() (path string, pinned []byte, err error) {
-	source, origin, err := discoverAgentConfigSource()
+// when there is none. Commit generation protects it beside the loaded
+// configuration's source, which it may no longer be; it never loads it.
+func currentConfigSource() (string, error) {
+	source, _, err := discoverAgentConfigSource()
 	if errors.Is(err, ErrAgentConfigMissing) {
-		return "", []byte(noConfigFallback), nil
+		return "", nil
 	}
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	resolved, err := canonicalizeConfigSource(source)
 	if err != nil {
 		log.Print("ai: agent config source rejected")
-		return "", nil, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
+		return "", fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
 	}
-	if origin != originWorkingDirectory {
-		return resolved, nil, nil
-	}
-	data, err := os.ReadFile(resolved)
-	if err != nil {
-		log.Print("ai: agent config source rejected")
-		return "", nil, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
-	}
-	if _, err := parseWorkingDirectoryConfig(resolved, data); err != nil {
-		if errors.Is(err, errWorkingDirectoryKeyReference) {
-			return "", nil, fmt.Errorf("%w: %w", ErrAgentConfigInvalid, errWorkingDirectoryKeyReference)
-		}
-		log.Print("ai: agent config load failed")
-		return "", nil, fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid)
-	}
-	return resolved, data, nil
-}
-
-// privateConfigCopy writes data to a new temporary file only this user can
-// read, for golem.New to load; release removes it.
-func privateConfigCopy(data []byte) (path string, release func(), err error) {
-	f, err := os.CreateTemp("", "firn-golem-config-*.json")
-	if err != nil {
-		return "", nil, err
-	}
-	release = func() { _ = os.Remove(f.Name()) }
-	_, err = f.Write(data)
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		release()
-		return "", nil, err
-	}
-	return f.Name(), release, nil
+	return resolved, nil
 }
 
 // canonicalizeConfigSource resolves a discovered source to an absolute,
@@ -311,13 +264,12 @@ type providerTarget struct {
 var requiredAgentCaps = agent.ModelCallCapabilities(true)
 
 // ResolveAgentTarget resolves the single agent destination from cfg: the
-// "agent" use-case's primary model and provider only. The chat run path's
-// caller (fixedModelCaller) is physically single-target — the primary IS
-// that consumer's complete reachable set — so its consent decision binds to
-// exactly one destination. Multi-destination reachability (fallback chains,
-// recommendation routing) is governed by reachableDestinations, the batch
-// apply challenge, the grant-only approval op, and the generator's
-// DestinationPolicy, not here. No network or DNS call is made.
+// "agent" use-case's primary model and provider only. Golem chat and commit
+// generation both send through fixedModelCaller, which is physically
+// single-target, so this one destination is every Firn consumer's complete
+// reachable set (#491): reachableDestinations, the Apply challenge and the
+// grant-only approval all name it alone. Fallback chains and recommendation
+// routing are the golem CLI's. No network or DNS call is made.
 func ResolveAgentTarget(cfg *config.Config) (providerTarget, error) {
 	role, ok := cfg.RoleForUseCase(useCaseAgent)
 	if !ok {

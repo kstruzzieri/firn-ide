@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,25 +19,21 @@ import (
 	"firn/internal/filesystem"
 	"firn/internal/git/gittest"
 	"firn/internal/testutil"
-
-	"github.com/kstruzzieri/go-llm/provider"
 )
 
-// chatPolicy wires the generator to the policy Golem chat applies, loaded from
-// the repository's own manifests, so these tests exercise the same matching
-// (#384: one policy for both paths).
-func chatPolicy(gen *MessageGenerator) {
-	gen.SetScopeSource(func(repoRoot string) (StagedScope, error) {
-		guard := ai.LoadScopePolicy(filesystem.NewOS(), repoRoot).Guard("")
-		return StagedScope{Guard: guard, Protected: func(path string) bool { return guard(path, false) != nil }}, nil
-	})
-}
-
-// noRuntime points golem at a missing config so any runtime bootstrap fails:
-// a test using it proves GenerateStaged returned before touching golem.
-func noRuntime(t *testing.T) {
+// chatPolicy wires the generator to a Golem chat service bound to dir, as the
+// app does: the repository's own policy (#384: one policy for both paths) and
+// the Golem model chat loads from the config GO_LLM_CONFIG names (#491). A
+// scope with no model, as the hand-built scopes below have, fails generation
+// before any request, so a test using one proves where GenerateStaged stopped.
+func chatPolicy(t *testing.T, gen *MessageGenerator, dir string) *ai.Service {
 	t.Helper()
-	t.Setenv("GO_LLM_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
+	svc := newGolemService(t, dir)
+	gen.SetScopeSource(func(root string) (StagedScope, error) {
+		scope, err := svc.StagedScope(root)
+		return StagedScope(scope), err
+	})
+	return svc
 }
 
 const mainGo = "package main\n\nfunc main() { println(\"shipped hunk\") }\n"
@@ -110,7 +105,7 @@ func TestGenerateStaged_WithholdsFloorDeniedPath(t *testing.T) {
 	gitCmd(t, dir, "add", ".env", "main.go")
 	provider := gittest.Start(t, "feat: add main", nil)
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -142,7 +137,7 @@ func TestGenerateStaged_HonorsManifestRule(t *testing.T) {
 	gitCmd(t, dir, "add", "fixtures", "main.go") // the manifest stays unstaged: it names the path
 	provider := gittest.Start(t, "feat: add main", nil)
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -172,7 +167,7 @@ func TestGenerateStaged_WithholdsRenameTouchingProtectedPath(t *testing.T) {
 		gitCmd(t, dir, "add", "main.go")
 		provider := gittest.Start(t, "feat: add main", nil)
 		gen := NewMessageGenerator()
-		chatPolicy(gen)
+		chatPolicy(t, gen, dir)
 
 		result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -201,7 +196,7 @@ func TestGenerateStaged_WithholdsRenameTouchingProtectedPath(t *testing.T) {
 		gitCmd(t, dir, "add", "main.go")
 		provider := gittest.Start(t, "feat: add main", nil)
 		gen := NewMessageGenerator()
-		chatPolicy(gen)
+		chatPolicy(t, gen, dir)
 
 		result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -226,7 +221,7 @@ func TestGenerateStaged_AllowedRenameKeepsBothSides(t *testing.T) {
 	gitCmd(t, dir, "mv", "README.md", "docs/README.md")
 	provider := gittest.Start(t, "docs: move readme", nil)
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -248,9 +243,9 @@ func TestGenerateStaged_AllWithheldMakesNoRequest(t *testing.T) {
 	writeFile(t, dir, ".env", "API_TOKEN=hunter2\n")
 	writeFile(t, dir, "deploy.key", "-----BEGIN PRIVATE KEY-----\n")
 	gitCmd(t, dir, "add", ".env", "deploy.key")
-	noRuntime(t)
+	gittest.Start(t, "", nil) // a request would fail as unusable
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -273,9 +268,9 @@ func TestGenerateStaged_ManifestOverflowWithholdsEverything(t *testing.T) {
 	writeFile(t, dir, "ai-kit.yaml", "sensitive_paths:\n"+strings.Repeat("  - fixtures/x\n", 513))
 	writeFile(t, dir, "main.go", mainGo)
 	gitCmd(t, dir, "add", "main.go")
-	noRuntime(t)
+	gittest.Start(t, "", nil) // a request would fail as unusable
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -293,7 +288,6 @@ func TestGenerateStaged_NoPolicySourceWithholdsEverything(t *testing.T) {
 	dir := initRepo(t)
 	writeFile(t, dir, "main.go", mainGo)
 	gitCmd(t, dir, "add", "main.go")
-	noRuntime(t)
 
 	result, err := NewMessageGenerator().GenerateStaged(ctx(), NewService(), dir)
 
@@ -308,9 +302,9 @@ func TestGenerateStaged_NoPolicySourceWithholdsEverything(t *testing.T) {
 func TestGenerateStaged_NothingStaged(t *testing.T) {
 	requireGit(t)
 	dir := initRepo(t)
-	noRuntime(t)
+	gittest.Start(t, "", nil) // a request would fail as unusable
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -334,7 +328,7 @@ func TestGenerateStaged_KeepsWithheldDescendantOutOfAllowedPathspec(t *testing.T
 	gitCmd(t, dir, "add", "config/.env", "main.go")
 	provider := gittest.Start(t, "chore: replace config", nil)
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -362,7 +356,7 @@ func TestGenerateStaged_WithholdsCopyOfProtectedFile(t *testing.T) {
 	gitCmd(t, dir, "add", "config.txt", "main.go")
 	provider := gittest.Start(t, "feat: add main", nil)
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -419,7 +413,7 @@ func TestGenerateStaged_IgnoresDiffHelpersAndSubmoduleExpansion(t *testing.T) {
 			stage(t, dir)
 			provider := gittest.Start(t, "chore: update", nil)
 			gen := NewMessageGenerator()
-			chatPolicy(gen)
+			chatPolicy(t, gen, dir)
 
 			if _, err := gen.GenerateStaged(ctx(), NewService(), dir); err != nil {
 				t.Fatalf("GenerateStaged() error = %v", err)
@@ -429,37 +423,11 @@ func TestGenerateStaged_IgnoresDiffHelpersAndSubmoduleExpansion(t *testing.T) {
 	}
 }
 
-// The runtime loads the config source the guard protected, not whatever its
-// own discovery finds later.
-func TestGenerateStaged_PinsRuntimeToGuardedConfig(t *testing.T) {
-	requireGit(t)
-	dir := initRepo(t)
-	writeFile(t, dir, "main.go", mainGo)
-	gitCmd(t, dir, "add", "main.go")
-	provider := gittest.Start(t, "feat: pinned", nil)
-	pinned := os.Getenv("GO_LLM_CONFIG")
-	noRuntime(t)
-	gen := NewMessageGenerator()
-	gen.SetScopeSource(func(repoRoot string) (StagedScope, error) {
-		return StagedScope{Guard: ai.LoadScopePolicy(filesystem.NewOS(), repoRoot).Guard(""), ConfigPath: pinned}, nil
-	})
-
-	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
-
-	if err != nil || result.Message != "feat: pinned" {
-		t.Fatalf("GenerateStaged() = %+v, %v, want the pinned config's answer", result, err)
-	}
-	if len(provider.Requests) != 1 {
-		t.Errorf("provider requests = %d, want 1", len(provider.Requests))
-	}
-}
-
 func TestGenerateStaged_GuardSourceErrorMakesNoRequest(t *testing.T) {
 	requireGit(t)
 	dir := initRepo(t)
 	writeFile(t, dir, "main.go", mainGo)
 	gitCmd(t, dir, "add", "main.go")
-	noRuntime(t)
 	gen := NewMessageGenerator()
 	gen.SetScopeSource(func(string) (StagedScope, error) {
 		return StagedScope{}, errors.New("reopen the repository")
@@ -479,9 +447,8 @@ func TestGenerateStaged_PolicyChangeBeforeSendMakesNoRequest(t *testing.T) {
 	dir := initRepo(t)
 	writeFile(t, dir, "main.go", mainGo)
 	gitCmd(t, dir, "add", "main.go")
-	noRuntime(t)
 	// Listing and checking make the same guard calls on both passes, so a
-	// full run (which then fails at the missing runtime) is counted and the
+	// full run (which then fails for want of a model) is counted and the
 	// policy denies from the second pass on.
 	var calls atomic.Int32
 	gen := NewMessageGenerator()
@@ -489,7 +456,7 @@ func TestGenerateStaged_PolicyChangeBeforeSendMakesNoRequest(t *testing.T) {
 		return StagedScope{Guard: func(string, bool) error { calls.Add(1); return nil }}, nil
 	})
 	if _, err := gen.GenerateStaged(ctx(), NewService(), dir); err == nil || errors.Is(err, errStagedChangesMoved) {
-		t.Fatalf("counting run error = %v, want the missing-runtime failure", err)
+		t.Fatalf("counting run error = %v, want the missing-model failure", err)
 	}
 	firstPass := calls.Load() / 2
 	calls.Store(0)
@@ -509,81 +476,57 @@ func TestGenerateStaged_PolicyChangeBeforeSendMakesNoRequest(t *testing.T) {
 	}
 }
 
-// Provider discovery may block after the first recheck. A repository unbound
-// or a policy tightened during bootstrap must still stop the staged diff.
-func TestGenerateStaged_PolicyChangeDuringBootstrapMakesNoRequest(t *testing.T) {
+// A repository unbound, or a policy tightened, between the first recheck and
+// the send must still stop the staged diff. Each pass over the one staged
+// path asks the guard once: listing, first recheck, recheck before sending.
+func TestGenerateStaged_RepositoryChangeBeforeSendMakesNoRequest(t *testing.T) {
+	requireGit(t)
 	for _, change := range []string{"unbind", "manifest"} {
 		t.Run(change, func(t *testing.T) {
-			dir := initRepo(t)
-			dir, err := filepath.EvalSymlinks(dir)
+			dir, err := filepath.EvalSymlinks(initRepo(t))
 			if err != nil {
 				t.Fatal(err)
 			}
 			writeFile(t, dir, "main.go", mainGo)
 			gitCmd(t, dir, "add", "main.go")
-			svc := ai.NewService(context.Background(), filesystem.NewOS(), "", nil, "")
-			t.Cleanup(func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				if err := svc.Close(ctx); err != nil {
-					t.Errorf("Close: %v", err)
-				}
-			})
-			var models, chats atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/v1/models":
-					models.Add(1)
-					if change == "unbind" {
-						svc.UnbindRepository()
-					} else {
-						manifest := filepath.Join(dir, "ai-kit.yaml")
-						if err := os.WriteFile(manifest, []byte("sensitive_paths:\n  - main.go\n"), 0o600); err != nil {
-							t.Errorf("write manifest: %v", err)
-							http.Error(w, "manifest write failed", http.StatusInternalServerError)
-							return
-						}
-						svc.ReloadPolicy(manifest)
-					}
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = fmt.Fprintf(w, `{"data":[{"id":%q}]}`, gittest.Model)
-				case "/v1/chat/completions":
-					chats.Add(1)
-					http.Error(w, "unexpected diff request after policy change", http.StatusBadRequest)
-				default:
-					http.NotFound(w, r)
-				}
-			}))
-			defer server.Close()
-			config := filepath.Join(t.TempDir(), "models.json")
-			data := fmt.Sprintf(`{
-				"providers":{"test":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}},
-				"models":{"chat":{"name":%q,"provider":"test","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},
-				"defaults":{"agent":"chat"}
-			}`, server.URL, gittest.Model)
-			if err := os.WriteFile(config, []byte(data), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("GO_LLM_CONFIG", config)
-			if _, _, err := svc.BindRepository(dir); err != nil {
-				t.Fatal(err)
-			}
+			provider := gittest.Start(t, "feat: add main", nil)
+			svc := newGolemService(t, dir)
+			var calls, changeAt atomic.Int32
 			gen := NewMessageGenerator()
 			gen.SetScopeSource(func(root string) (StagedScope, error) {
 				scope, err := svc.StagedScope(root)
+				guard := scope.Guard
+				scope.Guard = func(path string, write bool) error {
+					if calls.Add(1) == changeAt.Load() {
+						if change == "unbind" {
+							svc.UnbindRepository()
+						} else {
+							manifest := filepath.Join(dir, "ai-kit.yaml")
+							writeFile(t, dir, "ai-kit.yaml", "sensitive_paths:\n  - main.go\n")
+							svc.ReloadPolicy(manifest)
+						}
+					}
+					return guard(path, write)
+				}
 				return StagedScope(scope), err
 			})
+			if result, err := gen.GenerateStaged(ctx(), NewService(), dir); err != nil || result.Message != "feat: add main" {
+				t.Fatalf("counting run = %+v, %v, want a message", result, err)
+			}
+			readRequest(t, provider)
+			if got := calls.Load(); got != 3 {
+				t.Fatalf("guard calls = %d, want one per pass", got)
+			}
+			calls.Store(0)
+			changeAt.Store(3)
 
 			_, err = gen.GenerateStaged(ctx(), NewService(), dir)
 
 			if !errors.Is(err, errStagedChangesMoved) {
 				t.Errorf("GenerateStaged error = %v, want errStagedChangesMoved", err)
 			}
-			if models.Load() == 0 {
-				t.Error("no bootstrap model request observed")
-			}
-			if got := chats.Load(); got != 0 {
-				t.Errorf("sent %d staged-diff requests after policy change during bootstrap", got)
+			if got := len(provider.Requests); got != 0 {
+				t.Errorf("sent %d staged-diff requests after the change", got)
 			}
 		})
 	}
@@ -597,7 +540,6 @@ func TestGenerateStaged_IndexChangeBeforeSendMakesNoRequest(t *testing.T) {
 	writeFile(t, dir, "main.go", mainGo)
 	writeFile(t, dir, "late.txt", "staged late\n")
 	gitCmd(t, dir, "add", "main.go")
-	noRuntime(t)
 	var staged atomic.Bool
 	gen := NewMessageGenerator()
 	gen.SetScopeSource(func(repoRoot string) (StagedScope, error) {
@@ -630,9 +572,9 @@ func TestGenerateStaged_SkippedRenameDetectionMakesNoRequest(t *testing.T) {
 	writeFile(t, dir, "new.txt", "x\n")
 	gitCmd(t, dir, "add", "config", "new.txt")
 	gitCmd(t, dir, "config", "diff.renameLimit", "1")
-	noRuntime(t)
+	gittest.Start(t, "", nil) // a request would fail as unusable
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -660,7 +602,7 @@ func TestGenerateStaged_WithholdsInexactCopyPastRenameLimit(t *testing.T) {
 	gitCmd(t, dir, "config", "diff.renameLimit", "3")
 	provider := gittest.Start(t, "feat: add main", nil)
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -685,9 +627,9 @@ func TestGenerateStaged_LimitedCopyCheckMakesNoRequest(t *testing.T) {
 	writeFile(t, dir, "config.txt", "API_TOKEN=one\nmore\n")
 	gitCmd(t, dir, "add", "config.txt")
 	gitCmd(t, dir, "config", "diff.renameLimit", "1")
-	noRuntime(t)
+	gittest.Start(t, "", nil) // a request would fail as unusable
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	_, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -713,7 +655,7 @@ func TestGenerateStaged_FindsProtectedCopyAcrossBatches(t *testing.T) {
 	gitCmd(t, dir, "add", "vendor")
 	provider := gittest.Start(t, "chore: vendor", nil)
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -743,7 +685,7 @@ func TestGenerateStaged_ChecksPairedDestinationAgainstProtectedSources(t *testin
 	gitCmd(t, dir, "add", "config")
 	provider := gittest.Start(t, "chore: configs", nil)
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -771,7 +713,7 @@ func TestGenerateStaged_ManyProtectedTrackedFilesStillGenerate(t *testing.T) {
 	gitCmd(t, dir, "add", "main.go")
 	provider := gittest.Start(t, "feat: add main", nil)
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -798,7 +740,7 @@ func TestGenerateStaged_ChecksRenamedDestinationAgainstProtectedSources(t *testi
 	gitCmd(t, dir, "add", "config.txt")
 	provider := gittest.Start(t, "chore: drop template", nil)
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -834,7 +776,7 @@ func TestGenerateStaged_ChecksNewFileAgainstDeletedProtectedSource(t *testing.T)
 	gitCmd(t, dir, "add", "template.txt", "second.txt")
 	provider := gittest.Start(t, "chore: rework config", nil)
 	gen := NewMessageGenerator()
-	chatPolicy(gen)
+	chatPolicy(t, gen, dir)
 
 	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -856,9 +798,8 @@ func TestGenerateStaged_RecheckSeesNewlyProtectedCopySource(t *testing.T) {
 	writeFile(t, dir, "copy.md", "hello\n") // an exact copy of the committed README.md
 	writeFile(t, dir, "main.go", mainGo)
 	gitCmd(t, dir, "add", "copy.md", "main.go")
-	noRuntime(t)
 	// Both listings ask the same questions, so a full run (which then fails
-	// at the missing runtime) is counted and README.md turns protected from
+	// for want of a model) is counted and README.md turns protected from
 	// the second listing on.
 	var calls atomic.Int32
 	gen := NewMessageGenerator()
@@ -879,7 +820,7 @@ func TestGenerateStaged_RecheckSeesNewlyProtectedCopySource(t *testing.T) {
 	}
 	gen.SetScopeSource(source(1 << 30))
 	if _, err := gen.GenerateStaged(ctx(), NewService(), dir); err == nil || errors.Is(err, errStagedChangesMoved) {
-		t.Fatalf("counting run error = %v, want the missing-runtime failure", err)
+		t.Fatalf("counting run error = %v, want the missing-model failure", err)
 	}
 	firstListing := calls.Load() / 2
 	calls.Store(0)
@@ -938,9 +879,8 @@ func workdirModels(baseURL, apiKey string) string {
 // stageWorkdirGeneration makes a repository with main.go staged and body as
 // its models.json (the file, or a symlink to one elsewhere), runs from it as
 // Firn's working directory with the secret set and GO_LLM_CONFIG unset, and
-// wires generation to a real ai.Service as the app does. The destination at
-// baseURL is approved, as if the user had granted it.
-func stageWorkdirGeneration(t *testing.T, baseURL, body string, viaSymlink bool) (string, *MessageGenerator, *ai.Service) {
+// wires generation to a real ai.Service as the app does.
+func stageWorkdirGeneration(t *testing.T, body string, viaSymlink bool) (string, *MessageGenerator, *ai.Service) {
 	t.Helper()
 	dir := initRepo(t)
 	writeFile(t, dir, "main.go", mainGo)
@@ -973,13 +913,6 @@ func stageWorkdirGeneration(t *testing.T, baseURL, body string, viaSymlink bool)
 		t.Fatal(err)
 	}
 	gen := NewMessageGenerator()
-	gen.SetDestinationPolicySource(func() provider.DestinationPolicy {
-		d, err := provider.NewDestination("test", baseURL)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return provider.NewDestinationPolicy(d)
-	})
 	gen.SetScopeSource(func(root string) (StagedScope, error) {
 		scope, err := svc.StagedScope(root)
 		return StagedScope(scope), err
@@ -987,16 +920,15 @@ func stageWorkdirGeneration(t *testing.T, baseURL, body string, viaSymlink bool)
 	return dir, gen, svc
 }
 
-// A ${NAME} api_key there is refused before golem loads the file, so nothing
-// reaches the endpoint the file names: loopback (no consent needed) or an
-// approved remote.
+// A ${NAME} api_key there is refused when chat loads the file, so nothing
+// reaches the endpoint the file names, loopback (no consent needed) or remote.
 func TestGenerateStaged_WorkingDirectoryKeyReferenceMakesNoRequest(t *testing.T) {
 	requireGit(t)
 	for _, remote := range []bool{false, true} {
 		for _, viaSymlink := range []bool{false, true} {
 			t.Run(fmt.Sprintf("remote=%t/symlink=%t", remote, viaSymlink), func(t *testing.T) {
 				listener, baseURL := startKeyListener(t, remote)
-				dir, gen, _ := stageWorkdirGeneration(t, baseURL, workdirModels(baseURL, "${FIRN_524_SECRET}"), viaSymlink)
+				dir, gen, _ := stageWorkdirGeneration(t, workdirModels(baseURL, "${FIRN_524_SECRET}"), viaSymlink)
 
 				_, err := gen.GenerateStaged(ctx(), NewService(), dir)
 
@@ -1014,17 +946,15 @@ func TestGenerateStaged_WorkingDirectoryKeyReferenceMakesNoRequest(t *testing.T)
 	}
 }
 
-// The file is checked when the scope is built and loaded again later, by
-// golem. Rewriting it in between, from a literal key to a ${NAME} reference,
-// must not change what golem loads.
-func TestGenerateStaged_WorkingDirectoryConfigRewrittenAfterCheckLeaksNothing(t *testing.T) {
+// Generation sends with the key chat loaded (#491). Rewriting the file after
+// the load, from a literal key to a ${NAME} reference, changes nothing it
+// sends.
+func TestGenerateStaged_WorkingDirectoryConfigRewrittenAfterLoadLeaksNothing(t *testing.T) {
 	requireGit(t)
 	listener, baseURL := startKeyListener(t, false)
-	dir, gen, svc := stageWorkdirGeneration(t, baseURL, workdirModels(baseURL, "literal-key"), false)
-	var runtimeConfig string
+	dir, gen, svc := stageWorkdirGeneration(t, workdirModels(baseURL, "literal-key"), false)
 	gen.SetScopeSource(func(root string) (StagedScope, error) {
 		scope, err := svc.StagedScope(root)
-		runtimeConfig = scope.ConfigPath
 		writeFile(t, dir, "models.json", workdirModels(baseURL, "${FIRN_524_SECRET}"))
 		return StagedScope(scope), err
 	})
@@ -1037,15 +967,12 @@ func TestGenerateStaged_WorkingDirectoryConfigRewrittenAfterCheckLeaksNothing(t 
 	if got := listener.leaked.Load(); got != 0 {
 		t.Fatalf("%d request(s) carried the secret", got)
 	}
-	if _, err := os.Stat(runtimeConfig); runtimeConfig == "" || !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("runtime config %q after generation: %v, want a removed private copy", runtimeConfig, err)
-	}
 }
 
-// With no go-llm config anywhere, a models.json created in the working
-// directory after the scope is built is not what golem loads: the runtime is
-// pinned to go-llm's built-in fallback, so the file's endpoint sees nothing.
-func TestGenerateStaged_ConfigCreatedAfterCheckLeaksNothing(t *testing.T) {
+// With no go-llm config anywhere, generation refuses as chat does, and a
+// models.json created in the working directory afterwards is not read: the
+// file's endpoint sees nothing.
+func TestGenerateStaged_ConfigCreatedAfterLoadLeaksNothing(t *testing.T) {
 	requireGit(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -1053,27 +980,86 @@ func TestGenerateStaged_ConfigCreatedAfterCheckLeaksNothing(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
 	listener, baseURL := startKeyListener(t, false)
-	dir, gen, svc := stageWorkdirGeneration(t, baseURL, "", false)
+	dir, gen, svc := stageWorkdirGeneration(t, "", false)
 	if err := os.Remove(filepath.Join(dir, "models.json")); err != nil {
 		t.Fatal(err)
 	}
-	var runtimeConfig string
 	gen.SetScopeSource(func(root string) (StagedScope, error) {
 		scope, err := svc.StagedScope(root)
-		runtimeConfig = scope.ConfigPath
 		writeFile(t, dir, "models.json", workdirModels(baseURL, "${FIRN_524_SECRET}"))
 		return StagedScope(scope), err
 	})
-	// The fallback names a local Ollama; do not wait on one that happens to run.
-	runCtx, cancel := context.WithTimeout(ctx(), 3*time.Second)
-	defer cancel()
 
-	_, _ = gen.GenerateStaged(runCtx, NewService(), dir)
-
+	for range 2 {
+		if _, err := gen.GenerateStaged(ctx(), NewService(), dir); !errors.Is(err, ai.ErrAgentConfigMissing) {
+			t.Fatalf("GenerateStaged() error = %v, want the missing-configuration refusal", err)
+		}
+	}
 	if got := listener.requests.Load(); got != 0 {
 		t.Fatalf("listener saw %d request(s), %d carrying the secret", got, listener.leaked.Load())
 	}
-	if _, err := os.Stat(runtimeConfig); runtimeConfig == "" || !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("runtime config %q after generation: %v, want a removed private copy", runtimeConfig, err)
+}
+
+// A configuration with no agent setting, which commit messages once served
+// through golem's recommendation route, refuses as chat does and sends nothing.
+func TestGenerateStaged_NoAgentSettingRefusesWithChatsReason(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "main.go")
+	provider := gittest.Start(t, "feat: must not be asked", nil)
+	path := os.Getenv("GO_LLM_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), `"defaults":{"agent":"chat"}`, `"defaults":{}`, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gen := NewMessageGenerator()
+	chatPolicy(t, gen, dir)
+
+	_, err = gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if !errors.Is(err, ai.ErrAgentConfigInvalid) || !strings.Contains(err.Error(), "no agent use-case configured") {
+		t.Fatalf("GenerateStaged() error = %v, want chat's no-agent refusal", err)
+	}
+	if got := len(provider.Requests); got != 0 {
+		t.Fatalf("provider received %d request(s)", got)
+	}
+}
+
+// An edit made outside Firn reaches commit messages only after Refresh, as it
+// reaches Golem chat.
+func TestGenerateStaged_OutsideEditWaitsForRefresh(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "main.go")
+	second := gittest.Start(t, "feat: second model", nil)
+	secondConfig, err := os.ReadFile(os.Getenv("GO_LLM_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := gittest.Start(t, "feat: first model", nil)
+	gen := NewMessageGenerator()
+	svc := chatPolicy(t, gen, dir)
+	generate := func(want string, from *gittest.Provider) {
+		t.Helper()
+		result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+		if err != nil || result.Message != want {
+			t.Fatalf("GenerateStaged() = %+v, %v, want %q", result, err, want)
+		}
+		readRequest(t, from)
+	}
+
+	generate("feat: first model", first)
+	if err := os.WriteFile(os.Getenv("GO_LLM_CONFIG"), secondConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	generate("feat: first model", first)
+	if res, err := svc.ReloadSettings(); err != nil || res.Busy {
+		t.Fatalf("ReloadSettings = %+v, %v", res, err)
+	}
+	generate("feat: second model", second)
 }

@@ -1,7 +1,6 @@
 package ai
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -13,7 +12,6 @@ import (
 	"testing"
 
 	"firn/internal/filesystem"
-	"github.com/kstruzzieri/go-llm/provider"
 )
 
 func remoteDestination(providerName, endpoint string) ProviderDestination {
@@ -148,14 +146,6 @@ func TestConsentStoreFailsClosedOnInvalidContent(t *testing.T) {
 			}
 			if err := store.Grant(remoteDestination("remote", remoteEndpoint)); !errors.Is(err, ErrConsentUnavailable) {
 				t.Fatalf("Grant = %v, want ErrConsentUnavailable", err)
-			}
-			// F18/D10 carry-forward: every invalid-content case above fails
-			// the store closed, so each must also yield the zero destination
-			// policy — there is no partial credit for grants that would have
-			// parsed under an older canonicalization rule or any other
-			// invalid-content case.
-			if !store.DestinationPolicy().IsZero() {
-				t.Fatal("DestinationPolicy is not zero for a store invalidated by invalid content")
 			}
 		})
 	}
@@ -478,85 +468,6 @@ func TestConsentStoreConcurrentGrantAndHas(t *testing.T) {
 		if !store.Has(dest.Digest) {
 			t.Errorf("Has(%s) = false after concurrent grants", dest.Endpoint)
 		}
-	}
-}
-
-// F2: the policy admits exactly the DURABLE grant set — proven by reopening
-// from disk rather than trusting the in-memory store that made the grant.
-func TestDestinationPolicyDerivesFromDurableGrants(t *testing.T) {
-	path := consentPath(t)
-	fsys := filesystem.NewOS()
-
-	store, err := OpenConsentStore(fsys, path)
-	if err != nil {
-		t.Fatalf("OpenConsentStore: %v", err)
-	}
-	dest := remoteDestination("hosted", "https://api.example.com/v1")
-	if err := store.Grant(dest); err != nil {
-		t.Fatalf("Grant: %v", err)
-	}
-
-	reopened, err := OpenConsentStore(fsys, path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	policy := reopened.DestinationPolicy()
-
-	permitted, err := provider.NewDestination("hosted", "https://api.example.com/v1")
-	if err != nil {
-		t.Fatalf("provider.NewDestination(permitted): %v", err)
-	}
-	if !policy.Permits(permitted) {
-		t.Fatal("policy denied the durably granted destination")
-	}
-	denied, err := provider.NewDestination("hosted", "https://elsewhere.example.com")
-	if err != nil {
-		t.Fatalf("provider.NewDestination(denied): %v", err)
-	}
-	if policy.Permits(denied) {
-		t.Fatal("policy permitted a destination that was never granted")
-	}
-}
-
-// F3: an unavailable store yields the zero policy even with grants sitting on
-// disk. verifyPrivateMode is skipped on Windows, so the fixture corrupts the
-// file's "version" field rather than its mode bits.
-func TestDestinationPolicyFailsClosedWhenUnavailable(t *testing.T) {
-	path := consentPath(t)
-	fsys := filesystem.NewOS()
-
-	store, err := OpenConsentStore(fsys, path)
-	if err != nil {
-		t.Fatalf("OpenConsentStore: %v", err)
-	}
-	dest := remoteDestination("remote", "https://api.example.com/v1")
-	if err := store.Grant(dest); err != nil {
-		t.Fatalf("Grant: %v", err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	doc["version"] = 99
-	corrupted, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if err := os.WriteFile(path, corrupted, 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	reopened, err := OpenConsentStore(fsys, path)
-	if !errors.Is(err, ErrConsentUnavailable) {
-		t.Fatalf("reopen after version corruption = %v, want ErrConsentUnavailable", err)
-	}
-	if !reopened.DestinationPolicy().IsZero() {
-		t.Fatal("DestinationPolicy is not zero for an unavailable store")
 	}
 }
 

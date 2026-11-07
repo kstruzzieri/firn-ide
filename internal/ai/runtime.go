@@ -143,20 +143,10 @@ func newGolemRunner(
 	transport *http.Transport,
 	tuning golemTuning,
 ) (Runner, error) {
-	// golem.New installs no tool guards on an orchestrator the embedder
-	// supplies, so install the Golem CLI's always-on set here. Of Firn's
-	// read-only tools only read_file has a default invariant (the credential
-	// paths, which also back up firnSensitiveFloor); Egress and
-	// ChildScopeDenials have no exec or dispatch tool to inspect yet.
-	invariants, err := interceptor.NewInvariants(interceptor.DefaultInvariants())
+	orchestrator, err := newFixedOrchestrator(backend, target, sessions.Generation)
 	if err != nil {
 		return nil, err
 	}
-	orchestrator := agent.New(
-		&fixedModelCaller{backend: backend, target: target, generation: sessions.Generation},
-		agent.ContextManager{},
-		agent.WithInterceptors(invariants, interceptor.Egress{}, interceptor.ChildScopeDenials{}),
-	)
 	// Without a budget the assembler works against go-llm's 8192-token default,
 	// which evicts a turn's own tool results on any real repo question: the run
 	// then re-reads what it already read until it hits the step cap. Only the
@@ -164,12 +154,6 @@ func newGolemRunner(
 	inputCeiling := tuning.InputCeiling
 	if inputCeiling == 0 {
 		inputCeiling = deriveInputCeiling(target.model.ContextWindow)
-	}
-	modelOptions := provider.ModelOptions{}
-	if target.apiFormat == "ollama" && target.model.ContextWindow >= replyHeadroomDivisor {
-		// Ollama allocates context independently of model metadata. Request the
-		// same total window used to derive the input budget, including reply room.
-		modelOptions.NumCtx = min(target.model.ContextWindow, maxAssumedWindow)
 	}
 	runtime, err := golem.New(ctx, golem.Options{
 		Root:               root,
@@ -182,7 +166,7 @@ func newGolemRunner(
 		// OutputReserve stays zero: go-llm forwards it as NumPredict, capping how
 		// long an answer may be, and no measurement here justifies a cap.
 		Budget:          agent.Budget{InputCeiling: inputCeiling},
-		ModelOptions:    modelOptions,
+		ModelOptions:    modelOptionsFor(target),
 		MaxMessageBytes: MaxTurnMessageBytes,
 		FailureMessage:  publicRunFailureMessage,
 	})
@@ -190,6 +174,80 @@ func newGolemRunner(
 		return nil, err
 	}
 	return &golemRunner{runtime: runtime, transport: transport}, nil
+}
+
+// newFixedOrchestrator is the orchestrator Golem chat and commit generation
+// both run (#491): the fixed caller, with no router and no fallback. golem.New
+// installs no tool guards on an orchestrator the embedder supplies, so install
+// the Golem CLI's always-on set here. Of Firn's read-only tools only read_file
+// has a default invariant (the credential paths, which also back up
+// firnSensitiveFloor); Egress and ChildScopeDenials have no exec or dispatch
+// tool to inspect yet.
+func newFixedOrchestrator(backend provider.Provider, target providerTarget, generation func(threadID string) uint64) (*agent.Orchestrator, error) {
+	invariants, err := interceptor.NewInvariants(interceptor.DefaultInvariants())
+	if err != nil {
+		return nil, err
+	}
+	return agent.New(
+		&fixedModelCaller{backend: backend, target: target, generation: generation},
+		agent.ContextManager{},
+		agent.WithInterceptors(invariants, interceptor.Egress{}, interceptor.ChildScopeDenials{}),
+	), nil
+}
+
+// modelOptionsFor is what a run asks of the target's server. Ollama allocates
+// context independently of model metadata, so it is asked for the same total
+// window the input budget is derived from, reply room included.
+func modelOptionsFor(target providerTarget) provider.ModelOptions {
+	if target.apiFormat == "ollama" && target.model.ContextWindow >= replyHeadroomDivisor {
+		return provider.ModelOptions{NumCtx: min(target.model.ContextWindow, maxAssumedWindow)}
+	}
+	return provider.ModelOptions{}
+}
+
+// ErrContextWindowTooSmall refuses commit generation for a Golem model whose
+// declared context window is too small to hold its prompt.
+var ErrContextWindowTooSmall = errors.New("the Golem model's context window is too small")
+
+// GolemModel is the one model commit-message generation sends to (#491): the
+// target Golem chat resolved from the configuration it has loaded, behind the
+// orchestrator chat runs, with its own hardened transport.
+type GolemModel struct {
+	target       providerTarget
+	orchestrator *agent.Orchestrator
+	consent      *ConsentStore
+}
+
+// ContextWindow is the model's declared context window; 0 when it has none.
+func (m *GolemModel) ContextWindow() int { return m.target.model.ContextWindow }
+
+// Options admits the model's destination as chat admits it and returns the
+// golem options that send to it alone: its orchestrator, its model options and
+// an input budget derived from its declared window as chat's is. A remote
+// destination without a grant is refused with go-llm's typed denial, before
+// any byte is sent. The budget is 0 when no window is declared, for the caller
+// to choose; a declared window too small to budget is refused, never
+// defaulted.
+func (m *GolemModel) Options() (golem.Options, error) {
+	dest := m.target.destination
+	if dest.Classification == "remote" && !m.consent.Has(dest.Digest) {
+		denied := &provider.DestinationDeniedError{Provider: dest.Provider, Purpose: useCaseAgent}
+		if identity, err := provider.NewDestination(dest.Provider, dest.Endpoint); err == nil {
+			denied.Destination = identity
+		}
+		return golem.Options{}, denied
+	}
+	ceiling := 0
+	if window := m.ContextWindow(); window != 0 {
+		if ceiling = deriveInputCeiling(window); ceiling == 0 {
+			return golem.Options{}, ErrContextWindowTooSmall
+		}
+	}
+	return golem.Options{
+		Orchestrator: m.orchestrator,
+		Budget:       agent.Budget{InputCeiling: ceiling},
+		ModelOptions: modelOptionsFor(m.target),
+	}, nil
 }
 
 func (r *golemRunner) Run(ctx context.Context, turn golem.Turn, sink golem.EventSink) (agent.Result, error) {

@@ -877,21 +877,27 @@ describe('GolemConfigWorkspace', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows the busy notice for an explicit Refresh only', async () => {
+  it('shows the busy notice on open while Golem is busy (#491)', async () => {
+    // Commit messages send to the configuration in effect too, so the page says
+    // when what it shows is not the file on disk, not only on Refresh.
     resolve(readyProjection, true);
     render(<GolemConfigWorkspace onClose={() => {}} />);
     await screen.findByTestId('provider-row-llama-swap');
     const announcement = screen.getByTestId('golem-config-notice-announcement');
-    expect(screen.queryByText(/Golem is busy/)).not.toBeInTheDocument();
-    expect(announcement).toBeEmptyDOMElement();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     // #314: the visible line mounts together with its text, which a live region
     // would not speak, so the region that already existed carries it instead.
     const notice = await screen.findByText(/Golem is busy/, { selector: 'p' });
     expect(notice).not.toHaveAttribute('role');
     expect(announcement).toHaveAttribute('role', 'status');
     await waitFor(() => expect(announcement).toHaveTextContent(notice.textContent ?? ''));
+  });
+
+  it('shows no busy notice on open while Golem is idle', async () => {
+    resolve(readyProjection, false);
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByTestId('provider-row-llama-swap');
+    expect(screen.queryByText(/Golem is busy/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('golem-config-notice-announcement')).toBeEmptyDOMElement();
   });
 
   it('announces a repeated busy Refresh again and nothing once Golem is idle (#314)', async () => {
