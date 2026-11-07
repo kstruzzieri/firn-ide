@@ -922,6 +922,48 @@
   overflow-wrap: anywhere;
 }
 
+/* #322: a hint that warns. The copy carries the warning; the rule only draws
+   the eye, so the text keeps the label's contrast rather than the hue's. */
+.fieldCaution {
+  padding-left: 8px;
+  border-left: 2px solid var(--status-warning);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* #322 presets: the dropdown spans both columns of the wide grid, its facts
+   stack under it, and a filled field's label carries a "from preset" tag. */
+.presetField {
+  grid-column: 1 / -1;
+}
+
+.presetFacts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.presetFacts > p {
+  margin: 0;
+}
+
+.labelRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.presetMark {
+  padding: 0 5px;
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
 /*
  * One EXPLICIT control box for every single-line field on this surface, the
  * mockup's .ctl rule verbatim: a min-height lets a <select>'s intrinsic

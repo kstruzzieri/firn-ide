@@ -1871,6 +1871,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   stagedProviders={stagedProviders}
                   vault={vault}
                   editable={canEdit}
+                  sourceOrigin={projection.sourceOrigin}
                   focusRequest={focusRequest}
                   onStage={stage}
                   onUnstagedChange={noteUnstaged}

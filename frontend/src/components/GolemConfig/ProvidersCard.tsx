@@ -12,7 +12,11 @@
  */
 
 import { useEffect, useState } from 'react';
-import type { ProviderProjection, SettingsDiagnostic } from '../../types/golem';
+import type {
+  ProviderProjection,
+  SettingsDiagnostic,
+  SettingsSourceOrigin,
+} from '../../types/golem';
 import {
   changeStableID,
   type Change,
@@ -79,6 +83,8 @@ export interface ProvidersCardProps {
   vault: KeyVault;
   /** False while the document is Limited, Invalid, or otherwise unwritable. */
   editable: boolean;
+  /** Where the loaded configuration came from: the key field warns for a working directory. */
+  sourceOrigin: SettingsSourceOrigin;
   /** The Apply bar asking for one of this card's editors (§3.3 chips). */
   focusRequest?: EditorFocusRequest | null;
   onStage: (changes: Change[], drop: string[]) => void;
@@ -95,6 +101,7 @@ export function ProvidersCard({
   stagedProviders = [],
   vault,
   editable,
+  sourceOrigin,
   focusRequest = null,
   onStage,
   onUnstagedChange,
@@ -416,6 +423,7 @@ export function ProvidersCard({
                           takenNames={takenNames}
                           inUse={usedProviders.includes(provider.name)}
                           vault={vault}
+                          sourceOrigin={sourceOrigin}
                           rowKey={provider.name}
                           onStage={onStage}
                           onClose={() => close(provider.name, `${editorId}-edit`)}
@@ -455,6 +463,7 @@ export function ProvidersCard({
             takenNames={takenNames}
             inUse={false}
             vault={vault}
+            sourceOrigin={sourceOrigin}
             rowKey={ADD_ROW_KEY}
             // Staging hands the change to its own strip above, so the blank
             // form closes rather than lingering as a second copy of a provider
