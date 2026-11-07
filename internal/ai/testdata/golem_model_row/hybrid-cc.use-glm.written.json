@@ -1,0 +1,192 @@
+{
+  "defaults": {
+    "agent": "agent-m",
+    "analysis": "cc-pro",
+    "chat": "general",
+    "code-review": "cc-review",
+    "completion": "coding",
+    "embedding": "embedding",
+    "reasoning": "cc-pro"
+  },
+  "models": {
+    "agent": {
+      "capabilities": [
+        "chat",
+        "stream",
+        "tool_call"
+      ],
+      "description": "Agent / tool-use - 86.4% tau2-bench, native function calling, 80.0% LiveCodeBench.",
+      "fallbacks": [
+        "fast",
+        "lightweight",
+        "cc-coder"
+      ],
+      "name": "gemma4:31b",
+      "provider": "llamacpp",
+      "type": "dense"
+    },
+    "agent-m": {
+      "capabilities": [
+        "chat",
+        "stream",
+        "tool_call"
+      ],
+      "description": "Qwen 3.6 MoE - 73.4% SWE-bench, 3B active for fast inference, tool use.",
+      "fallbacks": [
+        "lightweight",
+        "cc-coder"
+      ],
+      "name": "zai-org/GLM-5.2",
+      "provider": "commandcode",
+      "type": "moe"
+    },
+    "cc-agent": {
+      "capabilities": [
+        "chat",
+        "stream",
+        "tool_call"
+      ],
+      "description": "CommandCode GOAT: primary cloud agent. Full $70 allocation ($1.40/$4.40 per 1M), 1M ctx, tools verified 2026-08-16. Reasoning model - needs generous max_tokens.",
+      "fallbacks": [
+        "cc-coder",
+        "fast"
+      ],
+      "name": "zai-org/GLM-5.2",
+      "provider": "commandcode",
+      "type": "moe"
+    },
+    "cc-coder": {
+      "capabilities": [
+        "chat",
+        "stream",
+        "tool_call"
+      ],
+      "description": "CommandCode GOAT: coding-tuned, strong tool calling, 256K ctx. Cloud coding + agent bursts.",
+      "fallbacks": [
+        "cc-pro"
+      ],
+      "name": "moonshotai/Kimi-K2.7-Code",
+      "provider": "commandcode",
+      "type": "moe"
+    },
+    "cc-flash": {
+      "description": "CommandCode GOAT: cheap bulk workhorse. Full $70 allocation ($0.22/$0.66 per 1M), 1M ctx. Summaries, drafts, scaffolds.",
+      "fallbacks": [
+        "cc-mimo"
+      ],
+      "name": "deepseek/deepseek-v4-flash",
+      "provider": "commandcode",
+      "type": "moe"
+    },
+    "cc-grok": {
+      "description": "CommandCode GOAT: frontier alternate, 500K ctx. Fallback for cc-review.",
+      "fallbacks": [
+        "cc-luna"
+      ],
+      "name": "xai/grok-4.6",
+      "provider": "commandcode",
+      "type": "dense"
+    },
+    "cc-luna": {
+      "description": "CommandCode GOAT: only GPT in plan. Fast frontier, zero reasoning-token overhead - interactive quick asks, cross-family judge.",
+      "name": "gpt-5.6-luna",
+      "provider": "commandcode",
+      "type": "dense"
+    },
+    "cc-mimo": {
+      "description": "CommandCode GOAT: 98% off promo while it lasts - near-free 1M-ctx burst model.",
+      "name": "xiaomi/mimo-v2.5-pro",
+      "provider": "commandcode",
+      "type": "moe"
+    },
+    "cc-pro": {
+      "description": "CommandCode GOAT: analysis/reasoning workhorse, 1M ctx. Reasoning model - needs generous max_tokens.",
+      "fallbacks": [
+        "cc-flash"
+      ],
+      "name": "deepseek/deepseek-v4-pro",
+      "provider": "commandcode",
+      "type": "moe"
+    },
+    "cc-review": {
+      "description": "CommandCode GOAT: frontier-tier review/consults, 1M ctx. Likely $20 credit tier - single-shot, never loops.",
+      "fallbacks": [
+        "cc-grok"
+      ],
+      "name": "moonshotai/Kimi-K3",
+      "provider": "commandcode",
+      "type": "moe"
+    },
+    "coding": {
+      "description": "Qwen3-Coder-Next MoE - 70.6% SWE-bench, dedicated agentic coding.",
+      "fallbacks": [
+        "fast",
+        "lightweight",
+        "cc-coder"
+      ],
+      "name": "qwen3-coder-next:latest",
+      "provider": "llamacpp",
+      "type": "moe"
+    },
+    "embedding": {
+      "description": "Qwen3 embedding - #1 MTEB multilingual, strong code retrieval. llama-swap entry must start llama-server with --embeddings.",
+      "name": "qwen3-embedding:8b",
+      "provider": "llamacpp",
+      "type": "embedding"
+    },
+    "fast": {
+      "capabilities": [
+        "chat",
+        "stream",
+        "tool_call"
+      ],
+      "description": "Qwen 3.6 MoE - 73.4% SWE-bench, 3B active for fast inference, tool use.",
+      "fallbacks": [
+        "lightweight",
+        "cc-coder"
+      ],
+      "name": "qwen3.6:35b-a3b",
+      "provider": "llamacpp",
+      "type": "moe"
+    },
+    "general": {
+      "description": "Gemma 4 31B dense - reasoning, analysis, multimodal; configurable thinking mode. Served on demand via llama-swap.",
+      "fallbacks": [
+        "fast",
+        "lightweight",
+        "cc-pro"
+      ],
+      "name": "gemma4:31b",
+      "provider": "llamacpp",
+      "type": "dense"
+    },
+    "judge": {
+      "description": "Local LLM-as-judge for trace replay scoring; must not score itself in llm-bench.",
+      "fallbacks": [
+        "fast",
+        "lightweight"
+      ],
+      "name": "gemma4:31b",
+      "provider": "llamacpp",
+      "type": "dense"
+    },
+    "lightweight": {
+      "description": "Qwen3.5 9B MTP - lightweight FIM / inline completion, simple tasks.",
+      "name": "qwen3.5:9b-mtp",
+      "provider": "llamacpp",
+      "type": "dense"
+    }
+  },
+  "providers": {
+    "commandcode": {
+      "api_format": "openai-compat",
+      "base_url": "https://api.commandcode.ai/provider",
+      "timeout": "0s"
+    },
+    "llamacpp": {
+      "api_format": "openai-compat",
+      "base_url": "http://127.0.0.1:8090",
+      "timeout": "0s"
+    }
+  }
+}

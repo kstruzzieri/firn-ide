@@ -57,7 +57,8 @@ import { AssignList, type AssignOption } from './AssignList';
 import { Cell, Staged, Was } from './Cell';
 import styles from './GolemConfig.module.css';
 import { RouteEditor } from './RouteEditor';
-import { routeRowKey, routeUseCases } from './routingRows';
+import { GOLEM_USE_CASE } from './golemModel';
+import { roleChain, routeRowKey, routeUseCases } from './routingRows';
 import { StatusText, type StatusTone } from './StatusText';
 
 /** What a row paints: the staged intent when there is one, else the applied truth. */
@@ -214,7 +215,19 @@ export interface RoutingCardProps {
   /** `keep` accepts retained changes in place, clearing their Needs review. */
   onStage: (changes: Change[], drop: string[], keep?: Change[]) => void;
   onUnstagedChange: (rowKey: string, unstaged: boolean) => void;
+  /**
+   * [#490] Shared configuration is a fold, closed by default on the page. The
+   * workspace owns its state (it outlives a remount); rendered on its own the
+   * card starts open.
+   */
+  open?: boolean;
+  onToggle?: () => void;
+  /** Why nothing here can be edited, as visible text; '' when it can. */
+  lockReason?: string;
 }
+
+/** The DOM id of the Shared configuration fold. */
+export const SHARED_BODY_ID = 'golem-config-shared-body';
 
 /** The DOM id of a defined-model row: a `role-remove` chip's only target. */
 const definedRowId = (role: string): string => `golem-defined-row-${role}`;
@@ -235,8 +248,20 @@ export function RoutingCard({
   focusRequest = null,
   onStage,
   onUnstagedChange,
+  open: foldOpen,
+  onToggle,
+  lockReason = '',
 }: RoutingCardProps) {
+  const [ownFold, setOwnFold] = useState(true);
+  const shared = foldOpen ?? ownFold;
+  const toggleShared = onToggle ?? (() => setOwnFold((current) => !current));
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  /**
+   * [#490] Use case → the name its editor's filter opens with: the Golem
+   * model picker's pointer hands a name it does not list to the agent route
+   * editor. Read once, when that editor mounts.
+   */
+  const [queries, setQueries] = useState<ReadonlyMap<string, string>>(new Map());
   /** A fresh object per request, so a repeated chip click focuses again. */
   const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
   /**
@@ -290,6 +315,12 @@ export function RoutingCard({
       next.delete(useCase);
       return next;
     });
+    setQueries((current) => {
+      if (!current.has(useCase)) return current;
+      const next = new Map(current);
+      next.delete(useCase);
+      return next;
+    });
     if (elementId !== undefined) setPendingFocus({ elementId });
   };
 
@@ -328,6 +359,8 @@ export function RoutingCard({
     const index = routeUseCases(routes).indexOf(name);
     if (index < 0) return;
     const editorId = `golem-route-editor-${index}`;
+    const query = focusRequest.query;
+    if (query !== undefined) setQueries((current) => new Map(current).set(name, query));
     openEditor(name, `${editorId}-filter`); // the Model field, not the fieldset
     // [C26] Never interpolate an identifier into a selector (quotes are legal in
     // use-case names); the row carries an index-derived id instead.
@@ -478,15 +511,396 @@ export function RoutingCard({
     return clauses.length === 0 ? text : `${text} ${clauses.join('; ')}.`;
   };
 
+  /** One route row and its detail rows, as one table renders it. */
+  const renderRoute = (useCase: string, index: number) => {
+    const role = byUseCase.get(useCase) ?? null;
+    const applied = role === null ? null : (byRole.get(role) ?? null);
+    const staged = stagedFor(useCase);
+    const governing = staged === undefined ? governingChange(useCase, applied) : undefined;
+    const view: RouteView | null =
+      staged?.kind === 'route'
+        ? {
+            provider: staged.modelFacts.provider,
+            model: staged.modelFacts.model,
+            think: staged.thinkMode,
+            caps: staged.exposedCaps,
+          }
+        : staged?.kind === 'route-unassign' || applied === null
+          ? null
+          : {
+              provider: applied.provider,
+              model: applied.modelName,
+              think: governing?.override === true ? governing.change.thinkMode : applied.thinkMode,
+              // Never empty: the editor and both request parsers refuse an
+              // empty exposure [W5-1].
+              caps:
+                governing !== undefined
+                  ? governing.change.exposedCaps
+                  : applied.exposedCapabilities,
+            };
+    const markers = rows.get(useCase);
+    const reach = routeReach.get(useCase);
+    const status = routeStatus(view, useCase, markers, reach?.reach, sourceReplaced);
+    const expanded = open.has(useCase);
+    const editorId = `golem-route-editor-${index}`;
+    const notices = rowDiagnostics(useCase);
+    /**
+     * The routes this row's APPLIED model also serves after Apply, from
+     * the fallback-inclusive `routedUseCases` — "also serves" is true of a
+     * fallback route, where RouteEditor's fork notice ("run on") names
+     * the assigned routes only (`usedByOf`). That notice does not drop
+     * staged departures and unassigns as this marker does below (a
+     * follow-up candidate); for any ONE row the two are never on screen
+     * together, since this marker hides while that row is expanded.
+     * While a RETARGET is staged the row paints another model and this
+     * coupling belongs to the one being replaced, so the marker is
+     * suppressed; an override paints the applied model, whose coupling
+     * holds. [W6] A sibling this draft routes DIRECTLY off the model leaves
+     * (`leavingRoutes`: a retarget rewrites its role, a fork copies it away);
+     * one that reaches the model only through its chain stays — a retarget
+     * keeps its role's fallbacks — and an unassign leaves every chain.
+     */
+    const paintsAnotherModel =
+      staged?.kind === 'route' &&
+      (applied === null ||
+        staged.modelFacts.provider !== applied.provider ||
+        staged.modelFacts.model !== applied.modelName);
+    const leaving = applied === null ? undefined : leavingRoutes(base, stagedByUseCase, applied);
+    const shared = paintsAnotherModel
+      ? []
+      : (applied?.routedUseCases ?? []).filter(
+          (other) =>
+            other !== useCase &&
+            leaving?.has(other) !== true &&
+            stagedFor(other)?.kind !== 'route-unassign'
+        );
+    /**
+     * [W6] The coupling fact stays wherever the reach sentence does not
+     * already name it: an edited row's sentence names the same-model and
+     * fallback routes its change reaches; a same-model row's names the
+     * edited routes; a fallback row's sentence is about ANOTHER model, so
+     * its own model's siblings all stay.
+     */
+    const named =
+      reach === undefined
+        ? []
+        : reach.reach === 'edited'
+          ? [...reach.group.sameModel, ...reach.group.fallback]
+          : reach.reach === 'same-model'
+            ? reach.group.edited.map((edit) => edit.useCase)
+            : [];
+    const unsaid = shared.filter((other) => !named.includes(other));
+    // Ruling 7: one `WAS` line per field whose APPLIED value differs — `applied`
+    // being the DRAFT BASE row [A2]. [C23] The stripe itself follows the projected
+    // row marker — the shipped definition of "this row has a staged change" — so
+    // think-only, exposure-only and assign-into-empty changes stripe too. [C5] Only
+    // `modified`: `keyStaged` is set on PROVIDER rows alone, so the disjunct this
+    // line used to carry could never be true here.
+    const changed = markers?.modified === true;
+    const wasModel =
+      staged?.kind === 'route' && applied !== null && staged.modelFacts.model !== applied.modelName
+        ? applied.modelName
+        : null;
+    const wasProvider =
+      staged?.kind === 'route' &&
+      applied !== null &&
+      staged.modelFacts.provider !== applied.provider
+        ? applied.provider
+        : null;
+    /** The think mode about to land on this row: its own staged change's, or — only for an override group — the sibling's. */
+    const incomingThink =
+      staged?.kind === 'route'
+        ? staged.thinkMode
+        : governing?.override === true
+          ? governing.change.thinkMode
+          : undefined;
+    const wasThink =
+      incomingThink !== undefined && applied !== null && incomingThink !== applied.thinkMode
+        ? applied.thinkMode === ''
+          ? '—'
+          : applied.thinkMode
+        : null;
+    const wasAssigned =
+      staged?.kind === 'route-unassign' && applied !== null ? applied.modelName : null;
+    // [W6] This row's own exposure before → after; pills only where the row's
+    // own values change (edited / same-model), never on a fallback row.
+    const caps =
+      reach !== undefined && reach.reach !== 'fallback' && applied !== null && view !== null
+        ? capDiff(applied.exposedCapabilities, view.caps)
+        : null;
+    const showCaps = caps !== null && (caps.added.length > 0 || caps.removed.length > 0);
+    const ownThink = wasThink !== null && incomingThink !== undefined ? incomingThink : null;
+    /**
+     * #344: the role this row runs through, beneath its use case, so a
+     * role that shares a use case's name no longer reads as a
+     * contradiction with Defined models. Only while Apply keeps it: a
+     * staged route change that is not an override (the backend's full
+     * `sameModelFacts` tuple, not just provider and model) is a retarget
+     * that keeps the name or a fork that mints `<useCase>-m`, and the
+     * projection carries no fallback references to tell the two apart. A
+     * row with no model already names its role in the model cell.
+     * ponytail: the applied name only — #353 makes the role a staged
+     * value of its own.
+     */
+    const keepsRole =
+      staged?.kind !== 'route' || (applied !== null && sameModelFacts(applied, staged.modelFacts));
+    const shownRole = view !== null && keepsRole ? role : null;
+    const chain = shownRole === null ? null : roleChain(shownRole, models);
+    const row = (
+      <div
+        key={`row:${useCase}`}
+        id={`${editorId}-row`}
+        role="row"
+        data-testid={`route-row-${useCase}`}
+        className={styles.row}
+        data-expanded={expanded || undefined}
+        data-changed={changed || undefined}
+        data-mark={reach?.reach}
+        data-flash={flashNonce(`route:${useCase}`)}
+      >
+        <Cell className={styles.useCase}>
+          {/* [#490] Firn names only the consumer it has; any other key
+                      reads as itself. */}
+          {useCase === GOLEM_USE_CASE ? (
+            <>
+              <span className={styles.consumer}>Golem chat and commit messages</span>
+              <small className={styles.roleLine}>{useCase}</small>
+            </>
+          ) : (
+            useCase
+          )}
+          {expanded && <span className={styles.editingTag}>editing</span>}
+          {shownRole !== null && (
+            <small className={styles.roleLine} data-testid="route-role">
+              <b>role</b> {shownRole}
+            </small>
+          )}
+          {/* [#490] The effective chain, read-only, each role once. */}
+          {chain !== null && (
+            <small className={styles.roleLine} data-testid="route-chain">
+              {chain.length === 0 ? 'No fallbacks' : `Falls back to ${chain.join(', ')}`}
+            </small>
+          )}
+          {useCase === GOLEM_USE_CASE && chain !== null && chain.length > 0 && (
+            <small className={styles.roleLine}>
+              Firn sends only to the first; the golem CLI uses the rest
+            </small>
+          )}
+        </Cell>
+        <Cell className={styles.providerCell}>
+          {view ? (
+            wasProvider !== null ? (
+              <Staged value={view.provider} />
+            ) : (
+              view.provider
+            )
+          ) : (
+            <span className={styles.absent}>—</span>
+          )}
+          {wasProvider !== null && <Was value={wasProvider} />}
+        </Cell>
+        <Cell className={styles.modelCell}>
+          {/* The role a broken route still names is the only lead a
+                      reader has for repairing it externally, so it is
+                      meaningful copy rather than an inert placeholder. */}
+          {view ? (
+            <>
+              {wasModel !== null ? <Staged value={view.model} /> : view.model}
+              {/* The coupling, surfaced BEFORE the editor opens: a neutral
+                          fact, the sibling names visible [W6]. Hidden while the row
+                          is expanded — the editor's notice names the routes assigned
+                          to the model (its fork sentence) and whatever the chosen
+                          model reaches (its reach sentence) — and while the row is
+                          reached (the sentence below carries it). */}
+              {!expanded && unsaid.length > 0 && (
+                <span className={styles.sharedMarker}>
+                  {`Model also serves ${listUseCases(unsaid)}`}
+                </span>
+              )}
+            </>
+          ) : role !== null && staged?.kind !== 'route-unassign' ? (
+            `role ${role} has no model`
+          ) : (
+            <span className={styles.absent}>—</span>
+          )}
+          {(wasModel ?? wasAssigned) !== null && <Was value={(wasModel ?? wasAssigned)!} />}
+          {showCaps && caps !== null && (
+            <span className={styles.capsRow}>
+              {/* A visual echo at every width; the list carries the name for AT. */}
+              <b className={styles.capsLabel} aria-hidden="true">
+                Capabilities
+              </b>
+              <span role="list" aria-label="Capabilities" className={styles.capPills}>
+                {caps.all.map((cap) => (
+                  <span role="listitem" key={cap} className={styles.capPill}>
+                    {caps.added.includes(cap) ? (
+                      <Staged value={`+ ${cap}`} />
+                    ) : caps.removed.includes(cap) ? (
+                      <Staged value={`− ${cap}`} removed />
+                    ) : (
+                      cap
+                    )}
+                  </span>
+                ))}
+              </span>
+            </span>
+          )}
+          {/* [W6] How the staged change reaches this row, in words — the
+                      fact the editor's disclosure tells, surfaced on the row. */}
+          {reach !== undefined && (
+            <small className={styles.reachSentence} data-testid="reach-sentence">
+              {reachSentence(useCase, reach, {
+                added: caps?.added ?? [],
+                removed: caps?.removed ?? [],
+                think: ownThink,
+              })}
+            </small>
+          )}
+        </Cell>
+        <Cell label="Think" className={styles.metaCell}>
+          {view && view.think !== '' ? (
+            wasThink !== null ? (
+              <Staged value={view.think} />
+            ) : (
+              view.think
+            )
+          ) : (
+            <span className={styles.absent}>—</span>
+          )}
+          {wasThink !== null && <Was value={wasThink} />}
+        </Cell>
+        {/* Ruling 6: an open row carries the EDITING tag beside its use
+                    case, so the status column reports nothing while it edits. */}
+        <Cell className={styles.statusCell}>
+          {!expanded && (
+            <StatusText tone={status.tone} detail={status.detail}>
+              {status.label}
+            </StatusText>
+          )}
+        </Cell>
+        <Cell className={styles.actionsCell}>
+          {editable && (
+            <button
+              type="button"
+              id={`${editorId}-edit`}
+              className={`${styles.button} ${styles.small}`}
+              aria-expanded={expanded}
+              aria-controls={editorId}
+              onClick={() => openEditor(useCase, editorId)}
+            >
+              {role === null ? 'Assign' : 'Edit'}
+              <span className={styles.srOnly}>{` route ${useCase}`}</span>
+            </button>
+          )}
+        </Cell>
+      </div>
+    );
+
+    const detail = (
+      <>
+        {notices.map((diagnostic, position) => (
+          <div key={`${diagnostic.code}-${position}`} role="row" className={styles.detailRow}>
+            <p
+              role="cell"
+              aria-colspan={6}
+              className={styles.rowDiagnostic}
+              data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
+            >
+              {rowDiagnosticText(useCase, diagnostic)}
+            </p>
+          </div>
+        ))}
+        {expanded && (
+          <div role="row" className={styles.detailRow}>
+            {/* [C21] Visual spanning is not accessible spanning: name the span. */}
+            <div role="cell" aria-colspan={6} className={styles.editorCell}>
+              <RouteEditor
+                id={editorId}
+                useCase={useCase}
+                role={role}
+                current={applied}
+                providers={providers}
+                models={models}
+                base={base}
+                draft={draft}
+                staged={staged}
+                preselect={preselect.get(useCase)}
+                initialQuery={queries.get(useCase)}
+                rowKey={routeRowKey(useCase)}
+                onStage={onStage}
+                onClose={() => close(useCase, `${editorId}-edit`)}
+                onUnstagedChange={onUnstagedChange}
+                onStaged={(message) => announceStaged(useCase, editorId, message)}
+              />
+            </div>
+          </div>
+        )}
+      </>
+    );
+
+    // Ruling 6: an open row and its editor are ONE outlined group. [C6] The wrapper's
+    // key differs from the bare row's: with the same key React would reuse the row's
+    // DOM node AS the group and slide a new row inside it. [X1] The discriminator is a
+    // PREFIX, not a suffix: `a` and `a:group` are both legal use-case names, so a
+    // suffix would let one row's group key collide with another row's key.
+    return expanded || notices.length > 0 ? (
+      <div
+        key={`group:${useCase}`}
+        role="rowgroup"
+        className={expanded ? styles.editGroup : styles.noticeGroup}
+      >
+        {row}
+        {detail}
+      </div>
+    ) : (
+      row
+    );
+  };
+
+  /** [#490] One table per group; each row keeps its index among every use case. */
+  const table = (labelId: string, useCases: readonly string[]) => (
+    <div className={`${styles.table} ${styles.routeTable}`} role="table" aria-labelledby={labelId}>
+      <div className={styles.headRow} role="row">
+        <span role="columnheader">Use case</span>
+        <span role="columnheader">Provider</span>
+        <span role="columnheader">Model</span>
+        <span role="columnheader">Think</span>
+        <span role="columnheader">Status</span>
+        <span role="columnheader">
+          <span className={styles.srOnly}>Actions</span>
+        </span>
+      </div>
+      {useCases.map((useCase) => renderRoute(useCase, allUseCases.indexOf(useCase)))}
+    </div>
+  );
+  const allUseCases = routeUseCases(routes);
+  const otherUseCases = allUseCases.filter((useCase) => useCase !== GOLEM_USE_CASE);
+  const routeCount = routes.length;
+  const firnUses = routes.some((route) => route.useCase === GOLEM_USE_CASE) ? 1 : 0;
+
   return (
     <section className={styles.card} aria-labelledby="golem-config-routing">
       <div className={styles.cardHead}>
+        {/* [#490] A disclosure, folded on the page: its state, the fold it
+            controls, focus kept on it. The fold stays mounted, hidden. */}
         <h3 id="golem-config-routing" className={styles.cardTitle}>
-          Model Routing
+          <button
+            type="button"
+            className={styles.foldToggle}
+            aria-expanded={shared}
+            aria-controls={SHARED_BODY_ID}
+            onClick={toggleShared}
+          >
+            <span className={styles.caret} data-open={shared || undefined} aria-hidden="true" />
+            Shared configuration
+          </button>
         </h3>
-        <span className={styles.hint}>assign a model to each use case</span>
+        <span className={styles.hint}>
+          {`${routeCount} route${routeCount === 1 ? '' : 's'} in this configuration; Firn uses ${firnUses}`}
+        </span>
       </div>
-      <div className={styles.cardBody}>
+      <div className={styles.cardBody} id={SHARED_BODY_ID} hidden={!shared}>
+        {lockReason !== '' && <p className={styles.fieldHint}>{lockReason}</p>}
         {/* §4.6 bootstrap: an empty section names its prerequisite. The rows
             below still list every known use case, so the offer is visible. */}
         {models.length === 0 && (
@@ -494,356 +908,14 @@ export function RoutingCard({
             Add a provider, then assign a model to each use case — nothing is routed yet.
           </p>
         )}
-        <div
-          className={`${styles.table} ${styles.routeTable}`}
-          role="table"
-          aria-label="Model routing"
-        >
-          <div className={styles.headRow} role="row">
-            <span role="columnheader">Use case</span>
-            <span role="columnheader">Provider</span>
-            <span role="columnheader">Model</span>
-            <span role="columnheader">Think</span>
-            <span role="columnheader">Status</span>
-            <span role="columnheader">
-              <span className={styles.srOnly}>Actions</span>
-            </span>
-          </div>
-          {routeUseCases(routes).map((useCase, index) => {
-            const role = byUseCase.get(useCase) ?? null;
-            const applied = role === null ? null : (byRole.get(role) ?? null);
-            const staged = stagedFor(useCase);
-            const governing = staged === undefined ? governingChange(useCase, applied) : undefined;
-            const view: RouteView | null =
-              staged?.kind === 'route'
-                ? {
-                    provider: staged.modelFacts.provider,
-                    model: staged.modelFacts.model,
-                    think: staged.thinkMode,
-                    caps: staged.exposedCaps,
-                  }
-                : staged?.kind === 'route-unassign' || applied === null
-                  ? null
-                  : {
-                      provider: applied.provider,
-                      model: applied.modelName,
-                      think:
-                        governing?.override === true
-                          ? governing.change.thinkMode
-                          : applied.thinkMode,
-                      // Never empty: the editor and both request parsers refuse an
-                      // empty exposure [W5-1].
-                      caps:
-                        governing !== undefined
-                          ? governing.change.exposedCaps
-                          : applied.exposedCapabilities,
-                    };
-            const markers = rows.get(useCase);
-            const reach = routeReach.get(useCase);
-            const status = routeStatus(view, useCase, markers, reach?.reach, sourceReplaced);
-            const expanded = open.has(useCase);
-            const editorId = `golem-route-editor-${index}`;
-            const notices = rowDiagnostics(useCase);
-            /**
-             * The routes this row's APPLIED model also serves after Apply, from
-             * the fallback-inclusive `routedUseCases` — "also serves" is true of a
-             * fallback route, where RouteEditor's fork notice ("run on") names
-             * the assigned routes only (`usedByOf`). That notice does not drop
-             * staged departures and unassigns as this marker does below (a
-             * follow-up candidate); for any ONE row the two are never on screen
-             * together, since this marker hides while that row is expanded.
-             * While a RETARGET is staged the row paints another model and this
-             * coupling belongs to the one being replaced, so the marker is
-             * suppressed; an override paints the applied model, whose coupling
-             * holds. [W6] A sibling this draft routes DIRECTLY off the model leaves
-             * (`leavingRoutes`: a retarget rewrites its role, a fork copies it away);
-             * one that reaches the model only through its chain stays — a retarget
-             * keeps its role's fallbacks — and an unassign leaves every chain.
-             */
-            const paintsAnotherModel =
-              staged?.kind === 'route' &&
-              (applied === null ||
-                staged.modelFacts.provider !== applied.provider ||
-                staged.modelFacts.model !== applied.modelName);
-            const leaving =
-              applied === null ? undefined : leavingRoutes(base, stagedByUseCase, applied);
-            const shared = paintsAnotherModel
-              ? []
-              : (applied?.routedUseCases ?? []).filter(
-                  (other) =>
-                    other !== useCase &&
-                    leaving?.has(other) !== true &&
-                    stagedFor(other)?.kind !== 'route-unassign'
-                );
-            /**
-             * [W6] The coupling fact stays wherever the reach sentence does not
-             * already name it: an edited row's sentence names the same-model and
-             * fallback routes its change reaches; a same-model row's names the
-             * edited routes; a fallback row's sentence is about ANOTHER model, so
-             * its own model's siblings all stay.
-             */
-            const named =
-              reach === undefined
-                ? []
-                : reach.reach === 'edited'
-                  ? [...reach.group.sameModel, ...reach.group.fallback]
-                  : reach.reach === 'same-model'
-                    ? reach.group.edited.map((edit) => edit.useCase)
-                    : [];
-            const unsaid = shared.filter((other) => !named.includes(other));
-            // Ruling 7: one `WAS` line per field whose APPLIED value differs — `applied`
-            // being the DRAFT BASE row [A2]. [C23] The stripe itself follows the projected
-            // row marker — the shipped definition of "this row has a staged change" — so
-            // think-only, exposure-only and assign-into-empty changes stripe too. [C5] Only
-            // `modified`: `keyStaged` is set on PROVIDER rows alone, so the disjunct this
-            // line used to carry could never be true here.
-            const changed = markers?.modified === true;
-            const wasModel =
-              staged?.kind === 'route' &&
-              applied !== null &&
-              staged.modelFacts.model !== applied.modelName
-                ? applied.modelName
-                : null;
-            const wasProvider =
-              staged?.kind === 'route' &&
-              applied !== null &&
-              staged.modelFacts.provider !== applied.provider
-                ? applied.provider
-                : null;
-            /** The think mode about to land on this row: its own staged change's, or — only for an override group — the sibling's. */
-            const incomingThink =
-              staged?.kind === 'route'
-                ? staged.thinkMode
-                : governing?.override === true
-                  ? governing.change.thinkMode
-                  : undefined;
-            const wasThink =
-              incomingThink !== undefined && applied !== null && incomingThink !== applied.thinkMode
-                ? applied.thinkMode === ''
-                  ? '—'
-                  : applied.thinkMode
-                : null;
-            const wasAssigned =
-              staged?.kind === 'route-unassign' && applied !== null ? applied.modelName : null;
-            // [W6] This row's own exposure before → after; pills only where the row's
-            // own values change (edited / same-model), never on a fallback row.
-            const caps =
-              reach !== undefined && reach.reach !== 'fallback' && applied !== null && view !== null
-                ? capDiff(applied.exposedCapabilities, view.caps)
-                : null;
-            const showCaps = caps !== null && (caps.added.length > 0 || caps.removed.length > 0);
-            const ownThink =
-              wasThink !== null && incomingThink !== undefined ? incomingThink : null;
-            /**
-             * #344: the role this row runs through, beneath its use case, so a
-             * role that shares a use case's name no longer reads as a
-             * contradiction with Defined models. Only while Apply keeps it: a
-             * staged route change that is not an override (the backend's full
-             * `sameModelFacts` tuple, not just provider and model) is a retarget
-             * that keeps the name or a fork that mints `<useCase>-m`, and the
-             * projection carries no fallback references to tell the two apart. A
-             * row with no model already names its role in the model cell.
-             * ponytail: the applied name only — #353 makes the role a staged
-             * value of its own.
-             */
-            const keepsRole =
-              staged?.kind !== 'route' ||
-              (applied !== null && sameModelFacts(applied, staged.modelFacts));
-            const shownRole = view !== null && keepsRole ? role : null;
-            const row = (
-              <div
-                key={`row:${useCase}`}
-                id={`${editorId}-row`}
-                role="row"
-                data-testid={`route-row-${useCase}`}
-                className={styles.row}
-                data-expanded={expanded || undefined}
-                data-changed={changed || undefined}
-                data-mark={reach?.reach}
-                data-flash={flashNonce(`route:${useCase}`)}
-              >
-                <Cell className={styles.useCase}>
-                  {useCase}
-                  {expanded && <span className={styles.editingTag}>editing</span>}
-                  {shownRole !== null && (
-                    <small className={styles.roleLine}>
-                      <b>role</b> {shownRole}
-                    </small>
-                  )}
-                </Cell>
-                <Cell className={styles.providerCell}>
-                  {view ? (
-                    wasProvider !== null ? (
-                      <Staged value={view.provider} />
-                    ) : (
-                      view.provider
-                    )
-                  ) : (
-                    <span className={styles.absent}>—</span>
-                  )}
-                  {wasProvider !== null && <Was value={wasProvider} />}
-                </Cell>
-                <Cell className={styles.modelCell}>
-                  {/* The role a broken route still names is the only lead a
-                      reader has for repairing it externally, so it is
-                      meaningful copy rather than an inert placeholder. */}
-                  {view ? (
-                    <>
-                      {wasModel !== null ? <Staged value={view.model} /> : view.model}
-                      {/* The coupling, surfaced BEFORE the editor opens: a neutral
-                          fact, the sibling names visible [W6]. Hidden while the row
-                          is expanded — the editor's notice names the routes assigned
-                          to the model (its fork sentence) and whatever the chosen
-                          model reaches (its reach sentence) — and while the row is
-                          reached (the sentence below carries it). */}
-                      {!expanded && unsaid.length > 0 && (
-                        <span className={styles.sharedMarker}>
-                          {`Model also serves ${listUseCases(unsaid)}`}
-                        </span>
-                      )}
-                    </>
-                  ) : role !== null && staged?.kind !== 'route-unassign' ? (
-                    `role ${role} has no model`
-                  ) : (
-                    <span className={styles.absent}>—</span>
-                  )}
-                  {(wasModel ?? wasAssigned) !== null && <Was value={(wasModel ?? wasAssigned)!} />}
-                  {showCaps && caps !== null && (
-                    <span className={styles.capsRow}>
-                      {/* A visual echo at every width; the list carries the name for AT. */}
-                      <b className={styles.capsLabel} aria-hidden="true">
-                        Capabilities
-                      </b>
-                      <span role="list" aria-label="Capabilities" className={styles.capPills}>
-                        {caps.all.map((cap) => (
-                          <span role="listitem" key={cap} className={styles.capPill}>
-                            {caps.added.includes(cap) ? (
-                              <Staged value={`+ ${cap}`} />
-                            ) : caps.removed.includes(cap) ? (
-                              <Staged value={`− ${cap}`} removed />
-                            ) : (
-                              cap
-                            )}
-                          </span>
-                        ))}
-                      </span>
-                    </span>
-                  )}
-                  {/* [W6] How the staged change reaches this row, in words — the
-                      fact the editor's disclosure tells, surfaced on the row. */}
-                  {reach !== undefined && (
-                    <small className={styles.reachSentence} data-testid="reach-sentence">
-                      {reachSentence(useCase, reach, {
-                        added: caps?.added ?? [],
-                        removed: caps?.removed ?? [],
-                        think: ownThink,
-                      })}
-                    </small>
-                  )}
-                </Cell>
-                <Cell label="Think" className={styles.metaCell}>
-                  {view && view.think !== '' ? (
-                    wasThink !== null ? (
-                      <Staged value={view.think} />
-                    ) : (
-                      view.think
-                    )
-                  ) : (
-                    <span className={styles.absent}>—</span>
-                  )}
-                  {wasThink !== null && <Was value={wasThink} />}
-                </Cell>
-                {/* Ruling 6: an open row carries the EDITING tag beside its use
-                    case, so the status column reports nothing while it edits. */}
-                <Cell className={styles.statusCell}>
-                  {!expanded && (
-                    <StatusText tone={status.tone} detail={status.detail}>
-                      {status.label}
-                    </StatusText>
-                  )}
-                </Cell>
-                <Cell className={styles.actionsCell}>
-                  {editable && (
-                    <button
-                      type="button"
-                      id={`${editorId}-edit`}
-                      className={`${styles.button} ${styles.small}`}
-                      aria-expanded={expanded}
-                      aria-controls={editorId}
-                      onClick={() => openEditor(useCase, editorId)}
-                    >
-                      {role === null ? 'Assign' : 'Edit'}
-                      <span className={styles.srOnly}>{` route ${useCase}`}</span>
-                    </button>
-                  )}
-                </Cell>
-              </div>
-            );
-
-            const detail = (
-              <>
-                {notices.map((diagnostic, position) => (
-                  <div
-                    key={`${diagnostic.code}-${position}`}
-                    role="row"
-                    className={styles.detailRow}
-                  >
-                    <p
-                      role="cell"
-                      aria-colspan={6}
-                      className={styles.rowDiagnostic}
-                      data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
-                    >
-                      {rowDiagnosticText(useCase, diagnostic)}
-                    </p>
-                  </div>
-                ))}
-                {expanded && (
-                  <div role="row" className={styles.detailRow}>
-                    {/* [C21] Visual spanning is not accessible spanning: name the span. */}
-                    <div role="cell" aria-colspan={6} className={styles.editorCell}>
-                      <RouteEditor
-                        id={editorId}
-                        useCase={useCase}
-                        role={role}
-                        current={applied}
-                        providers={providers}
-                        models={models}
-                        base={base}
-                        draft={draft}
-                        staged={staged}
-                        preselect={preselect.get(useCase)}
-                        rowKey={routeRowKey(useCase)}
-                        onStage={onStage}
-                        onClose={() => close(useCase, `${editorId}-edit`)}
-                        onUnstagedChange={onUnstagedChange}
-                        onStaged={(message) => announceStaged(useCase, editorId, message)}
-                      />
-                    </div>
-                  </div>
-                )}
-              </>
-            );
-
-            // Ruling 6: an open row and its editor are ONE outlined group. [C6] The wrapper's
-            // key differs from the bare row's: with the same key React would reuse the row's
-            // DOM node AS the group and slide a new row inside it. [X1] The discriminator is a
-            // PREFIX, not a suffix: `a` and `a:group` are both legal use-case names, so a
-            // suffix would let one row's group key collide with another row's key.
-            return expanded || notices.length > 0 ? (
-              <div
-                key={`group:${useCase}`}
-                role="rowgroup"
-                className={expanded ? styles.editGroup : styles.noticeGroup}
-              >
-                {row}
-                {detail}
-              </div>
-            ) : (
-              row
-            );
-          })}
-        </div>
+        <h4 id="golem-config-used-by-firn" className={styles.subgroup}>
+          Used by Firn
+        </h4>
+        {table('golem-config-used-by-firn', [GOLEM_USE_CASE])}
+        <h4 id="golem-config-other-routes" className={styles.subgroup}>
+          Other configured routes
+        </h4>
+        {table('golem-config-other-routes', otherUseCases)}
 
         {/* [W6] The legend, only while a row is reached or every row reads Modified
             under a replaced source — never for a lone unassign, which nothing here explains. */}

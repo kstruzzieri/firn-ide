@@ -14,6 +14,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
+import { openSharedConfiguration } from '../../helpers/sharedConfiguration';
 import {
   confirmConfigClose,
   hasUnsavedConfigWork,
@@ -167,8 +168,10 @@ const lastConfirm = () => (ConfirmGolemSettingsApply as jest.Mock).mock.calls.at
 
 const openProvider = async (name = 'hosted') =>
   await userEvent.click(screen.getByRole('button', { name: `Edit provider ${name}` }));
-const openRoute = async (useCase: string, label = 'Edit') =>
+const openRoute = async (useCase: string, label = 'Edit') => {
+  await openSharedConfiguration();
   await userEvent.click(screen.getByRole('button', { name: `${label} route ${useCase}` }));
+};
 const stage = async () => await userEvent.click(screen.getByRole('button', { name: 'Done' }));
 const cancelEditor = async () =>
   await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -245,6 +248,7 @@ async function stageEndpoint(url = 'https://api.example.com/v2'): Promise<void> 
 async function mountWorkspace(): Promise<void> {
   render(<GolemConfigWorkspace onClose={() => {}} />);
   await screen.findByTestId('provider-row-hosted');
+  await openSharedConfiguration();
 }
 
 // jsdom ships <dialog> without its modal methods; the merge surface's tests
@@ -412,7 +416,7 @@ describe('terminal apply results', () => {
     const order = (el: Element | null) =>
       [...page.children].findIndex((child) => child === el || child.contains(el as Node));
 
-    const routing = screen.getByRole('table', { name: 'Model routing' });
+    const routing = screen.getByRole('table', { name: 'Other configured routes' });
     expect(order(notice)).toBeGreaterThan(order(routing));
     expect(order(screen.getByRole('button', { name: 'Retry' }))).toBeGreaterThan(order(routing));
     // And the bar it belongs to is last.

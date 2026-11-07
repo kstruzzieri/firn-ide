@@ -22,6 +22,8 @@ export interface CardInfo {
   facts: string;
   abilities: string;
   notes: { role: string; description: string }[];
+  /** False where roles are not shown (#490's picker): the notes read unlabelled. */
+  showRoles?: boolean;
   usedBy: string[];
 }
 
@@ -119,7 +121,9 @@ export function ModelCardPopup({
           <span className={`${styles.cardPopVal} ${styles.cardPopProse}`}>
             {info.notes.map((note) => (
               <p key={note.role}>
-                {info.notes.length > 1 && <span className={styles.cardPopRole}>{note.role}</span>}
+                {info.notes.length > 1 && info.showRoles !== false && (
+                  <span className={styles.cardPopRole}>{note.role}</span>
+                )}
                 {note.description}
               </p>
             ))}

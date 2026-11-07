@@ -1307,6 +1307,211 @@ select.input {
   text-transform: uppercase;
 }
 
+/* ── #490 the Golem model row, its picker and Shared configuration ───────── */
+
+.golemCard {
+  padding: 12px 14px;
+}
+
+.golemRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.golemModel {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.golemModel strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* The chat panel's Local/Remote badge, in this module's tokens. */
+.golemBadge {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid var(--surface-border);
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.golemBadge[data-classification='remote'] {
+  border-color: var(--status-warning);
+  color: var(--status-warning);
+}
+
+.golemLine {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.golemPicker {
+  margin-top: 12px;
+}
+
+.golemPicker[hidden] {
+  display: none;
+}
+
+/* A heading-sized disclosure: the toggle IS the card title. */
+.foldToggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.foldToggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* A caret that turns with its toggle's state; aria-hidden, the state is aria-expanded. */
+.caret {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+  transition: transform 120ms ease;
+}
+
+.caret[data-open] {
+  transform: rotate(90deg);
+}
+
+.consumer {
+  display: block;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bandGroup {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.modelCardProvider {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cannotList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cannotList[hidden] {
+  display: none;
+}
+
+.cannotItem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.cannotReason {
+  color: var(--text-secondary);
+}
+
+.answers {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.answers[hidden] {
+  display: none;
+}
+
+/*
+ * The edit-impact message: one fact to a list item, at most 72 characters
+ * wide, each led by a small amber chevron drawn with empty content (a screen
+ * reader reads no glyph). A wrapped item continues under its own text, so a
+ * new chevron always means a new fact. `role="list"` keeps list semantics
+ * that WebKit drops under `list-style: none`.
+ */
+.impact {
+  margin: 14px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.impactList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 72ch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.impactList li {
+  position: relative;
+  padding-left: 14px;
+}
+
+.impactList li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.55em;
+  width: 5px;
+  height: 5px;
+  border-top: 1.5px solid var(--status-warning);
+  border-right: 1.5px solid var(--status-warning);
+  transform: rotate(45deg);
+}
+
+.impactList strong {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
 /* A control that differs from the baseline carries the same mark. */
 .checkbox[data-changed] .checkboxText {
   font-style: italic;

@@ -7,6 +7,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
+import { openSharedConfiguration } from '../../helpers/sharedConfiguration';
 import { confirmConfigClose } from '../../../components/GolemConfig/configCloseGuard';
 
 jest.mock('../../../wails/bindings', () => ({
@@ -156,6 +157,7 @@ const mountReady = async (list: unknown = listResult()) => {
   render(<GolemConfigWorkspace onClose={jest.fn()} />);
   await screen.findByRole('button', { name: 'Source' });
   await waitFor(() => expect(ListGolemProfiles).toHaveBeenCalled());
+  await openSharedConfiguration();
 };
 
 // jsdom ships <dialog> without its modal methods; the merge surface's tests

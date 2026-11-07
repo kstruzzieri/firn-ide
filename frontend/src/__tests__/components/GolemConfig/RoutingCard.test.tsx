@@ -147,7 +147,7 @@ describe('route editor Done (firn-ide#284)', () => {
   const announcementRegion = () =>
     screen
       .getAllByRole('status')
-      .find((region) => !screen.getByRole('table', { name: 'Model routing' }).contains(region));
+      .find((region) => !screen.getAllByRole('table').some((table) => table.contains(region)));
 
   it('closes the editor, restores focus to Edit, and announces from a region that survives', async () => {
     const user = userEvent.setup();
@@ -1272,8 +1272,11 @@ describe('the role a routing row runs through (#344)', () => {
     // The space is a text node, not margin: a screen reader reads text, and a
     // margin alone would run the two together ("rolefast").
     expect(line?.textContent).toBe('role fast');
-    // It sits in the use-case cell, under the use case it qualifies.
-    expect(line?.closest('[role="cell"]')?.firstChild?.textContent).toBe('agent');
+    // It sits in the use-case cell, under the use case it qualifies: #490
+    // labels agent by the consumer Firn has, its key beneath.
+    const cell = line?.closest('[role="cell"]');
+    expect(cell?.firstChild?.textContent).toBe('Golem chat and commit messages');
+    expect(cell?.childNodes[1]?.textContent).toBe('agent');
     // The role named like the use case is still the Defined models row it was.
     expect(
       within(screen.getByTestId('defined-model-row-agent')).getByText('agent')

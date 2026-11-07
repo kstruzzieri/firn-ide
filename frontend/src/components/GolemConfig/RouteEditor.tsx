@@ -85,6 +85,7 @@ import {
 import { listUseCases } from '../../utils/listUseCases';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import { AbilityChips } from './AbilityChips';
+import { capabilityAnswers, golemSummary } from './golemModel';
 import styles from './GolemConfig.module.css';
 import { ModelBand } from './ModelBand';
 import { canonicalCaps } from './modelRows';
@@ -225,6 +226,27 @@ export interface RouteEditorProps {
    * focus — the editor cannot, because it unmounts with the message.
    */
   onStaged: (announcement: string) => void;
+  /** What the band's filter opens with (#490's pointer). Read once, at mount. */
+  initialQuery?: string;
+  /** #490: render as the Golem model picker (design 5.1). */
+  golem?: GolemPicker;
+}
+
+/**
+ * The Golem model picker is this editor for `agent` with the shared-role
+ * question and every route-editing control removed: the band over every
+ * provider, a summary and Details in the strip, and the edit-impact message
+ * in place of the Pending line. It stages through the same candidate, gates
+ * and `onStage` as the route editor; nothing here writes.
+ */
+export interface GolemPicker {
+  /**
+   * True when nothing else is staged on the page: the action reads Use model,
+   * and the owner applies the staged change at once. Otherwise it reads Done.
+   */
+  applies: boolean;
+  /** The pointer's action for a typed name the picker does not list. */
+  onNotListed: (name: string) => void;
 }
 
 /** The `factsKey` of a hand-declared model: its declared set, canonical. */
@@ -352,6 +374,8 @@ export function RouteEditor({
   onClose,
   onUnstagedChange,
   onStaged,
+  initialQuery,
+  golem,
 }: RouteEditorProps) {
   /** Siblings the backend forks away from, rather than changing under them. */
   const sharedRole = (current?.routedUseCases ?? []).filter((other) => other !== useCase);
@@ -391,6 +415,10 @@ export function RouteEditor({
   );
 
   const [provider, setProvider] = useState(seed.provider);
+  /** #490: the picker's provider select is a list filter that starts on All providers. */
+  const [listProvider, setListProvider] = useState('');
+  /** #490: Details, closed until the user opens it; open until the picker closes. */
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [defined, setDefined] = useState<ModelProjection | null>(seed.defined);
   const [manual, setManual] = useState<ManualModel | null>(seed.manual);
   const completedManualName = useRef(seed.manual?.model ?? null);
@@ -879,6 +907,42 @@ export function RouteEditor({
     };
   }, [draft, useCase, cardRole, governedBy]);
 
+  /**
+   * #490: the picker's strip for whichever card it reads out — what that card
+   * would expose against Golem's floor, then Details: every capability, its
+   * answer and source, each card's where this model's cards disagree.
+   */
+  const golemStrip = (model: ModelProjection, cards: readonly ModelProjection[]): ReactNode => {
+    const card = cardRole(model);
+    return (
+      <>
+        <p className={styles.detailCard} data-testid="golem-summary">
+          {golemSummary(previewFor(card).offered)}
+        </p>
+        <button
+          type="button"
+          className={`${styles.button} ${styles.small} ${styles.quiet}`}
+          aria-expanded={detailsOpen}
+          aria-controls={`${id}-details`}
+          onClick={() => setDetailsOpen((open) => !open)}
+        >
+          <span className={styles.caret} data-open={detailsOpen || undefined} aria-hidden="true" />
+          Details
+          <span className={styles.srOnly}>{` of ${model.modelName}`}</span>
+        </button>
+        <ul id={`${id}-details`} role="list" className={styles.answers} hidden={!detailsOpen}>
+          {capabilityAnswers(card, cards).map(({ cap, yes, source, agreement }) => (
+            <li key={cap}>
+              <span className={styles.identifier}>{cap}</span>
+              {`: ${yes ? 'yes' : 'no'}, ${source}`}
+              {agreement !== undefined && ` · ${agreement}`}
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+  };
+
   // An acknowledgement counts only while its question is on screen — on BOTH
   // sides. submit() sends `confirmDrops` only with drops to confirm and gates
   // on `ackUnknown` only with unknown use cases, so a tick left behind a
@@ -977,7 +1041,11 @@ export function RouteEditor({
     if (unchanged(candidate)) {
       onStage([], staged === undefined ? [] : [changeStableID(candidate)]);
       setRefusal('');
-      onStaged(`${useCase} model kept: ${candidate.modelFacts.model}`);
+      onStaged(
+        golem === undefined
+          ? `${useCase} model kept: ${candidate.modelFacts.model}`
+          : `Golem model kept: ${candidate.modelFacts.model}`
+      );
       return;
     }
 
@@ -994,7 +1062,11 @@ export function RouteEditor({
       []
     );
     setRefusal('');
-    onStaged(`${useCase} model staged: ${candidate.modelFacts.model}`);
+    onStaged(
+      golem === undefined
+        ? `${useCase} model staged: ${candidate.modelFacts.model}`
+        : `Golem model staged: ${candidate.modelFacts.model}`
+    );
   };
 
   const unassign = () => {
@@ -1033,7 +1105,9 @@ export function RouteEditor({
       {/* The row strip above IS the editor header (v9): the use case and its
           `editing…` status. A visible legend would cut the border line and
           leave a gap across the top, so the accessible name is sr-only. */}
-      <legend className={styles.srOnly}>{`Route ${useCase}`}</legend>
+      <legend className={styles.srOnly}>
+        {golem === undefined ? `Route ${useCase}` : 'Choose the Golem model'}
+      </legend>
 
       {/*
        * Treatment 1: band, then one master-detail strip. The exposure editor
@@ -1051,12 +1125,18 @@ export function RouteEditor({
         owners={floorOwners}
         preview={previewFor}
         models={models}
-        provider={provider}
+        provider={golem === undefined ? provider : listProvider}
         providers={providers}
         selected={defined}
         manual={manual}
+        initialQuery={initialQuery}
+        golem={
+          golem === undefined
+            ? undefined
+            : { current, strip: golemStrip, onNotListed: golem.onNotListed }
+        }
         exposure={
-          defined === null && manual === null ? undefined : (
+          golem !== undefined || (defined === null && manual === null) ? undefined : (
             <>
               {/* Direct children of the strip body, in block flow — see the
                   `.detailBody > * + *` rule for why no flex wrapper. */}
@@ -1124,6 +1204,11 @@ export function RouteEditor({
           )
         }
         onProviderChange={(next) => {
+          // The picker's select only narrows the list; the choice stays.
+          if (golem !== undefined) {
+            setListProvider(next);
+            return;
+          }
           setProvider(next);
           setDefined(null);
           setManual(null);
@@ -1131,6 +1216,8 @@ export function RouteEditor({
           clearRefusal();
         }}
         onSelect={(model) => {
+          // The picker lists every provider, so a card brings its own.
+          if (golem !== undefined) setProvider(model.provider);
           setDefined(cardRole(model));
           setManual(null);
           completedManualName.current = null;
@@ -1173,7 +1260,8 @@ export function RouteEditor({
           (its abilities and Think belong to it, so an edit reaches whatever
           uses it, falls back to it or is defined on it: [W4-8]/[W5-2]/[W5-4],
           Think reaching the applied siblings only through an override). */}
-      {(current !== null && assignedSiblings.length > 0) || reach !== undefined ? (
+      {golem === undefined &&
+      ((current !== null && assignedSiblings.length > 0) || reach !== undefined) ? (
         <div className={styles.disclosure} data-tone="caution">
           {current !== null && assignedSiblings.length > 0 && (
             <p className={styles.disclosureText}>
@@ -1326,7 +1414,35 @@ export function RouteEditor({
 
       {/* What Done would stage, said before it is pressed: the same facts
           `unstaged` reads, so an edit undone by hand reads as no change. */}
-      {unstaged && (
+      {/* #490: the picker's edit-impact message, in words, naming no role and
+          no chain: one fact to a line, a plain list beside the action, not a
+          live region. Neither Firn feature falls back (#491), so the fallbacks
+          a fork keeps matter only to the golem CLI. */}
+      {golem !== undefined && unstaged && facts !== null && (
+        <div className={styles.impact} id={`${id}-changes`} data-testid="golem-impact">
+          <ul role="list" className={styles.impactList}>
+            {candidate !== null && unchanged(candidate) ? (
+              <li>
+                Golem chat and commit messages keep <strong>{facts.model}</strong> via{' '}
+                {facts.provider}.
+              </li>
+            ) : (
+              <>
+                <li>
+                  Golem chat and commit messages will use <strong>{facts.model}</strong> via{' '}
+                  {facts.provider}.
+                </li>
+                <li>The golem CLI uses this setting too when it loads the same configuration.</li>
+                {(current?.fallbacks?.length ?? 0) > 0 && (
+                  <li>Its fallbacks are under Shared configuration.</li>
+                )}
+              </>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {golem === undefined && unstaged && (
         <p className={styles.editorChanges} id={`${id}-changes`} data-testid="editor-changes">
           {/* The colon keeps the eyebrow (uppercase by CSS only) from running
               into the first clause's own capitalised label, for AT and eye alike. */}
@@ -1351,7 +1467,9 @@ export function RouteEditor({
             data-unstaged={unstaged || undefined}
             aria-describedby={unstaged ? `${id}-changes` : undefined}
           >
-            Done
+            {golem?.applies === true && unstaged && candidate !== null && !unchanged(candidate)
+              ? 'Use model'
+              : 'Done'}
           </button>
         )}
         {/* One element either way, so focus never falls to body when the

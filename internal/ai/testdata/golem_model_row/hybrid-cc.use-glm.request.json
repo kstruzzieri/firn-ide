@@ -1,0 +1,39 @@
+{
+  "changes": [
+    {
+      "kind": "route",
+      "useCase": "agent",
+      "modelFacts": {
+        "provider": "commandcode",
+        "model": "zai-org/GLM-5.2",
+        "type": "moe"
+      },
+      "capabilityFacts": {
+        "caps": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "knownCaps": [
+          "chat",
+          "generate",
+          "stream",
+          "embed",
+          "tool_call",
+          "thinking",
+          "insert"
+        ]
+      },
+      "exposedCaps": [
+        "chat",
+        "stream",
+        "tool_call"
+      ],
+      "thinkMode": "",
+      "confirmUnknown": true,
+      "confirmUnknownUseCases": [
+        "completion"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+import { golemModelVerdict, GOLEM_FLOOR } from '../../../components/GolemConfig/golemModel';
+import { roleChain } from '../../../components/GolemConfig/routingRows';
+import { CAPABILITY_NAMES, type ModelProjection } from '../../../types/golem';
+
+const model = (over: Partial<ModelProjection> = {}): ModelProjection => ({
+  role: 'r',
+  modelName: 'm',
+  provider: 'p',
+  type: 'dense',
+  effectiveCapabilities: ['chat', 'generate', 'stream'],
+  capabilityFacts: { caps: ['chat', 'generate', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+  exposedCapabilities: ['chat', 'generate', 'stream'],
+  thinkMode: '',
+  routedUseCases: [],
+  hasThinkTags: false,
+  hasSlots: false,
+  removable: false,
+  ...over,
+});
+
+describe('golemModelVerdict', () => {
+  it("states agent's floor", () => {
+    expect(GOLEM_FLOOR).toEqual(['chat', 'stream', 'tool_call']);
+  });
+
+  it('lets a model with no shortfall run Golem', () => {
+    expect(golemModelVerdict(model(), [])).toEqual({ eligible: true });
+  });
+
+  it('says a missing tool_call is not verified, never that the model lacks it', () => {
+    expect(golemModelVerdict(model(), [{ cap: 'tool_call', useCases: ['agent'] }])).toEqual({
+      eligible: false,
+      reason: 'Tool support not verified',
+    });
+  });
+
+  it('names an embedding model by its type', () => {
+    const embedding = model({
+      type: 'embedding',
+      capabilityFacts: { caps: ['embed'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: ['embed'],
+    });
+    const short = (['chat', 'stream', 'tool_call'] as const).map((cap) => ({
+      cap,
+      useCases: ['agent'],
+    }));
+    expect(golemModelVerdict(embedding, short)).toEqual({
+      eligible: false,
+      reason: "Embedding model: can't chat",
+    });
+  });
+
+  it('names every other missing capability in canonical order', () => {
+    expect(
+      golemModelVerdict(model(), [
+        { cap: 'chat', useCases: ['agent'] },
+        { cap: 'stream', useCases: ['agent'] },
+        { cap: 'tool_call', useCases: ['agent'] },
+      ])
+    ).toEqual({ eligible: false, reason: "Can't chat · Can't stream · Tool support not verified" });
+  });
+});
+
+describe('roleChain', () => {
+  const role = (name: string, fallbacks?: string[]) =>
+    model({ role: name, modelName: `${name}-model`, ...(fallbacks ? { fallbacks } : {}) });
+
+  it('walks fallbacks depth first in declared order and names each role once', () => {
+    // The mockup fixture's diamond: general reaches lightweight directly and
+    // through fast; RoleChain keeps its first place.
+    const models = [
+      role('general', ['fast', 'lightweight', 'cc-pro']),
+      role('fast', ['lightweight', 'cc-coder']),
+      role('lightweight'),
+      role('cc-coder', ['cc-pro']),
+      role('cc-pro', ['cc-flash']),
+      role('cc-flash'),
+    ];
+    expect(roleChain('general', models)).toEqual([
+      'fast',
+      'lightweight',
+      'cc-coder',
+      'cc-pro',
+      'cc-flash',
+    ]);
+  });
+
+  it('reads an empty chain for a role with no fallbacks or an unknown role', () => {
+    expect(roleChain('solo', [role('solo')])).toEqual([]);
+    expect(roleChain('missing', [])).toEqual([]);
+  });
+
+  it('never revisits the role it starts from', () => {
+    expect(roleChain('a', [role('a', ['b']), role('b', ['a'])])).toEqual(['b']);
+  });
+});
