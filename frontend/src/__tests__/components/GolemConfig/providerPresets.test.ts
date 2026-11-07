@@ -68,9 +68,9 @@ describe('provider preset coverage', () => {
 
   it('never carries a key, a capability list or a price', () => {
     for (const preset of PROVIDER_PRESETS) {
-      expect(Object.keys(preset).sort()).toEqual(
-        expect.not.arrayContaining(['key', 'apiKey', 'capabilities', 'price', 'prices'])
-      );
+      for (const forbidden of ['key', 'apiKey', 'capabilities', 'price', 'prices']) {
+        expect(preset).not.toHaveProperty(forbidden);
+      }
     }
   });
 });

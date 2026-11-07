@@ -844,6 +844,28 @@ describe('Add provider presets (#322)', () => {
     expect(within(editor).queryByText('from preset')).not.toBeInTheDocument();
   });
 
+  it('never carries a typed key across to another preset’s provider', async () => {
+    const { editor, onStage, keys } = await openAddForm();
+    await pick(editor, 'commandcode');
+    await userEvent.type(within(editor).getByLabelText('New API key'), 'sk-commandcode');
+    await pick(editor, 'openai');
+
+    expect(within(editor).getByLabelText('New API key')).toHaveValue('');
+    await stage();
+    expect(keys.size).toBe(0);
+    expect(onStage).toHaveBeenCalledWith(
+      [
+        {
+          kind: 'provider-add',
+          name: 'openai',
+          endpoint: presetById('openai').endpoint,
+          apiFormat: 'openai-compat',
+        },
+      ],
+      []
+    );
+  });
+
   it('stages the preset’s values as one provider add', async () => {
     const { editor, onStage } = await openAddForm();
     await pick(editor, 'ollama');

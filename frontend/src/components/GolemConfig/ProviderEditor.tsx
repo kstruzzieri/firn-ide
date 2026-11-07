@@ -268,9 +268,11 @@ export function ProviderEditor({
   };
 
   /**
-   * Fills the name, format and endpoint, and nothing else: no request, and the
-   * key is left as typed. Custom fills blanks and marks nothing; it has no
-   * format to give, so the format stays as it is.
+   * Fills the name, format and endpoint, with no request. Custom fills blanks
+   * and marks nothing; it has no format to give, so the format stays as it is.
+   *
+   * The key field is EMPTIED, never filled: a key typed for one provider must
+   * not be staged under the next, or Apply would send it to that endpoint.
    */
   const pickPreset = (nextId: string) => {
     const next = PROVIDER_PRESETS.find((candidate) => candidate.id === nextId);
@@ -280,6 +282,7 @@ export function ProviderEditor({
       name: next.name,
       endpoint: next.endpoint,
       ...(next.apiFormat === null ? {} : { apiFormat: next.apiFormat }),
+      keyValue: '',
     });
     setFromPreset(new Set(next.id === CUSTOM_PRESET_ID ? [] : PRESET_FIELDS));
   };
