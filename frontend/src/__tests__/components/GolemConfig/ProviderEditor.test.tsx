@@ -6,6 +6,10 @@ import {
 } from '../../../components/GolemConfig/ProvidersCard';
 import * as ProviderEditorModule from '../../../components/GolemConfig/ProviderEditor';
 import { providerChanges } from '../../../components/GolemConfig/ProviderEditor';
+import {
+  CUSTOM_PRESET_ID,
+  PROVIDER_PRESETS,
+} from '../../../components/GolemConfig/providerPresets';
 import * as RoutingCardModule from '../../../components/GolemConfig/RoutingCard';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
 import { KeyVault, type Change } from '../../../types/golemConfig';
@@ -50,6 +54,7 @@ function renderCard(over: Partial<ProvidersCardProps> = {}) {
     diagnostics: [],
     vault: new KeyVault(keys),
     editable: true,
+    sourceOrigin: 'user_config',
     onStage,
     onUnstagedChange,
     ...over,
@@ -702,5 +707,216 @@ describe('GolemConfigWorkspace provider editing', () => {
     const page = screen.getByRole('list', { name: 'Configuration diagnostics' });
     expect(within(page).getAllByRole('listitem')).toHaveLength(1);
     expect(within(page).getByText('provider ghost')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #322: presets in the Add provider form, and what the key field says.
+// ---------------------------------------------------------------------------
+
+describe('Add provider presets (#322)', () => {
+  const presetById = (id: string) => PROVIDER_PRESETS.find((preset) => preset.id === id)!;
+
+  const openAddForm = async (over: Partial<ProvidersCardProps> = {}) => {
+    const view = renderCard({ providers: [], ...over });
+    await userEvent.click(screen.getByRole('button', { name: 'Add provider' }));
+    return { ...view, editor: screen.getByRole('group', { name: 'Add a provider' }) };
+  };
+
+  const pick = async (editor: HTMLElement, id: string) =>
+    await userEvent.selectOptions(within(editor).getByLabelText('Preset'), id);
+
+  it('makes Preset the first field and starts on Custom with a blank form', async () => {
+    const { editor } = await openAddForm();
+    const preset = within(editor).getByLabelText('Preset');
+
+    expect(editor.querySelector('input, select')).toBe(preset);
+    expect(preset).toHaveValue(CUSTOM_PRESET_ID);
+    expect(within(editor).getByLabelText('Provider name')).toHaveValue('');
+    expect(within(editor).getByLabelText('Endpoint')).toHaveValue('');
+    expect(within(editor).queryByText('from preset')).not.toBeInTheDocument();
+  });
+
+  it('offers no preset when editing a provider that already exists', async () => {
+    renderCard();
+    await openEditor();
+    expect(screen.queryByLabelText('Preset')).not.toBeInTheDocument();
+  });
+
+  it('lists every disabled preset with its reason as visible text', async () => {
+    const { editor } = await openAddForm();
+    const disabled = PROVIDER_PRESETS.filter((preset) => preset.disabledReason !== undefined);
+    expect(disabled.map((preset) => preset.id)).toContain('gemini');
+
+    for (const preset of disabled) {
+      expect(
+        within(editor).getByRole('option', { name: `${preset.label} (${preset.disabledReason})` })
+      ).toBeDisabled();
+    }
+  });
+
+  it('fills Command Code’s name, format and endpoint, marks them, and leaves the key empty', async () => {
+    const { editor } = await openAddForm();
+    await pick(editor, 'commandcode');
+
+    const name = within(editor).getByLabelText('Provider name');
+    const format = within(editor).getByLabelText('API format');
+    const endpoint = within(editor).getByLabelText('Endpoint');
+    expect(name).toHaveValue('commandcode');
+    expect(format).toHaveValue('openai-compat');
+    expect(endpoint).toHaveValue('https://api.commandcode.ai/provider');
+    for (const field of [name, format, endpoint]) {
+      expect(field).toHaveAccessibleDescription(/from preset/);
+    }
+    expect(within(editor).getAllByText('from preset')).toHaveLength(3);
+    expect(within(editor).getByLabelText('New API key')).toHaveValue('');
+  });
+
+  it('shows the listing line and the key line of the picked preset', async () => {
+    const { editor } = await openAddForm();
+    await pick(editor, 'commandcode');
+
+    const listing = 'Not yet known whether it lists models, or which ones.';
+    const key = `Needs an API key. ${presetById('commandcode').keyHint}`;
+    expect(within(editor).getByText(listing)).toBeVisible();
+    expect(within(editor).getByText(key)).toBeVisible();
+    const literal = (text: string) => new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    expect(within(editor).getByLabelText('Preset')).toHaveAccessibleDescription(literal(listing));
+    expect(within(editor).getByLabelText('Preset')).toHaveAccessibleDescription(literal(key));
+    // Announced when it changes, without moving focus off the dropdown.
+    expect(within(editor).getByText(listing).closest('[aria-live]')).toHaveAttribute(
+      'aria-live',
+      'polite'
+    );
+
+    await pick(editor, 'ollama');
+    expect(within(editor).getByText('Lists the models the server serves.')).toBeVisible();
+    expect(within(editor).getByText('Needs no API key.')).toBeVisible();
+    expect(within(editor).queryByText(listing)).not.toBeInTheDocument();
+  });
+
+  it('drops a field’s from-preset mark once the user edits it', async () => {
+    const { editor } = await openAddForm();
+    await pick(editor, 'commandcode');
+
+    const endpoint = within(editor).getByLabelText('Endpoint');
+    await userEvent.type(endpoint, '/eu');
+    expect(endpoint).not.toHaveAccessibleDescription(/from preset/);
+    await userEvent.selectOptions(within(editor).getByLabelText('API format'), 'ollama');
+    expect(within(editor).getByLabelText('API format')).not.toHaveAccessibleDescription(
+      /from preset/
+    );
+
+    expect(within(editor).getByLabelText('Provider name')).toHaveAccessibleDescription(
+      /from preset/
+    );
+    expect(within(editor).getAllByText('from preset')).toHaveLength(1);
+  });
+
+  it('clears the filled name and endpoint when Custom is picked again', async () => {
+    const { editor } = await openAddForm();
+    await pick(editor, 'openai');
+    await pick(editor, CUSTOM_PRESET_ID);
+
+    expect(within(editor).getByLabelText('Provider name')).toHaveValue('');
+    expect(within(editor).getByLabelText('Endpoint')).toHaveValue('');
+    expect(within(editor).queryByText('from preset')).not.toBeInTheDocument();
+  });
+
+  it('stages the preset’s values as one provider add', async () => {
+    const { editor, onStage } = await openAddForm();
+    await pick(editor, 'ollama');
+    await stage();
+
+    expect(onStage).toHaveBeenCalledWith(
+      [
+        {
+          kind: 'provider-add',
+          name: 'ollama',
+          endpoint: presetById('ollama').endpoint,
+          apiFormat: 'ollama',
+        },
+      ],
+      []
+    );
+  });
+
+  it('makes no network request when a preset is picked', async () => {
+    (ReloadGolemSettings as jest.Mock).mockClear();
+    const fetchSpy = jest.fn();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchSpy;
+    const open = jest.spyOn(XMLHttpRequest.prototype, 'open');
+    try {
+      const { editor } = await openAddForm();
+      for (const preset of PROVIDER_PRESETS) {
+        if (preset.disabledReason === undefined) await pick(editor, preset.id);
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      expect(ReloadGolemSettings).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+      open.mockRestore();
+    }
+  });
+});
+
+describe('the key field’s wording (#322)', () => {
+  it.each(['none', 'env', 'user_config', 'legacy'] as const)(
+    'says the key is saved as plain text, with no commit warning, for a %s source',
+    async (sourceOrigin) => {
+      renderCard({ sourceOrigin });
+      await openEditor();
+
+      const key = screen.getByLabelText('New API key');
+      expect(key).toHaveAccessibleDescription(/saved as plain text in the configuration file/i);
+      expect(key).not.toHaveAccessibleDescription(/commit/);
+      expect(screen.queryByText(/literal value/)).not.toBeInTheDocument();
+    }
+  );
+
+  it('warns that a commit can include a working-directory models.json', async () => {
+    renderCard({ sourceOrigin: 'working_directory' });
+    await openEditor();
+
+    const warning =
+      'The configuration file is a models.json in the working directory, so a commit can include this key.';
+    expect(screen.getByText(warning)).toBeVisible();
+    expect(screen.getByLabelText('New API key')).toHaveAccessibleDescription(
+      new RegExp(`plain text.*${warning.replace(/\./g, '\\.')}`)
+    );
+  });
+
+  it('carries the warning into the Add provider form', async () => {
+    renderCard({ providers: [], sourceOrigin: 'working_directory' });
+    await userEvent.click(screen.getByRole('button', { name: 'Add provider' }));
+    expect(screen.getByLabelText('New API key')).toHaveAccessibleDescription(
+      /a commit can include this key/
+    );
+  });
+
+  it('takes the source from the loaded configuration', async () => {
+    (ReloadGolemSettings as jest.Mock).mockResolvedValue({
+      busy: false,
+      projection: {
+        state: 'ready',
+        sourceOrigin: 'working_directory',
+        revision: testRevision,
+        readOnly: false,
+        editable: true,
+        routes: [],
+        models: [],
+        providers: [provider()],
+        diagnostics: [],
+      },
+    });
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    await screen.findByTestId('provider-row-llama-swap');
+    await openEditor();
+
+    expect(screen.getByLabelText('New API key')).toHaveAccessibleDescription(
+      /a commit can include this key/
+    );
   });
 });
