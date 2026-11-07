@@ -28,6 +28,7 @@ import {
   ApplyGolemSettings,
   ConfirmGolemSettingsApply,
   ListGolemProfiles,
+  PrepareGolemDestinationGrants,
   ReloadGolemSettings,
 } from '../../../wails/bindings';
 
@@ -385,6 +386,38 @@ describe('Use model', () => {
     expect(
       await within(picker()).findByText(/The configuration moved while this draft was open/)
     ).toBeInTheDocument();
+  });
+
+  it('keeps a later destination check out of the picker', async () => {
+    await mount();
+    const fold = await openPicker();
+    await userEvent.click(
+      optionNamed(within(fold).getByRole('listbox', { name: 'Can run Golem' }), 'zai-org/GLM-5.2')
+    );
+    (ApplyGolemSettings as jest.Mock).mockResolvedValue({
+      status: 'diagnostics',
+      diagnostics: [
+        {
+          code: 'eligibility_ineligible',
+          subjectKind: 'use_case',
+          subjectName: 'agent',
+          blocking: true,
+        },
+      ],
+      consentOutcome: 'unchanged',
+    });
+    await tickApplyAnywayIfAsked(fold);
+    await userEvent.click(within(fold).getByRole('button', { name: 'Use model' }));
+    // The refusal's diagnostic shows in the picker, not folded away in a row.
+    expect(
+      await within(picker()).findByRole('list', { name: 'Why the model was not applied' })
+    ).toBeInTheDocument();
+
+    // Check destinations… is the page's own flow, not the picker's write.
+    (PrepareGolemDestinationGrants as jest.Mock).mockResolvedValue(consentRequired());
+    await userEvent.click(await screen.findByRole('button', { name: 'Check destinations…' }));
+    const approve = await screen.findByRole('button', { name: 'Approve 1 destination' });
+    expect(picker()).not.toContainElement(approve);
   });
 
   it('reads Done beside another staged change, and stages without writing', async () => {

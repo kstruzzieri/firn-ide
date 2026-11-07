@@ -641,6 +641,12 @@
   overflow-x: auto;
 }
 
+/* [#490] Shared configuration folds its body with the hidden attribute; the
+   flex display above would otherwise beat the user agent's display: none. */
+.cardBody[hidden] {
+  display: none;
+}
+
 .table {
   display: block;
 }

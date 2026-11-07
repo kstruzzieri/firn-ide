@@ -1,6 +1,9 @@
+import fs from 'fs';
+import path from 'path';
 import { golemModelVerdict, GOLEM_FLOOR } from '../../../components/GolemConfig/golemModel';
 import { roleChain } from '../../../components/GolemConfig/routingRows';
 import { CAPABILITY_NAMES, type ModelProjection } from '../../../types/golem';
+import { cssRule } from '../../helpers/cssRule';
 
 const model = (over: Partial<ModelProjection> = {}): ModelProjection => ({
   role: 'r',
@@ -93,4 +96,20 @@ describe('roleChain', () => {
   it('never revisits the role it starts from', () => {
     expect(roleChain('a', [role('a', ['b']), role('b', ['a'])])).toEqual(['b']);
   });
+});
+
+describe('the folds #490 hides with the hidden attribute', () => {
+  // jsdom loads no stylesheet, so a fold whose class sets `display` would
+  // read as hidden in a test and still show in the WebView: the author
+  // `display` beats the user agent's `[hidden] { display: none }`.
+  const css = fs.readFileSync(
+    path.resolve(__dirname, '../../../components/GolemConfig/GolemConfig.module.css'),
+    'utf8'
+  );
+  it.each(['.cardBody', '.golemPicker', '.cannotList', '.answers'])(
+    '%s[hidden] is display: none',
+    (selector) => {
+      expect(cssRule(css, `${selector}[hidden]`)).toMatch(/display:\s*none/);
+    }
+  );
 });

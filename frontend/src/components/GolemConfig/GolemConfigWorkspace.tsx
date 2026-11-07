@@ -1183,6 +1183,8 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   /** Call 1, fresh on every click: there is no subscription to keep it warm. */
   const approveDestinations = (): void => {
+    // [#490] The page's own flow: its prompt never lands in the picker.
+    setApplyOrigin('page');
     setGrantNotice('');
     sendGrants(() => PrepareGolemDestinationGrants(), null);
   };
