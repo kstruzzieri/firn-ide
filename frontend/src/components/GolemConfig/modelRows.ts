@@ -34,6 +34,13 @@ export interface ModelRow {
   descriptions: { role: string; description: string }[];
 }
 
+/**
+ * [#490] A model as the Golem picker lists it: one entry per provider and
+ * model, whatever facts its cards carry.
+ */
+export const selectorKey = (model: ModelProjection): string =>
+  [model.provider, model.modelName].join('\u0000');
+
 /** The tuple `sameModelFacts` compares, flattened — the identity of a card. */
 export const rowKey = (model: ModelProjection): string =>
   [
@@ -65,16 +72,18 @@ export const rowKey = (model: ModelProjection): string =>
 export function buildModelRows(
   models: readonly ModelProjection[],
   provider: string | null,
-  providers: readonly { name: string }[] = []
+  providers: readonly { name: string }[] = [],
+  /** What makes two cards one row: their full facts, or (#490) provider and model. */
+  keyOf: (model: ModelProjection) => string = rowKey
 ): ModelRow[] {
   const listed = (model: ModelProjection): boolean =>
     provider === null || model.provider === provider;
   const byKey = new Map<string, ModelRow>();
   for (const model of models) {
     if (!listed(model)) continue;
-    const row = byKey.get(rowKey(model));
+    const row = byKey.get(keyOf(model));
     if (row === undefined)
-      byKey.set(rowKey(model), {
+      byKey.set(keyOf(model), {
         model,
         provenance: 'authored',
         roles: [model.role],
@@ -95,5 +104,5 @@ export function buildModelRows(
   return orderModelsForDisplay(
     [...byKey.values()].map((row) => row.model),
     providers
-  ).map((model) => byKey.get(rowKey(model))!);
+  ).map((model) => byKey.get(keyOf(model))!);
 }

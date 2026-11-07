@@ -40,7 +40,7 @@ import { AbilityChips } from './AbilityChips';
 import { GOLEM_FLOOR, golemModelVerdict } from './golemModel';
 import styles from './GolemConfig.module.css';
 import { ModelCardPopup, type CardInfo } from './ModelCardPopup';
-import { buildModelRows, canonicalCaps, rowKey, type ModelRow } from './modelRows';
+import { buildModelRows, canonicalCaps, rowKey, selectorKey, type ModelRow } from './modelRows';
 import {
   TYPE_LABEL,
   abilitiesLine,
@@ -98,9 +98,6 @@ interface PopupHold {
   pendingKey: string | null;
   closeTimer: number;
 }
-
-const sameModel = (a: ModelProjection | null, b: ModelProjection): boolean =>
-  a !== null && rowKey(a) === rowKey(b);
 
 /** Hover detail wherever the abbreviated context renders: the exact count. */
 const contextTitle = (model: ModelProjection): string | undefined =>
@@ -164,8 +161,12 @@ export interface ModelBandProps {
   onSelect: (model: ModelProjection) => void;
   /** `commitName` marks Declare or leaving the name field, never a keystroke. */
   onManual: (manual: ManualModel | null, commitName?: boolean) => void;
-  /** What the filter opens with (#490: the pointer hands the picker's name over). */
-  initialQuery?: string;
+  /**
+   * [#490] A name for the filter, from the Golem model picker's pointer.
+   * Applied on mount and again whenever its nonce changes, so a repeated
+   * request reaches an editor that is already open without remounting it.
+   */
+  queryRequest?: { query: string; nonce: number };
   /** #490: the Golem model picker's reading of this band; absent for a route editor. */
   golem?: GolemBand;
 }
@@ -202,10 +203,19 @@ export function ModelBand({
   onProviderChange,
   onSelect,
   onManual,
-  initialQuery = '',
+  queryRequest,
   golem,
 }: ModelBandProps) {
-  const [query, setQuery] = useState(initialQuery);
+  const [query, setQuery] = useState(queryRequest?.query ?? '');
+  const [seenQuery, setSeenQuery] = useState(queryRequest?.nonce);
+  /**
+   * [#490] The picker lists one entry per provider and model; a route editor
+   * one card per full set of facts. `same` is that identity, for every
+   * "is this the same card" question below.
+   */
+  const groupKey = golem === undefined ? rowKey : selectorKey;
+  const same = (a: ModelProjection | null, b: ModelProjection): boolean =>
+    a !== null && groupKey(a) === groupKey(b);
   /**
    * #314: the count region mounts with the band, and a live region speaks only
    * text that arrives after it is in the accessibility tree. An effect after the
@@ -225,6 +235,13 @@ export function ModelBand({
    * only place facts are shown, so the grid geometry never moves.
    */
   const [previewing, setPreviewing] = useState(false);
+  // A later pointer request replaces the filter (render-phase adjustment).
+  if (queryRequest !== undefined && queryRequest.nonce !== seenQuery) {
+    setSeenQuery(queryRequest.nonce);
+    setQuery(queryRequest.query);
+    setActive(0);
+    setPreviewing(false);
+  }
   const gridRef = useRef<HTMLDivElement>(null);
   /** True only for the render that follows a keyboard move. */
   const navigatedRef = useRef(false);
@@ -235,14 +252,23 @@ export function ModelBand({
   // The verdict rides on the row: one call per card per render, and a blocked
   // card renders the very shortfall that blocked it.
   // #490: the picker lists every provider while its select reads All providers.
+  // One entry per provider and model; its card is the current one when the
+  // entry holds it, so its verdict and the change it stages carry those facts.
   const judged = buildModelRows(
     models,
     golem !== undefined && provider === '' ? null : provider,
-    providers
-  ).map((row) => ({
-    ...row,
-    short: shortfalls(row.model),
-  }));
+    providers,
+    groupKey
+  )
+    .map((row) =>
+      golem !== undefined && golem.current !== null && same(golem.current, row.model)
+        ? { ...row, model: golem.current }
+        : row
+    )
+    .map((row) => ({
+      ...row,
+      short: shortfalls(row.model),
+    }));
   const eligible = judged.filter((row) => row.short.length === 0);
   const blocked = judged.filter((row) => row.short.length > 0);
 
@@ -536,10 +562,12 @@ export function ModelBand({
   // Leaving the declare fieldset returns the caret to the filter it was opened
   // from (§4.4).
   const wasManual = useRef(manual !== null);
+  // The picker never opens the declare form, so leaving one is a card click there.
+  const declares = golem === undefined;
   useEffect(() => {
-    if (wasManual.current && manual === null) filterRef.current?.focus();
+    if (declares && wasManual.current && manual === null) filterRef.current?.focus();
     wasManual.current = manual !== null;
-  }, [manual]);
+  }, [manual, declares]);
 
   /**
    * What the strip READS OUT. Preview follows keyboard focus, so the left half
@@ -553,7 +581,7 @@ export function ModelBand({
   const previewEntry = previewing ? matches[activeIndex] : undefined;
   /** A walked card: its row, plus the floor IT would meet — asked once per render. */
   const previewed =
-    previewEntry === undefined || sameModel(selected, previewEntry.model)
+    previewEntry === undefined || same(selected, previewEntry.model)
       ? undefined
       : { ...previewEntry, shape: preview(previewEntry.model) };
   const previewingOther = previewed !== undefined;
@@ -574,7 +602,7 @@ export function ModelBand({
     previewed?.descriptions ??
     (detail === null
       ? []
-      : (judged.find((row) => sameModel(detail, row.model))?.descriptions ??
+      : (judged.find((row) => same(detail, row.model))?.descriptions ??
         (detail.description === undefined
           ? []
           : [{ role: detail.role, description: detail.description }])));
@@ -771,7 +799,7 @@ export function ModelBand({
         }}
       >
         {matches.map((row, index) => {
-          const chosen = sameModel(selected, row.model);
+          const chosen = same(selected, row.model);
           const key = rowKey(row.model);
           const facts = factsLine(row.model);
           const abilities = abilitiesLine(row.model.capabilityFacts.caps);
@@ -870,7 +898,7 @@ export function ModelBand({
                 </span>
                 {golem === undefined
                   ? chosen && <span className={styles.modelCardMark}>assigned</span>
-                  : sameModel(golem.current, row.model) && (
+                  : same(golem.current, row.model) && (
                       <span className={styles.modelCardMark}>current</span>
                     )}
               </span>
@@ -1057,7 +1085,20 @@ export function ModelBand({
         data-testid="model-detail"
         data-state={detailState}
       >
-        {manual !== null ? (
+        {manual !== null && golem !== undefined ? (
+          // [#490] A hand declaration staged in Shared configuration reads
+          // back here, read-only: the picker offers models already in the file.
+          <>
+            <div className={styles.detailHead}>
+              <span className={styles.detailName}>{manual.model}</span>
+              <span className={styles.grow} />
+              <span className={styles.detailOwner}>declared in Shared configuration</span>
+            </div>
+            <p className={styles.fieldHint}>
+              Choose a model above, or change this one in Shared configuration.
+            </p>
+          </>
+        ) : manual !== null ? (
           <>
             <div className={styles.detailHead}>
               <span className={styles.detailName}>
@@ -1098,9 +1139,7 @@ export function ModelBand({
               ) : golem === undefined ? (
                 <span className={styles.modelCardMark}>assigned</span>
               ) : (
-                sameModel(golem.current, detail) && (
-                  <span className={styles.modelCardMark}>current</span>
-                )
+                same(golem.current, detail) && <span className={styles.modelCardMark}>current</span>
               )}
               {detailFacts !== '' && <span className={styles.detailFacts}>{detailFacts}</span>}
               {/* Who already routes to this card — a PREVIEW's reading. An
@@ -1118,7 +1157,7 @@ export function ModelBand({
                 // #490: the summary and Details for whichever card the strip reads.
                 golem.strip(
                   detail,
-                  models.filter((model) => rowKey(model) === rowKey(detail))
+                  models.filter((model) => same(detail, model))
                 )
               ) : previewed === undefined ? (
                 /*

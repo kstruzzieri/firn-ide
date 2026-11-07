@@ -442,6 +442,87 @@ describe('Use model', () => {
   });
 });
 
+describe('Codex round 1', () => {
+  it('reads Done when the agent route already holds an edit made in Shared configuration', async () => {
+    await mount();
+    await userEvent.click(sharedToggle());
+    await userEvent.click(screen.getByRole('button', { name: 'Edit route agent' }));
+    const editor = screen.getByRole('group', { name: 'Route agent' });
+    await userEvent.click(within(editor).getByLabelText(/^thinking/));
+    await tickApplyAnywayIfAsked(editor);
+    await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+
+    const fold = await openPicker();
+    const can = () => within(fold).getByRole('listbox', { name: 'Can run Golem' });
+    await userEvent.click(optionNamed(can(), 'zai-org/GLM-5.2'));
+    expect(within(fold).queryByRole('button', { name: 'Use model' })).toBeNull();
+    await userEvent.click(optionNamed(can(), 'qwen3.6:35b-a3b'));
+    expect(within(fold).queryByRole('button', { name: 'Use model' })).toBeNull();
+    expect(ApplyGolemSettings).not.toHaveBeenCalled();
+  });
+
+  it('keeps a hand declaration staged in Shared configuration out of the picker', async () => {
+    await mount();
+    await userEvent.click(sharedToggle());
+    await userEvent.click(screen.getByRole('button', { name: 'Edit route agent' }));
+    const editor = screen.getByRole('group', { name: 'Route agent' });
+    await userEvent.selectOptions(within(editor).getByLabelText('Provider'), 'commandcode');
+    await userEvent.type(within(editor).getByLabelText('Filter models'), 'gpt-9');
+    await userEvent.click(within(editor).getByRole('option', { name: /Declare "gpt-9"/ }));
+    await userEvent.selectOptions(within(editor).getByLabelText('Type'), 'dense');
+    await tickApplyAnywayIfAsked(editor);
+    await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+    expect(screen.getByTestId('golem-model-current').textContent).toContain('gpt-9');
+
+    const fold = await openPicker();
+    expect(within(fold).queryByLabelText('Model name')).toBeNull();
+    expect(within(fold).queryByLabelText('Type')).toBeNull();
+    expect(within(fold).getByTestId('model-detail').textContent).toMatch(
+      /gpt-9.*declared in Shared configuration/
+    );
+    expect(within(fold).queryByRole('button', { name: /Use model|Done/ })).toBeNull();
+  });
+
+  it('hands every pointer request to the agent route editor, open or not', async () => {
+    await mount();
+    const fold = await openPicker();
+    const filter = within(fold).getByLabelText('Filter models');
+    await userEvent.type(filter, 'gpt-9');
+    await userEvent.click(
+      within(fold).getByRole('button', { name: 'Add it in Shared configuration' })
+    );
+    const agentFilter = () =>
+      within(screen.getByRole('group', { name: 'Route agent' })).getByLabelText('Filter models');
+    expect(agentFilter()).toHaveValue('gpt-9');
+
+    await userEvent.clear(filter);
+    await userEvent.type(filter, 'gpt-10');
+    await userEvent.click(
+      within(fold).getByRole('button', { name: 'Add it in Shared configuration' })
+    );
+    await waitFor(() => expect(agentFilter()).toHaveValue('gpt-10'));
+    await waitFor(() => expect(document.activeElement).toBe(agentFilter()));
+  });
+
+  it('lists a model once even when its cards carry different facts', async () => {
+    const reload = hybrid();
+    const models = reload.projection.models as Array<Record<string, unknown>>;
+    reload.projection = {
+      ...reload.projection,
+      models: models.map((model) =>
+        model.role === 'judge' ? { ...model, contextWindow: 8192 } : model
+      ),
+    };
+    await mount(reload);
+    const fold = await openPicker();
+    const can = within(fold).getByRole('listbox', { name: 'Can run Golem' });
+    expect(optionNames(can).filter((name) => name === 'gemma4:31b')).toHaveLength(1);
+    await userEvent.click(optionNamed(can, 'gemma4:31b'));
+    await userEvent.click(within(fold).getByRole('button', { name: 'Details of gemma4:31b' }));
+    expect(within(fold).getByText(/1 of 3 cards for this model says yes/)).toBeInTheDocument();
+  });
+});
+
 describe('a model the picker does not list', () => {
   it('points to Shared configuration and opens the agent route editor on that name', async () => {
     await mount();

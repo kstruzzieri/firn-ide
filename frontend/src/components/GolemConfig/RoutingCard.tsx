@@ -257,11 +257,13 @@ export function RoutingCard({
   const toggleShared = onToggle ?? (() => setOwnFold((current) => !current));
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   /**
-   * [#490] Use case → the name its editor's filter opens with: the Golem
-   * model picker's pointer hands a name it does not list to the agent route
-   * editor. Read once, when that editor mounts.
+   * [#490] Use case → the name for its editor's filter: the Golem model
+   * picker's pointer hands a name it does not list to the agent route editor,
+   * open or not. The request's nonce makes a repeated name a new request.
    */
-  const [queries, setQueries] = useState<ReadonlyMap<string, string>>(new Map());
+  const [queries, setQueries] = useState<ReadonlyMap<string, { query: string; nonce: number }>>(
+    new Map()
+  );
   /** A fresh object per request, so a repeated chip click focuses again. */
   const [pendingFocus, setPendingFocus] = useState<{ elementId: string } | null>(null);
   /**
@@ -360,7 +362,8 @@ export function RoutingCard({
     if (index < 0) return;
     const editorId = `golem-route-editor-${index}`;
     const query = focusRequest.query;
-    if (query !== undefined) setQueries((current) => new Map(current).set(name, query));
+    if (query !== undefined)
+      setQueries((current) => new Map(current).set(name, { query, nonce: focusRequest.nonce }));
     openEditor(name, `${editorId}-filter`); // the Model field, not the fieldset
     // [C26] Never interpolate an identifier into a selector (quotes are legal in
     // use-case names); the row carries an index-derived id instead.
@@ -825,7 +828,7 @@ export function RoutingCard({
                 draft={draft}
                 staged={staged}
                 preselect={preselect.get(useCase)}
-                initialQuery={queries.get(useCase)}
+                queryRequest={queries.get(useCase)}
                 rowKey={routeRowKey(useCase)}
                 onStage={onStage}
                 onClose={() => close(useCase, `${editorId}-edit`)}

@@ -1226,6 +1226,15 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     if (!golemApplyPending) return;
     setGolemApplyPending(false);
+    // Checked again on the committed draft: exactly the picker's one change,
+    // or nothing is sent and the page's Apply takes it from here.
+    const { changes, source } = draftRef.current;
+    if (
+      source.kind !== 'applied' ||
+      changes.length !== 1 ||
+      changeStableID(changes[0]) !== `route:${GOLEM_USE_CASE}`
+    )
+      return;
     applyRef.current('golem');
   }, [golemApplyPending]);
 
@@ -1411,14 +1420,15 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const documentLocked =
     body !== null && (body.state !== 'ready' || !body.editable || body.readOnly);
   /**
-   * [#490] Use model applies in one step only when the draft holds nothing
-   * but the picker's own change and no other editor holds unstaged edits, so
-   * the request carries only what the user picked. Otherwise the picker reads
-   * Done and stages beside the rest.
+   * [#490] Use model applies in one step only when nothing is staged on the
+   * page and no other editor holds unstaged edits, so the request carries the
+   * picker's change and nothing else — not even an earlier edit to the agent
+   * route the picker would otherwise re-send. Otherwise it reads Done.
    */
   const golemApplies =
     draft.source.kind === 'applied' &&
-    draft.changes.every((change) => changeStableID(change) === `route:${GOLEM_USE_CASE}`) &&
+    draft.changes.length === 0 &&
+    draft.needsReview.length === 0 &&
     [...unstagedEditors].every((key) => key === GOLEM_ROW_KEY);
 
   // A provider a defined model still references cannot be removed.

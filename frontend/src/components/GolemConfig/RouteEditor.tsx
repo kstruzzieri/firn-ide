@@ -226,8 +226,8 @@ export interface RouteEditorProps {
    * focus — the editor cannot, because it unmounts with the message.
    */
   onStaged: (announcement: string) => void;
-  /** What the band's filter opens with (#490's pointer). Read once, at mount. */
-  initialQuery?: string;
+  /** [#490] A name for the band's filter, from the Golem model picker's pointer. */
+  queryRequest?: { query: string; nonce: number };
   /** #490: render as the Golem model picker (design 5.1). */
   golem?: GolemPicker;
 }
@@ -374,7 +374,7 @@ export function RouteEditor({
   onClose,
   onUnstagedChange,
   onStaged,
-  initialQuery,
+  queryRequest,
   golem,
 }: RouteEditorProps) {
   /** Siblings the backend forks away from, rather than changing under them. */
@@ -1129,7 +1129,7 @@ export function RouteEditor({
         providers={providers}
         selected={defined}
         manual={manual}
-        initialQuery={initialQuery}
+        queryRequest={queryRequest}
         golem={
           golem === undefined
             ? undefined
