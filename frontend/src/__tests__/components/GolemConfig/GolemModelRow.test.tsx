@@ -523,6 +523,95 @@ describe('Codex round 1', () => {
   });
 });
 
+describe('Codex round 2: the picker and the agent route editor stay in step', () => {
+  const editAgent = async () => {
+    if (sharedToggle().getAttribute('aria-expanded') !== 'true')
+      await userEvent.click(sharedToggle());
+    if (screen.queryByRole('group', { name: 'Route agent' }) === null)
+      await userEvent.click(screen.getByRole('button', { name: 'Edit route agent' }));
+    return screen.getByRole('group', { name: 'Route agent' });
+  };
+  const can = () => within(picker()).getByRole('listbox', { name: 'Can run Golem' });
+
+  it('never sends a Shared configuration edit the user withdrew', async () => {
+    await mount();
+    await openPicker();
+    // Stage thinking and Think `always` on the current model in Shared configuration.
+    let editor = await editAgent();
+    await userEvent.click(within(editor).getByLabelText(/^thinking/));
+    await userEvent.selectOptions(within(editor).getByLabelText('Think mode'), 'always');
+    await tickApplyAnywayIfAsked(editor);
+    await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
+    // Walk the picker away and back.
+    await userEvent.click(optionNamed(can(), 'zai-org/GLM-5.2'));
+    await userEvent.click(optionNamed(can(), 'qwen3.6:35b-a3b'));
+    // Withdraw the edit in Shared configuration: the draft is empty again.
+    editor = await editAgent();
+    await userEvent.click(within(editor).getByLabelText(/^thinking/));
+    await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+    expect(screen.queryByRole('group', { name: 'Route agent' })).toBeNull();
+    expect(screen.queryByText(/staged change/)).toBeNull();
+
+    // The picker holds nothing the user did not pick there.
+    expect(within(picker()).queryByRole('button', { name: 'Use model' })).toBeNull();
+    await userEvent.click(optionNamed(can(), 'zai-org/GLM-5.2'));
+    (ApplyGolemSettings as jest.Mock).mockResolvedValue({
+      status: 'diagnostics',
+      diagnostics: [],
+      consentOutcome: 'unchanged',
+    });
+    await tickApplyAnywayIfAsked(picker());
+    await userEvent.click(within(picker()).getByRole('button', { name: 'Use model' }));
+    await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(1));
+    expect(lastApply().changes).toEqual(pinnedRequest().changes);
+  });
+
+  it('lets the picker restore the model a Shared configuration edit replaced', async () => {
+    await mount();
+    await openPicker();
+    const editor = await editAgent();
+    await userEvent.selectOptions(within(editor).getByLabelText('Provider'), 'commandcode');
+    await userEvent.click(optionNamed(within(editor).getByRole('listbox'), 'zai-org/GLM-5.2'));
+    await tickApplyAnywayIfAsked(editor);
+    await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
+
+    // The picker reads the staged pick and can put the applied model back.
+    expect(optionNamed(can(), 'zai-org/GLM-5.2')).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(optionNamed(can(), 'qwen3.6:35b-a3b'));
+    await userEvent.click(within(picker()).getByRole('button', { name: 'Done' }));
+    expect(screen.queryByText('1 staged change')).toBeNull();
+    expect(screen.getByTestId('golem-model-current').textContent).toBe(
+      'qwen3.6:35b-a3b via llamacpp'
+    );
+  });
+
+  it('lets the agent route editor restore the model the picker replaced', async () => {
+    await mount();
+    // Something else staged, so the picker reads Done and only stages.
+    await userEvent.click(screen.getByRole('button', { name: 'Edit provider llamacpp' }));
+    const endpoint = screen.getByLabelText('Endpoint');
+    await userEvent.clear(endpoint);
+    await userEvent.type(endpoint, 'http://127.0.0.1:8091');
+    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+    let editor = await editAgent();
+
+    await openPicker();
+    await userEvent.click(optionNamed(can(), 'zai-org/GLM-5.2'));
+    await tickApplyAnywayIfAsked(picker());
+    await userEvent.click(within(picker()).getByRole('button', { name: 'Done' }));
+    expect(screen.getByText('2 staged changes')).toBeInTheDocument();
+
+    // The open route editor now reads the staged pick and can put qwen back.
+    editor = screen.getByRole('group', { name: 'Route agent' });
+    await userEvent.selectOptions(within(editor).getByLabelText('Provider'), 'llamacpp');
+    await userEvent.click(optionNamed(within(editor).getByRole('listbox'), 'qwen3.6:35b-a3b'));
+    await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
+  });
+});
+
 describe('a model the picker does not list', () => {
   it('points to Shared configuration and opens the agent route editor on that name', async () => {
     await mount();

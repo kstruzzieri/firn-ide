@@ -92,6 +92,10 @@ export function GolemModelCard({
   const applied = role === null ? null : (models.find((model) => model.role === role) ?? null);
   const staged = changes.find((change) => changeStableID(change) === `route:${GOLEM_USE_CASE}`);
   const stagedModel = staged?.kind === 'route' ? staged.modelFacts : null;
+  /** The agent route's raw staged change, as one string: the editor's identity. */
+  const stagedKey = JSON.stringify(
+    draft.changes.find((change) => changeStableID(change) === `route:${GOLEM_USE_CASE}`) ?? null
+  );
   const shown =
     stagedModel ??
     (applied === null
@@ -172,6 +176,10 @@ export function GolemModelCard({
         {outcome}
         {mounted && editable && !applying && (
           <RouteEditor
+            // Re-seeded whenever the agent route's staged change moves under
+            // it (Shared configuration stages the same route), so the picker
+            // never compares against, or re-sends, a row that is gone.
+            key={stagedKey}
             id={EDITOR_ID}
             useCase={GOLEM_USE_CASE}
             role={role}

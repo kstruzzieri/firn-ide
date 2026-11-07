@@ -31,23 +31,30 @@ export const routingOwnsDiagnostic = (
   diagnostic.subjectKind === 'use_case' && routeUseCases(routes).includes(diagnostic.subjectName);
 
 /**
- * [#490] A role's effective fallback chain, as go-llm's `RoleChain` walks it:
- * depth first, in declared order, through each fallback's own fallbacks, each
- * role named once at its first place (a diamond is reached twice, named
- * once). The role itself is not in it. Read-only: Shared configuration shows
- * it; nothing stages from it.
+ * [#490] A role's effective fallback chain, as go-llm v0.5.0's `RoleChain`
+ * walks it (`config/resolve.go`): depth first, in declared order, through
+ * each fallback's own fallbacks, keeping the first of each provider/model
+ * selector. A role whose model is already in the chain adds nothing, though
+ * its own fallbacks are still walked; the role itself is not in the result.
+ * Each role is walked once: a second walk of a diamond's shared role reaches
+ * only selectors the first already kept. Read-only: Shared configuration
+ * shows it; nothing stages from it.
  */
 export function roleChain(role: string, models: readonly ModelProjection[]): string[] {
-  const fallbacksOf = new Map(models.map((model) => [model.role, model.fallbacks ?? []]));
-  const seen = new Set<string>([role]);
+  const byRole = new Map(models.map((model) => [model.role, model]));
+  const selectors = new Set<string>();
+  const walked = new Set<string>();
   const chain: string[] = [];
-  const walk = (from: string) => {
-    for (const next of fallbacksOf.get(from) ?? []) {
-      if (seen.has(next)) continue;
-      seen.add(next);
-      chain.push(next);
-      walk(next);
+  const walk = (name: string) => {
+    const model = byRole.get(name);
+    if (model === undefined || walked.has(name)) return;
+    walked.add(name);
+    const selector = `${model.provider}\u0000${model.modelName}`;
+    if (!selectors.has(selector)) {
+      selectors.add(selector);
+      if (name !== role) chain.push(name);
     }
+    for (const next of model.fallbacks ?? []) walk(next);
   };
   walk(role);
   return chain;

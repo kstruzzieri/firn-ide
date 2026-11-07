@@ -93,6 +93,16 @@ describe('roleChain', () => {
     expect(roleChain('missing', [])).toEqual([]);
   });
 
+  it('skips a role whose model is already in the chain, as the resolver does, but walks its fallbacks', () => {
+    // go-llm RoleChain dedupes provider/model selectors, not role names.
+    const models = [
+      model({ role: 'main', modelName: 'same', fallbacks: ['alias'] }),
+      model({ role: 'alias', modelName: 'same', fallbacks: ['backup'] }),
+      model({ role: 'backup', modelName: 'other' }),
+    ];
+    expect(roleChain('main', models)).toEqual(['backup']);
+  });
+
   it('never revisits the role it starts from', () => {
     expect(roleChain('a', [role('a', ['b']), role('b', ['a'])])).toEqual(['b']);
   });

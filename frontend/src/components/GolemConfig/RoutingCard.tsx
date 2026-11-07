@@ -397,6 +397,9 @@ export function RoutingCard({
 
   const stagedFor = (useCase: string): Change | undefined =>
     changes.find((change) => changeStableID(change) === `route:${useCase}`);
+  /** As the user staged it (`draft.changes`), before projection coalesces it. */
+  const rawStaged = (useCase: string): Change | undefined =>
+    draft.changes.find((change) => changeStableID(change) === `route:${useCase}`);
   /** The staged route changes by use case, once per render (every row reads it). */
   const stagedByUseCase = stagedRoutes(changes);
 
@@ -818,6 +821,10 @@ export function RoutingCard({
             {/* [C21] Visual spanning is not accessible spanning: name the span. */}
             <div role="cell" aria-colspan={6} className={styles.editorCell}>
               <RouteEditor
+                // [#490] Two surfaces edit the agent route: re-seed this editor
+                // when its route's raw staged change moves under it, so it never
+                // compares against a row that is gone.
+                key={`${editorId}:${JSON.stringify(rawStaged(useCase) ?? null)}`}
                 id={editorId}
                 useCase={useCase}
                 role={role}

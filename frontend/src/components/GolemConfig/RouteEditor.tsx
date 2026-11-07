@@ -508,6 +508,18 @@ export function RouteEditor({
     setAckDrops(false);
     setAckUnknown(false);
   }
+  // [#490] The picker edits no exposure and no Think: both follow the chosen
+  // card and the draft as it stands, never a value an earlier render adopted
+  // from a staging that has since moved (render-phase adjustment).
+  if (golem !== undefined && manual === null && factsKey === seenKey) {
+    const liveExposed = canonicalCaps(offeredCaps);
+    const liveThink = authority?.thinkMode ?? defined?.thinkMode ?? '';
+    if (liveExposed.join(',') !== exposed.join(',')) {
+      setExposed(liveExposed);
+      setArrivalExposed(liveExposed);
+    }
+    if (liveThink !== think) setThink(liveThink);
+  }
 
   // [W4-3] The baseline is what the ROW holds: a preselected model is an edit
   // waiting for Done, never a committed state, so it must read as unstaged.
