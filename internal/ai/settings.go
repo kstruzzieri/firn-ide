@@ -70,6 +70,7 @@ const (
 	codeDefaultsInvalid             = "defaults_invalid"
 	codeKeyReferenceMalformed       = "key_reference_malformed"
 	codeKeyReferenceUnavailable     = "key_reference_unavailable"
+	codeKeyReferenceRefused         = "key_reference_refused"
 	codeSelectorConflict            = "selector_conflict"
 	codeIdentifierNotEditable       = "identifier_not_editable"
 	// Slice B write/action codes. They never arise from a load: the apply
@@ -112,6 +113,7 @@ var settingsDiagnosticCodes = []string{
 	codeDefaultsInvalid,
 	codeKeyReferenceMalformed,
 	codeKeyReferenceUnavailable,
+	codeKeyReferenceRefused,
 	codeSelectorConflict,
 	codeIdentifierNotEditable,
 	codeInvalidArgument,
@@ -501,6 +503,9 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 			if loaded.ConfigDiagnostic.Code == config.CodeParseError &&
 				!errors.Is(loadErr, errConfigJSONSyntax) {
 				d.Code = codeConfigInvalid
+			}
+			if errors.Is(loadErr, errWorkingDirectoryKeyReference) {
+				d.Code = codeKeyReferenceRefused
 			}
 			d.Blocking = true
 			p.Diagnostics = append(p.Diagnostics, boundSubject(d))

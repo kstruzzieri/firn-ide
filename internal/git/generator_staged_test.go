@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,9 @@ import (
 	"firn/internal/ai"
 	"firn/internal/filesystem"
 	"firn/internal/git/gittest"
+	"firn/internal/testutil"
+
+	"github.com/kstruzzieri/go-llm/provider"
 )
 
 // chatPolicy wires the generator to the policy Golem chat applies, loaded from
@@ -885,5 +889,191 @@ func TestGenerateStaged_RecheckSeesNewlyProtectedCopySource(t *testing.T) {
 
 	if !errors.Is(err, errStagedChangesMoved) {
 		t.Fatalf("GenerateStaged() error = %v, want errStagedChangesMoved", err)
+	}
+}
+
+// #524: Firn started from a terminal inside a cloned repository discovers the
+// repository's models.json, and generation runs as the app wires it.
+
+const workdirSecret = "firn-524-secret-marker"
+
+// keyListener counts every request and those whose Authorization carries the
+// secret.
+type keyListener struct{ requests, leaked atomic.Int32 }
+
+func startKeyListener(t *testing.T, remote bool) (*keyListener, string) {
+	t.Helper()
+	var ln net.Listener
+	var baseURL string
+	if remote {
+		ln, baseURL = testutil.ListenNonLoopback(t)
+	} else {
+		var err error
+		if ln, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
+			t.Fatal(err)
+		}
+		baseURL = "http://" + ln.Addr().String()
+	}
+	l := &keyListener{}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		l.requests.Add(1)
+		if strings.Contains(r.Header.Get("Authorization"), workdirSecret) {
+			l.leaked.Add(1)
+		}
+		http.NotFound(w, r)
+	})}
+	go func() { _ = server.Serve(ln) }()
+	t.Cleanup(func() { _ = server.Close() })
+	return l, baseURL
+}
+
+func workdirModels(baseURL, apiKey string) string {
+	return fmt.Sprintf(`{
+		"providers":{"test":{"base_url":%q,"api_format":"openai-compat","timeout":"2s","api_key":%q}},
+		"models":{"chat":{"name":%q,"provider":"test","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},
+		"defaults":{"agent":"chat"}
+	}`, baseURL, apiKey, gittest.Model)
+}
+
+// stageWorkdirGeneration makes a repository with main.go staged and body as
+// its models.json (the file, or a symlink to one elsewhere), runs from it as
+// Firn's working directory with the secret set and GO_LLM_CONFIG unset, and
+// wires generation to a real ai.Service as the app does. The destination at
+// baseURL is approved, as if the user had granted it.
+func stageWorkdirGeneration(t *testing.T, baseURL, body string, viaSymlink bool) (string, *MessageGenerator, *ai.Service) {
+	t.Helper()
+	dir := initRepo(t)
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "main.go")
+	target := filepath.Join(dir, "models.json")
+	if viaSymlink {
+		target = filepath.Join(t.TempDir(), "elsewhere.json")
+	}
+	if err := os.WriteFile(target, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if viaSymlink {
+		if err := os.Symlink(target, filepath.Join(dir, "models.json")); err != nil {
+			t.Skipf("symlinks unavailable here: %v", err)
+		}
+	}
+	t.Setenv("FIRN_524_SECRET", workdirSecret)
+	t.Setenv("GO_LLM_CONFIG", "")
+	if err := os.Unsetenv("GO_LLM_CONFIG"); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	svc := ai.NewService(ctx(), filesystem.NewOS(), filepath.Join(t.TempDir(), "grants.json"), nil, "")
+	t.Cleanup(func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = svc.Close(closeCtx)
+	})
+	if _, _, err := svc.BindRepository(dir); err != nil {
+		t.Fatal(err)
+	}
+	gen := NewMessageGenerator()
+	gen.SetDestinationPolicySource(func() provider.DestinationPolicy {
+		d, err := provider.NewDestination("test", baseURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return provider.NewDestinationPolicy(d)
+	})
+	gen.SetScopeSource(func(root string) (StagedScope, error) {
+		scope, err := svc.StagedScope(root)
+		return StagedScope(scope), err
+	})
+	return dir, gen, svc
+}
+
+// A ${NAME} api_key there is refused before golem loads the file, so nothing
+// reaches the endpoint the file names: loopback (no consent needed) or an
+// approved remote.
+func TestGenerateStaged_WorkingDirectoryKeyReferenceMakesNoRequest(t *testing.T) {
+	requireGit(t)
+	for _, remote := range []bool{false, true} {
+		for _, viaSymlink := range []bool{false, true} {
+			t.Run(fmt.Sprintf("remote=%t/symlink=%t", remote, viaSymlink), func(t *testing.T) {
+				listener, baseURL := startKeyListener(t, remote)
+				dir, gen, _ := stageWorkdirGeneration(t, baseURL, workdirModels(baseURL, "${FIRN_524_SECRET}"), viaSymlink)
+
+				_, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+				if err == nil || !strings.Contains(err.Error(), "GO_LLM_CONFIG") {
+					t.Fatalf("GenerateStaged() error = %v, want the refusal naming GO_LLM_CONFIG", err)
+				}
+				if strings.Contains(err.Error(), workdirSecret) || strings.Contains(err.Error(), "FIRN_524_SECRET") {
+					t.Fatalf("refusal %q leaks the reference or its value", err)
+				}
+				if got := listener.requests.Load(); got != 0 {
+					t.Fatalf("listener saw %d request(s)", got)
+				}
+			})
+		}
+	}
+}
+
+// The file is checked when the scope is built and loaded again later, by
+// golem. Rewriting it in between, from a literal key to a ${NAME} reference,
+// must not change what golem loads.
+func TestGenerateStaged_WorkingDirectoryConfigRewrittenAfterCheckLeaksNothing(t *testing.T) {
+	requireGit(t)
+	listener, baseURL := startKeyListener(t, false)
+	dir, gen, svc := stageWorkdirGeneration(t, baseURL, workdirModels(baseURL, "literal-key"), false)
+	var runtimeConfig string
+	gen.SetScopeSource(func(root string) (StagedScope, error) {
+		scope, err := svc.StagedScope(root)
+		runtimeConfig = scope.ConfigPath
+		writeFile(t, dir, "models.json", workdirModels(baseURL, "${FIRN_524_SECRET}"))
+		return StagedScope(scope), err
+	})
+
+	_, _ = gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if listener.requests.Load() == 0 {
+		t.Fatal("no request reached the listener; the test proves nothing")
+	}
+	if got := listener.leaked.Load(); got != 0 {
+		t.Fatalf("%d request(s) carried the secret", got)
+	}
+	if _, err := os.Stat(runtimeConfig); runtimeConfig == "" || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("runtime config %q after generation: %v, want a removed private copy", runtimeConfig, err)
+	}
+}
+
+// With no go-llm config anywhere, a models.json created in the working
+// directory after the scope is built is not what golem loads: the runtime is
+// pinned to go-llm's built-in fallback, so the file's endpoint sees nothing.
+func TestGenerateStaged_ConfigCreatedAfterCheckLeaksNothing(t *testing.T) {
+	requireGit(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
+	listener, baseURL := startKeyListener(t, false)
+	dir, gen, svc := stageWorkdirGeneration(t, baseURL, "", false)
+	if err := os.Remove(filepath.Join(dir, "models.json")); err != nil {
+		t.Fatal(err)
+	}
+	var runtimeConfig string
+	gen.SetScopeSource(func(root string) (StagedScope, error) {
+		scope, err := svc.StagedScope(root)
+		runtimeConfig = scope.ConfigPath
+		writeFile(t, dir, "models.json", workdirModels(baseURL, "${FIRN_524_SECRET}"))
+		return StagedScope(scope), err
+	})
+	// The fallback names a local Ollama; do not wait on one that happens to run.
+	runCtx, cancel := context.WithTimeout(ctx(), 3*time.Second)
+	defer cancel()
+
+	_, _ = gen.GenerateStaged(runCtx, NewService(), dir)
+
+	if got := listener.requests.Load(); got != 0 {
+		t.Fatalf("listener saw %d request(s), %d carrying the secret", got, listener.leaked.Load())
+	}
+	if _, err := os.Stat(runtimeConfig); runtimeConfig == "" || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("runtime config %q after generation: %v, want a removed private copy", runtimeConfig, err)
 	}
 }

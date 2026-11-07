@@ -400,8 +400,8 @@ influence configuration discovery. The returned `SettingsProjection` carries
 only an allowlisted set of diagnostic codes paired with safe subject names
 (a role, model, or provider identifier) — never the raw go-llm error text.
 Configuration source paths (the discovered `models.json` location) never
-cross this boundary either, matching the run-path's own protection; the fixed
-eight-message error seal that `SanitizeError` applies to run-path failures is
+cross this boundary either, matching the run-path's own protection; the
+fixed-message error seal that `SanitizeError` applies to run-path failures is
 unchanged by this addition. `ReloadGolemSettings` rebuilds the effective
 snapshot only under an idle barrier — every conversation must be fully idle,
 or the call reports `busy: true` with the unchanged current projection — so a

@@ -39,6 +39,14 @@ var ErrAgentConfigInvalid = errors.New("agent configuration invalid")
 // the settings projection can classify json_invalid without string matching.
 var errConfigJSONSyntax = errors.New("agent configuration is not valid JSON")
 
+// errWorkingDirectoryKeyReference refuses a models.json found in Firn's
+// working directory whose api_key names an environment variable: a repository
+// Firn was started inside could otherwise send any secret in Firn's
+// environment to the endpoint it names (#524). Chained alongside
+// ErrAgentConfigInvalid like errConfigJSONSyntax; its text is the remedy and
+// never names the variable.
+var errWorkingDirectoryKeyReference = errors.New("a models.json in Firn's working directory cannot use ${NAME} API-key references; set GO_LLM_CONFIG to its path to allow them")
+
 // sourceOrigin classifies which discovery branch produced the config source.
 // Values are the Wails-facing sourceOrigin vocabulary. The zero value is not
 // part of the contract: any consumer projecting an origin across the boundary
@@ -78,8 +86,8 @@ type loadedAgentConfig struct {
 // the pinned go-llm config.Default does — $GO_LLM_CONFIG, ./models.json, the
 // platform user config dir, then the legacy ~/.config path — without invoking
 // config.Default itself, because Firn needs the selected source path back.
-// The selected file is canonicalized and handed to config.LoadDocument
-// exactly once. No discovery step performs network I/O.
+// The selected file is canonicalized and loaded exactly once, by
+// loadConfigDocument. No discovery step performs network I/O.
 func loadDefaultAgentConfig() (loadedAgentConfig, error) {
 	_, loaded, err := loadAgentConfigDocument()
 	return loaded, err
@@ -103,7 +111,7 @@ func loadAgentConfigDocument() (*config.Document, loadedAgentConfig, error) {
 		return nil, loaded, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
 	}
 	loaded.SourcePath = resolved
-	doc, err := config.LoadDocument(resolved)
+	doc, err := loadConfigDocument(resolved, origin)
 	if err != nil {
 		if d, ok := config.DiagnosticOf(err); ok {
 			loaded.ConfigDiagnostic = d
@@ -111,6 +119,9 @@ func loadAgentConfigDocument() (*config.Document, loadedAgentConfig, error) {
 			log.Printf("ai: agent config load failed: code=%s", d.Code)
 		} else {
 			log.Print("ai: agent config load failed")
+		}
+		if errors.Is(err, errWorkingDirectoryKeyReference) {
+			return nil, loaded, fmt.Errorf("%w: %w", ErrAgentConfigInvalid, errWorkingDirectoryKeyReference)
 		}
 		var syntaxErr *json.SyntaxError
 		if errors.As(err, &syntaxErr) {
@@ -125,6 +136,35 @@ func loadAgentConfigDocument() (*config.Document, loadedAgentConfig, error) {
 		loaded.ReadOnlyDiagnostic = d
 	}
 	return doc, loaded, nil
+}
+
+// loadConfigDocument loads a canonical config source. A working-directory
+// source is parsed with an environment lookup that finds nothing, for the load
+// and every later mutation of the document, so each ${NAME} api_key reference
+// fails as unavailable and the load is refused with
+// errWorkingDirectoryKeyReference. Any other source loads exactly as before.
+// Both keep LoadDocument's origin, so identity and revision do not change.
+func loadConfigDocument(path string, origin sourceOrigin) (*config.Document, error) {
+	if origin != originWorkingDirectory {
+		return config.LoadDocument(path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseWorkingDirectoryConfig(path, data)
+}
+
+// parseWorkingDirectoryConfig parses a working-directory source's bytes with
+// no environment: under that lookup every well-formed ${NAME} reference is
+// unavailable, which is the refusal.
+func parseWorkingDirectoryConfig(path string, data []byte) (*config.Document, error) {
+	doc, err := config.ParseDocument(data, config.Origin{Source: config.OriginExplicit, Path: path},
+		config.DocumentOptions{LookupEnv: func(string) (string, bool) { return "", false }})
+	if d, ok := config.DiagnosticOf(err); ok && d.Code == config.CodeKeyReferenceUnavailable {
+		return nil, fmt.Errorf("%w: %w", errWorkingDirectoryKeyReference, err)
+	}
+	return doc, err
 }
 
 // discoverAgentConfigSource mirrors the pinned go-llm discovery order and
@@ -155,23 +195,70 @@ func discoverAgentConfigSource() (string, sourceOrigin, error) {
 	return "", originNone, fmt.Errorf("%w: no configuration found at any discovery location", ErrAgentConfigMissing)
 }
 
-// currentConfigSource is the canonical config source discovery finds now,
-// the file golem.New will load; "" when there is none, where go-llm falls
-// back to its built-in local provider.
-func currentConfigSource() (string, error) {
-	source, _, err := discoverAgentConfigSource()
+// noConfigFallback is go-llm's built-in config for when none exists (one
+// Ollama provider at its default URL, every route recommended), written out
+// so commit generation can pin it: go-llm's own discovery would otherwise run
+// inside golem.New and could read a models.json created in the working
+// directory since, expanding its ${NAME} keys (#524).
+// ponytail: mirrors unexported go-llm v0.5.0 defaults
+// (providerbootstrap.Materialize, defaultOllamaURL); re-check on every bump.
+const noConfigFallback = `{"providers":{"ollama":{"base_url":"http://localhost:11434","api_format":"ollama"}}}`
+
+// currentConfigSource is the canonical config source discovery finds now; ""
+// when there is none. pinned, when set, is what golem.New must load instead,
+// from a private copy: it takes a path and reads it with go-llm's ambient
+// environment, and with no path it runs go-llm's own discovery. For a
+// working-directory source pinned holds the bytes read and checked here, since
+// the file can change after this check; with no source, the built-in
+// fallback.
+func currentConfigSource() (path string, pinned []byte, err error) {
+	source, origin, err := discoverAgentConfigSource()
 	if errors.Is(err, ErrAgentConfigMissing) {
-		return "", nil
+		return "", []byte(noConfigFallback), nil
 	}
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	resolved, err := canonicalizeConfigSource(source)
 	if err != nil {
 		log.Print("ai: agent config source rejected")
-		return "", fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
+		return "", nil, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
 	}
-	return resolved, nil
+	if origin != originWorkingDirectory {
+		return resolved, nil, nil
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		log.Print("ai: agent config source rejected")
+		return "", nil, fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
+	}
+	if _, err := parseWorkingDirectoryConfig(resolved, data); err != nil {
+		if errors.Is(err, errWorkingDirectoryKeyReference) {
+			return "", nil, fmt.Errorf("%w: %w", ErrAgentConfigInvalid, errWorkingDirectoryKeyReference)
+		}
+		log.Print("ai: agent config load failed")
+		return "", nil, fmt.Errorf("%w: configuration failed to load", ErrAgentConfigInvalid)
+	}
+	return resolved, data, nil
+}
+
+// privateConfigCopy writes data to a new temporary file only this user can
+// read, for golem.New to load; release removes it.
+func privateConfigCopy(data []byte) (path string, release func(), err error) {
+	f, err := os.CreateTemp("", "firn-golem-config-*.json")
+	if err != nil {
+		return "", nil, err
+	}
+	release = func() { _ = os.Remove(f.Name()) }
+	_, err = f.Write(data)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		release()
+		return "", nil, err
+	}
+	return f.Name(), release, nil
 }
 
 // canonicalizeConfigSource resolves a discovered source to an absolute,
