@@ -272,7 +272,8 @@ export function ProviderEditor({
    * and marks nothing; it has no format to give, so the format stays as it is.
    *
    * The key field is EMPTIED, never filled: a key typed for one provider must
-   * not be staged under the next, or Apply would send it to that endpoint.
+   * not be staged under the next, or Apply would save it for that endpoint and
+   * Golem would send it with every request there.
    */
   const pickPreset = (nextId: string) => {
     const next = PROVIDER_PRESETS.find((candidate) => candidate.id === nextId);

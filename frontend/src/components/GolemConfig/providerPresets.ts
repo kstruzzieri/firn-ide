@@ -16,8 +16,10 @@
  *   "Every plan except the Go plan has API access"); listing left `unknown`
  *   until a consented listing is inspected (design decision 9).
  * - OpenCode Go: a working profile's `https://opencode.ai/zen/go` (#322, #505).
- *   The docs now show `/inference/go/...` paths whose model list does not sit
- *   under the chat prefix, so the working endpoint stays until one is checked.
+ *   opencode.ai/docs/go now shows `/inference/go/...` paths whose model list
+ *   does not sit under the chat prefix, so the working endpoint stays until one
+ *   is checked. Keys: the same page ("Subscribe in the console, copy your API
+ *   key"). Only the Go plan is a preset here.
  * - OpenRouter: openrouter.ai/docs (base `https://openrouter.ai/api/v1`, keys at
  *   openrouter.ai/keys, `GET /models` lists all models).
  * - OpenAI: developers.openai.com/api/reference (base `https://api.openai.com/v1`,
