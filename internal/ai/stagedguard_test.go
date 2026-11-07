@@ -327,3 +327,40 @@ func TestStagedScope_SubfolderInAnotherCaseMapsByIdentity(t *testing.T) {
 		t.Error("Protected must follow the policy inside the subfolder")
 	}
 }
+
+// The configuration chat has loaded may no longer be the one discovery finds
+// now (a repointed GO_LLM_CONFIG or symlink). Outside the open subfolder both
+// are protected as copy sources, hard-link aliases included (#491).
+func TestStagedScope_LoadedAndDiscoveredSourcesAreBothProtected(t *testing.T) {
+	top := t.TempDir()
+	bound := filepath.Join(top, "app")
+	if err := os.MkdirAll(bound, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loaded := filepath.Join(top, "loaded.json")
+	writeFile(t, loaded, stagedConfig)
+	if err := os.Link(loaded, filepath.Join(top, "loaded-alias.json")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_LLM_CONFIG", loaded)
+	svc := newStagedGuardService(t)
+	bindStaged(t, svc, bound)
+	svc.snapshotOrBuild()
+	discovered := filepath.Join(top, "discovered.json")
+	writeFile(t, discovered, stagedConfig)
+	t.Setenv("GO_LLM_CONFIG", discovered)
+
+	scope, err := svc.StagedScope(top)
+
+	if err != nil {
+		t.Fatalf("StagedScope: %v", err)
+	}
+	t.Cleanup(scope.Release)
+	for path, want := range map[string]bool{
+		"loaded.json": true, "loaded-alias.json": true, "discovered.json": true, "README.md": false,
+	} {
+		if got := scope.Protected(path); got != want {
+			t.Errorf("Protected(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

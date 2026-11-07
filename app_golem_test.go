@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/kstruzzieri/go-llm/provider"
 )
 
@@ -1816,4 +1817,107 @@ func TestCommitGenerationIdentifiesAsFirnAndSendsNoSessionHeader(t *testing.T) {
 	if got, ok := h["X-Opencode-Session"]; ok {
 		t.Errorf("x-opencode-session = %q, want the header absent for a non-opencode destination", got)
 	}
+}
+
+// Golem chat and commit messages send to the model the configuration Golem
+// has loaded: an edit made outside Firn reaches neither until Refresh, and
+// both after it (#491). The stub records the model each request names.
+func TestGolemChatAndCommitMessagesSendTheLoadedModel(t *testing.T) {
+	models := make(chan string, 8)
+	stub := golemChatStubHandler("feat: shared model")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/chat/completions" {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			var request struct {
+				Model string `json:"model"`
+			}
+			_ = json.Unmarshal(body, &request)
+			models <- request.Model
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		stub.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	configFor := func(model string) string {
+		return fmt.Sprintf(`{
+  "providers": {"primary": {"base_url": %q, "api_format": "openai-compat", "timeout": "5s"}},
+  "models": {"agent-m": {"name": %q, "provider": "primary", "type": "dense",
+    "context_window": 32768, "capabilities": ["chat", "stream", "tool_call"]}},
+  "defaults": {"agent": "agent-m"}
+}`, server.URL, model)
+	}
+	app, path := newGolemAppWithTarget(t, configFor("first-model"))
+	repo := initGitRepoForApp(t)
+	info, err := app.GetWorkspaceInfo(repo)
+	if err != nil {
+		t.Fatalf("bind repository: %v", err)
+	}
+	if err := app.GitStage(repo, []string{"f.txt"}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	sent := func(what string) string {
+		t.Helper()
+		select {
+		case model := <-models:
+			return model
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s never reached the provider", what)
+			return ""
+		}
+	}
+	chat := func() string {
+		t.Helper()
+		admission, err := app.RunGolemTurn(ai.TurnRequest{
+			Identity: ai.RunIdentity{
+				RepoEpoch:      info.RepoEpoch,
+				WorkspaceID:    "project",
+				ConversationID: ai.ConversationID(info.RepoKey, "project"),
+				RunID:          uuid.NewString(),
+			},
+			Message: "hi",
+		})
+		if err != nil || admission.State != "accepted" {
+			t.Fatalf("RunGolemTurn = %+v, %v", admission, err)
+		}
+		model := sent("the chat turn")
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			status, err := app.GetGolemStatus(ai.StatusRequest{RepoEpoch: info.RepoEpoch, WorkspaceID: "project"})
+			if err == nil && len(status.ActiveRuns) == 0 {
+				return model
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the chat turn never ended: %+v, %v", status, err)
+			}
+		}
+	}
+	commit := func() string {
+		t.Helper()
+		if _, err := app.GitGenerateCommitMessage(repo); err != nil {
+			t.Fatalf("GitGenerateCommitMessage: %v", err)
+		}
+		return sent("the commit message request")
+	}
+	expect := func(when, want string) {
+		t.Helper()
+		if got := chat(); got != want {
+			t.Fatalf("%s: chat sent %q, want %q", when, got, want)
+		}
+		if got := commit(); got != want {
+			t.Fatalf("%s: commit message sent %q, want %q", when, got, want)
+		}
+	}
+
+	expect("before the edit", "first-model")
+	if err := os.WriteFile(path, []byte(configFor("second-model")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expect("after an outside edit", "first-model")
+	if res, err := app.ReloadGolemSettings(); err != nil || res.Busy {
+		t.Fatalf("ReloadGolemSettings = %+v, %v", res, err)
+	}
+	expect("after Refresh", "second-model")
 }

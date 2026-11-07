@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -345,6 +346,66 @@ func TestMessageGenerator_Generate_UsesEphemeralSession(t *testing.T) {
 	entries, err := os.ReadDir(dataDir)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("generation persisted data: entries = %v, err = %v", entries, err)
+	}
+}
+
+// At opencode a generation is a conversation of its own: each one sends a
+// session header of its own, blinded as chat's are. The transport dials an
+// in-process TLS server while the request URL stays https://opencode.ai.
+func TestMessageGenerator_Generate_SendsOpencodeAFreshSessionPerGeneration(t *testing.T) {
+	sessions := make(chan string, 4)
+	handler := chatStubHandler("feat: opencode message")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			sessions <- r.Header.Get("x-opencode-session")
+			r.URL.Path = "/v1/chat/completions"
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	// The model's transport is a hardened clone of http.DefaultTransport: make
+	// every dial reach the test server, its certificate verified under the
+	// name it was issued for.
+	base := server.Client().Transport.(*http.Transport).Clone()
+	base.TLSClientConfig.ServerName = "example.com"
+	base.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	previous := http.DefaultTransport
+	http.DefaultTransport = base
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	writeModelsConfig(t, `{
+		"providers":{"zen":{"base_url":"https://opencode.ai/zen/v1","api_format":"openai-compat","timeout":"5s"}},
+		"models":{"coder":{"name":"chat-model","provider":"zen","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},
+		"defaults":{"agent":"coder"}
+	}`)
+	root := t.TempDir()
+	svc := newGolemService(t, root)
+	prepared, err := svc.PrepareDestinationGrants()
+	if err != nil || prepared.Status != "consent_required" {
+		t.Fatalf("PrepareDestinationGrants = %+v, %v", prepared, err)
+	}
+	if granted, err := svc.ConfirmDestinationGrants(prepared.Challenge.Token); err != nil || granted.Status != "granted" {
+		t.Fatalf("ConfirmDestinationGrants = %+v, %v", granted, err)
+	}
+	model := golemModel(t, svc, root)
+	gen := NewMessageGenerator()
+
+	var seen []string
+	for range 2 {
+		if message, err := gen.generate(context.Background(), root, sampleDiff, 0, model, nil); err != nil || message != "feat: opencode message" {
+			t.Fatalf("Generate() = %q, %v", message, err)
+		}
+		seen = append(seen, <-sessions)
+	}
+
+	for _, session := range seen {
+		if !strings.HasPrefix(session, "firn-") || strings.HasPrefix(session, "firn-commit-") {
+			t.Fatalf("session header %q, want a blinded firn- value, never the thread ID", session)
+		}
+	}
+	if seen[0] == seen[1] {
+		t.Fatal("two generations sent opencode the same session")
 	}
 }
 

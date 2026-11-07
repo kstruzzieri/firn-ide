@@ -375,7 +375,7 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 	if err != nil {
 		return StagedScope{}, err
 	}
-	guard, boundRoot, target, warningsChanged, err := s.stagedPolicy(configPath)
+	guard, boundRoot, target, loadedSource, warningsChanged, err := s.stagedPolicy(configPath)
 	if warningsChanged {
 		s.emit(EventGolemStatusChanged, nil)
 	}
@@ -393,24 +393,10 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 		transport.CloseIdleConnections()
 		return StagedScope{}, err
 	}
-	// isConfigSource reports the config source itself or a hard link to it.
-	// A path that no longer exists matches by name alone.
-	isConfigSource := func(string) bool { return false }
-	if configPath != "" {
-		configInfo, configErr := filesystem.Lstat(s.fs, configPath)
-		// Windows loads a file ID lazily, by path; SameFile on itself loads
-		// it now, before anything can replace the file.
-		if configErr == nil && !os.SameFile(configInfo, configInfo) {
-			configErr = errors.New("config source identity unavailable")
-		}
-		isConfigSource = func(abs string) bool {
-			if abs == configPath {
-				return true
-			}
-			info, err := filesystem.Lstat(s.fs, abs)
-			return err == nil && configErr == nil && os.SameFile(info, configInfo)
-		}
-	}
+	// isConfigSource reports a config source, the one discovery finds now or
+	// the one chat loaded, which a repointed GO_LLM_CONFIG or symlink can make
+	// differ, or a hard link to either.
+	isConfigSource := configSourceMatcher(s.fs, configPath, loadedSource)
 	// toBound maps a top-relative path onto the bound root; ok is false
 	// outside it. A bound root at or below the git top level is located by
 	// identity and spelled as git reports it: on a case-insensitive
@@ -512,30 +498,76 @@ func listedName(fsys filesystem.FileSystem, parent string, info fs.FileInfo) (st
 // the binding gate's read side, the way chat admission does: reload the
 // manifests, protect the config source discovery finds now, resolve the
 // target through resolveTargetLocked (which protects the loaded
-// configuration's source too), then issue. warningsChanged tells the caller to
-// announce a status change once the gate is released.
-func (s *Service) stagedPolicy(configPath string) (guard agenttools.ScopeGuard, boundRoot string, target *providerTarget, warningsChanged bool, err error) {
+// configuration's source too), then issue. loadedSource is that loaded
+// source. warningsChanged tells the caller to announce a status change once
+// the gate is released.
+func (s *Service) stagedPolicy(configPath string) (guard agenttools.ScopeGuard, boundRoot string, target *providerTarget, loadedSource string, warningsChanged bool, err error) {
 	s.bindingGate.RLock()
 	defer s.bindingGate.RUnlock()
 	if s.isClosing() {
-		return nil, "", nil, false, fmt.Errorf("%w: commit message generation rejected", errServiceClosing)
+		return nil, "", nil, "", false, fmt.Errorf("%w: commit message generation rejected", errServiceClosing)
 	}
 	b := s.currentBinding()
 	if b == nil {
-		return nil, "", nil, false, fmt.Errorf("commit message generation needs the repository open in Firn: %w", errPolicyDetached)
+		return nil, "", nil, "", false, fmt.Errorf("commit message generation needs the repository open in Firn: %w", errPolicyDetached)
 	}
 	warnings := b.policy.Warnings()
 	b.policy.Reload()
 	warningsChanged = !slices.Equal(warnings, b.policy.Warnings())
 	if configPath != "" {
 		if err := b.policy.ProtectConfigSource(configPath); err != nil {
-			return nil, "", nil, warningsChanged, fmt.Errorf("%w: config source could not be protected: %w", ErrAgentConfigInvalid, err)
+			return nil, "", nil, "", warningsChanged, fmt.Errorf("%w: config source could not be protected: %w", ErrAgentConfigInvalid, err)
 		}
 	}
+	// Every snapshot swap holds the binding gate's write side, so the snapshot
+	// read here is the one resolveTargetLocked resolves.
+	loadedSource = s.snapshotOrBuild().canonicalPath
 	if target, _, err = s.resolveTargetLocked(b.policy); err != nil {
-		return nil, "", nil, warningsChanged, err
+		return nil, "", nil, "", warningsChanged, err
 	}
-	return b.policy.Guard(""), b.repoRoot, target, warningsChanged, nil
+	return b.policy.Guard(""), b.repoRoot, target, loadedSource, warningsChanged, nil
+}
+
+// configSourceMatcher reports a path that is one of sources, by name or, when
+// the path exists, as a hard link to one. "" sources are skipped. Each source
+// is sampled now: Windows loads a file ID lazily, by path, so SameFile on
+// itself loads it before anything can replace the file.
+func configSourceMatcher(fsys filesystem.FileSystem, sources ...string) func(abs string) bool {
+	type source struct {
+		path string
+		info fs.FileInfo // nil when the source's identity is unavailable
+	}
+	var known []source
+	for _, path := range sources {
+		if path == "" || slices.ContainsFunc(known, func(k source) bool { return k.path == path }) {
+			continue
+		}
+		info, err := filesystem.Lstat(fsys, path)
+		if err != nil || !os.SameFile(info, info) {
+			info = nil
+		}
+		known = append(known, source{path: path, info: info})
+	}
+	return func(abs string) bool {
+		var info fs.FileInfo
+		looked := false
+		for _, k := range known {
+			if abs == k.path {
+				return true
+			}
+			if k.info == nil {
+				continue
+			}
+			if !looked {
+				info, _ = filesystem.Lstat(fsys, abs)
+				looked = true
+			}
+			if info != nil && os.SameFile(info, k.info) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // BindRepository makes repoPath the current repository incarnation and returns
