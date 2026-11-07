@@ -209,7 +209,6 @@ func (a *App) startup(ctx context.Context) {
 		consentPath = filepath.Join(a.firnDir, "golem-consent.json")
 	}
 	a.aiService = ai.NewService(ctx, a.osFS, consentPath, a.emit, firnUserAgent())
-	a.gitMsgGen.SetDestinationPolicySource(a.aiService.DestinationPolicy)
 	a.gitMsgGen.SetScopeSource(func(root string) (git.StagedScope, error) {
 		scope, err := a.aiService.StagedScope(root)
 		return git.StagedScope(scope), err

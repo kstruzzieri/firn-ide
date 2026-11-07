@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,13 +14,56 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	"github.com/kstruzzieri/go-llm/agent"
 	"github.com/kstruzzieri/go-llm/provider"
 
+	"firn/internal/ai"
+	"firn/internal/filesystem"
 	"firn/internal/git/gittest"
 	"firn/internal/testutil"
 )
+
+// newGolemService is Golem chat's service bound to root, as the app wires it,
+// on the config GO_LLM_CONFIG names (gittest.Start or writeModelsConfig).
+func newGolemService(t *testing.T, root string) *ai.Service {
+	t.Helper()
+	if os.Getenv("GO_LLM_CONFIG") == "" {
+		t.Fatal("point GO_LLM_CONFIG at a fixture first: the developer's own config must never load here")
+	}
+	svc := ai.NewService(context.Background(), filesystem.NewOS(), filepath.Join(t.TempDir(), "grants.json"), nil, "")
+	t.Cleanup(func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := svc.Close(closeCtx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+	if _, _, err := svc.BindRepository(root); err != nil {
+		t.Fatalf("BindRepository: %v", err)
+	}
+	return svc
+}
+
+// golemModel is the Golem model svc hands commit generation for root.
+func golemModel(t *testing.T, svc *ai.Service, root string) *ai.GolemModel {
+	t.Helper()
+	scope, err := svc.StagedScope(root)
+	if err != nil {
+		t.Fatalf("StagedScope: %v", err)
+	}
+	t.Cleanup(scope.Release)
+	return scope.Model
+}
+
+// stubModel is the Golem model a fresh service loads for root from the config
+// GO_LLM_CONFIG names.
+func stubModel(t *testing.T, root string) *ai.GolemModel {
+	t.Helper()
+	return golemModel(t, newGolemService(t, root), root)
+}
 
 func TestMessageGenerator_AvailableWithEmbeddedRuntime(t *testing.T) {
 	if !NewMessageGenerator().Available(context.Background()) {
@@ -31,7 +75,8 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 	provider := gittest.Start(t, "feat: add line", nil)
 	diff := "diff --git a/x b/x\n+added line\n"
 
-	msg, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), diff, 0, "", nil)
+	root := t.TempDir()
+	msg, err := NewMessageGenerator().generate(context.Background(), root, diff, 0, stubModel(t, root), nil)
 
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -70,7 +115,7 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 
 	provider = gittest.Start(t, "chore: trim diff", nil)
 	huge := strings.Repeat("x", maxPromptBytes*4) + "must not reach provider"
-	if _, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), huge, 0, "", nil); err != nil {
+	if _, err := NewMessageGenerator().generate(context.Background(), root, huge, 0, stubModel(t, root), nil); err != nil {
 		t.Fatalf("Generate(huge) error = %v", err)
 	}
 	if got := string(<-provider.Requests); !strings.Contains(got, "[diff truncated for prompt budget]") || strings.Contains(got, "must not reach provider") {
@@ -79,7 +124,7 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 
 	provider = gittest.Start(t, "chore: escape diff", nil)
 	escapeHeavy := strings.Repeat("<", maxPromptBytes) + "must not reach provider"
-	if _, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), escapeHeavy, 0, "", nil); err != nil {
+	if _, err := NewMessageGenerator().generate(context.Background(), root, escapeHeavy, 0, stubModel(t, root), nil); err != nil {
 		t.Fatalf("Generate(escape-heavy) error = %v", err)
 	}
 	var escapedRequest struct {
@@ -119,19 +164,17 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 }
 
 func TestMessageGenerator_Generate_EmptyDiff(t *testing.T) {
-	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), " \n\t", 0, "", nil)
+	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), " \n\t", 0, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "nothing staged") {
 		t.Fatalf("Generate() error = %v, want nothing-staged error", err)
 	}
 }
 
-func TestMessageGenerator_Generate_BootstrapFailure(t *testing.T) {
-	t.Setenv("GO_LLM_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
+func TestMessageGenerator_Generate_NoModelSendsNothing(t *testing.T) {
+	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, nil, nil)
 
-	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, "", nil)
-
-	if err == nil || !strings.Contains(err.Error(), "golem runtime initialization") {
-		t.Fatalf("Generate() error = %v, want runtime-initialization failure", err)
+	if !errors.Is(err, errNoGolemModel) {
+		t.Fatalf("Generate() error = %v, want errNoGolemModel", err)
 	}
 }
 
@@ -139,173 +182,165 @@ func TestMessageGenerator_Generate_RuntimeFailure(t *testing.T) {
 	gittest.Start(t, "", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "model unavailable", http.StatusServiceUnavailable)
 	})
+	root := t.TempDir()
 
-	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, "", nil)
+	_, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, stubModel(t, root), nil)
 
 	if err == nil || !strings.Contains(err.Error(), "golem runtime") {
 		t.Fatalf("Generate() error = %v, want golem runtime failure", err)
 	}
 }
 
+// The input budget follows the Golem model's declared window; with none, the
+// model still answers (#506) and the provider's own limit applies. A prompt
+// that cannot fit, or a window too small to budget, sends nothing.
 func TestMessageGenerator_Generate_ContextBudget(t *testing.T) {
+	bigDiff := "diff --git a/x b/x\n" + strings.Repeat("+a line the model has to read\n", 600)
 	for _, tc := range []struct {
-		name           string
-		primaryWindow  int
-		fallbackWindow int
-		wantMessage    string
+		name    string
+		window  int
+		diff    string
+		refused bool
 	}{
-		{name: "missing context"},
-		{name: "insufficient context", primaryWindow: 1024, fallbackWindow: 1024},
-		{name: "usable fallback", fallbackWindow: 32768, wantMessage: "feat: fallback"},
-		{name: "usable primary", primaryWindow: 32768, wantMessage: "feat: primary"},
+		{name: "no declared window", diff: sampleDiff},
+		{name: "declared window", window: 32768, diff: bigDiff},
+		{name: "window smaller than the prompt", window: 2048, diff: bigDiff, refused: true},
+		{name: "window of one", window: 1, diff: sampleDiff, refused: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var primaryCalls, fallbackCalls atomic.Int32
-			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/v1/chat/completions" {
-					primaryCalls.Add(1)
+					calls.Add(1)
 				}
-				chatStubHandler("feat: primary").ServeHTTP(w, r)
+				chatStubHandler("feat: budgeted").ServeHTTP(w, r)
 			}))
-			t.Cleanup(primary.Close)
-			fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/v1/chat/completions" {
-					fallbackCalls.Add(1)
-				}
-				chatStubHandler("feat: fallback").ServeHTTP(w, r)
-			}))
-			t.Cleanup(fallback.Close)
+			t.Cleanup(server.Close)
+			window := ""
+			if tc.window != 0 {
+				window = fmt.Sprintf(`"context_window":%d,`, tc.window)
+			}
 			writeModelsConfig(t, fmt.Sprintf(`{
-				"providers":{
-					"primary":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"},
-					"backup":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}
-				},
-				"models":{
-					"primary":{"name":"chat-model","provider":"primary","type":"dense","context_window":%d,"capabilities":["chat","stream","tool_call"],"fallbacks":["backup"]},
-					"backup":{"name":"chat-model","provider":"backup","type":"dense","context_window":%d,"capabilities":["chat","stream","tool_call"]}
-				},
+				"providers":{"primary":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}},
+				"models":{"primary":{"name":"chat-model","provider":"primary","type":"dense",%s"capabilities":["chat","stream","tool_call"]}},
 				"defaults":{"agent":"primary"}
-			}`, primary.URL, fallback.URL, tc.primaryWindow, tc.fallbackWindow))
+			}`, server.URL, window))
+			root := t.TempDir()
 
-			message, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), sampleDiff, 0, "", nil)
-			if tc.wantMessage == "feat: primary" {
-				if err != nil || message != tc.wantMessage || primaryCalls.Load() != 1 || fallbackCalls.Load() != 0 {
-					t.Fatalf("Generate() = %q, %v; primary/fallback calls = %d/%d, want usable primary", message, err, primaryCalls.Load(), fallbackCalls.Load())
+			message, err := NewMessageGenerator().generate(context.Background(), root, tc.diff, 0, stubModel(t, root), nil)
+
+			if !tc.refused {
+				if err != nil || message != "feat: budgeted" || calls.Load() != 1 {
+					t.Fatalf("Generate() = %q, %v; calls = %d, want the message from one request", message, err, calls.Load())
 				}
 				return
 			}
-			if primaryCalls.Load() != 0 {
-				t.Fatal("model with unknown or insufficient context received a completion request")
+			if message != "" || !errors.Is(err, ai.ErrContextWindowTooSmall) || calls.Load() != 0 {
+				t.Fatalf("Generate() = %q, %v; calls = %d, want a refusal before any request", message, err, calls.Load())
 			}
-			if tc.wantMessage != "" {
-				if err != nil || message != tc.wantMessage || fallbackCalls.Load() != 1 {
-					t.Fatalf("Generate() = %q, %v; fallback calls = %d, want usable fallback", message, err, fallbackCalls.Load())
-				}
-				return
-			}
-			if message != "" || !errors.Is(err, provider.ErrBudgetExceeded) || fallbackCalls.Load() != 0 {
-				t.Fatalf("Generate() = %q, %v; fallback calls = %d, want budget rejection before completion", message, err, fallbackCalls.Load())
-			}
-			for _, hint := range []string{"context_window", "fallback", "staged"} {
-				if !strings.Contains(err.Error(), hint) {
-					t.Errorf("Generate() error = %v, missing recovery hint %q", err, hint)
-				}
+			if want := fmt.Sprintf("context window (context_window %d)", tc.window); !strings.Contains(err.Error(), want) {
+				t.Errorf("Generate() error = %v, want it to name %q", err, want)
 			}
 		})
 	}
 }
 
-func TestRunError_CancellationOutranksBudget(t *testing.T) {
+func TestRunError_CancellationOutranksContextWindow(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		err         error
-		wantSentry  error
-		wantContext bool
+		name       string
+		err        error
+		wantSentry error
+		wantWindow bool
 	}{
-		{"budget alone", provider.ErrBudgetExceeded, provider.ErrBudgetExceeded, true},
-		{"budget joined with cancel", errors.Join(provider.ErrBudgetExceeded, context.Canceled), context.Canceled, false},
-		{"budget joined with deadline", errors.Join(provider.ErrBudgetExceeded, context.DeadlineExceeded), context.DeadlineExceeded, false},
+		{"exhausted alone", agent.ErrContextExhausted, ai.ErrContextWindowTooSmall, true},
+		{"exhausted joined with cancel", errors.Join(agent.ErrContextExhausted, context.Canceled), context.Canceled, false},
+		{"exhausted joined with deadline", errors.Join(agent.ErrContextExhausted, context.DeadlineExceeded), context.DeadlineExceeded, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := runError(tc.err)
+			got := runError(tc.err, 1024)
 			if !errors.Is(got, tc.wantSentry) {
 				t.Errorf("runError() = %v, want it to wrap %v", got, tc.wantSentry)
 			}
-			if strings.Contains(got.Error(), "context_window") != tc.wantContext {
-				t.Errorf("runError() = %v, context_window advice want %v", got, tc.wantContext)
+			if strings.Contains(got.Error(), "context window") != tc.wantWindow {
+				t.Errorf("runError() = %v, context window advice want %v", got, tc.wantWindow)
 			}
 		})
 	}
 }
 
-// OpenCode Go requires a stable session for a conversation, including auxiliary
-// requests. A generation is its own conversation: its random ID must remain the
-// same through fallback, rotate on the next generation, and never persist.
-func TestMessageGenerator_Generate_UsesEphemeralSessionAcrossFallbacks(t *testing.T) {
-	type observedRequest struct{ provider, path, session string }
-	requests := make(chan observedRequest, 32)
-	startProvider := func(name string, fail bool) *httptest.Server {
-		handler := chatStubHandler("chore: generated message")
+// A failing Golem model fails the generation: nothing falls back to another
+// model, however the configuration chains them for the golem CLI.
+func TestMessageGenerator_Generate_PrimaryFailureDoesNotFallBack(t *testing.T) {
+	var fallbackCalls atomic.Int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "primary unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(primary.Close)
+	startFallback := func() *httptest.Server {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requests <- observedRequest{name, r.URL.Path, r.Header.Get("x-opencode-session")}
-			if fail && r.URL.Path == "/v1/chat/completions" {
-				http.Error(w, "primary unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			handler.ServeHTTP(w, r)
+			fallbackCalls.Add(1)
+			chatStubHandler("feat: fallback").ServeHTTP(w, r)
 		}))
 		t.Cleanup(server.Close)
 		return server
 	}
-	primary := startProvider("primary", true)
-	fallback := startProvider("backup", false)
+	fast, local := startFallback(), startFallback()
 	writeModelsConfig(t, fmt.Sprintf(`{
 		"providers":{
-			"primary":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"},
-			"backup":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}
+			"commandcode":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"},
+			"opencode":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"},
+			"lan":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}
 		},
 		"models":{
-			"primary":{"name":"chat-model","provider":"primary","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"],"fallbacks":["backup"]},
-			"backup":{"name":"chat-model","provider":"backup","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}
+			"fast":{"name":"chat-model","provider":"commandcode","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"],"fallbacks":["fast-go"]},
+			"fast-go":{"name":"chat-model","provider":"opencode","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"],"fallbacks":["fast-local"]},
+			"fast-local":{"name":"chat-model","provider":"lan","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}
 		},
+		"defaults":{"agent":"fast"}
+	}`, primary.URL, fast.URL, local.URL))
+	root := t.TempDir()
+
+	message, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil)
+
+	if message != "" || err == nil || !strings.Contains(err.Error(), "503") {
+		t.Fatalf("Generate() = %q, %v, want the primary's 503", message, err)
+	}
+	if got := fallbackCalls.Load(); got != 0 {
+		t.Fatalf("fallback stubs received %d request(s)", got)
+	}
+}
+
+// A generation is its own conversation: its random thread lives only in
+// memory, and like chat it sends no session header to an endpoint that is not
+// opencode itself.
+func TestMessageGenerator_Generate_UsesEphemeralSession(t *testing.T) {
+	sessions := make(chan string, 8)
+	handler := chatStubHandler("chore: generated message")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/chat/completions" {
+			sessions <- r.Header.Get("x-opencode-session")
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	writeModelsConfig(t, fmt.Sprintf(`{
+		"providers":{"primary":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}},
+		"models":{"primary":{"name":"chat-model","provider":"primary","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},
 		"defaults":{"agent":"primary"}
-	}`, primary.URL, fallback.URL))
+	}`, server.URL))
 	dataDir := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", dataDir)
 	root := t.TempDir()
+	model := stubModel(t, root)
 	gen := NewMessageGenerator()
-	var previousSession string
 	for range 2 {
-		message, err := gen.generate(context.Background(), root, sampleDiff, 0, "", nil)
+		message, err := gen.generate(context.Background(), root, sampleDiff, 0, model, nil)
 		if err != nil || message != "chore: generated message" {
-			t.Fatalf("Generate() = %q, %v, want fallback message", message, err)
+			t.Fatalf("Generate() = %q, %v", message, err)
 		}
-		var session string
-		called := make(map[string]bool)
-		for len(requests) > 0 {
-			request := <-requests
-			if request.path != "/v1/chat/completions" {
-				if request.session != "" {
-					t.Error("model discovery received a generation session")
-				}
-				continue
-			}
-			called[request.provider] = true
-			if !strings.HasPrefix(request.session, "firn-commit-") || len(request.session) < len("firn-commit-")+26 || strings.Contains(request.session, root) {
-				t.Fatalf("session = %q, want an opaque per-generation ID", request.session)
-			}
-			if session != "" && session != request.session {
-				t.Fatal("generation session changed between primary and fallback")
-			}
-			session = request.session
+		if session := <-sessions; session != "" {
+			t.Fatalf("session header %q reached an endpoint that is not opencode", session)
 		}
-		if !called["primary"] || !called["backup"] {
-			t.Fatalf("called providers = %v, want primary and fallback", called)
-		}
-		if session == previousSession {
-			t.Fatal("separate generations reused a session")
-		}
-		previousSession = session
 	}
 	entries, err := os.ReadDir(dataDir)
 	if err != nil || len(entries) != 0 {
@@ -333,7 +368,7 @@ func TestMessageGenerator_Generate_DoesNotSendToolReadResultsToProvider(t *testi
 		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	})
 
-	if _, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, "", nil); err == nil || !strings.Contains(err.Error(), "unusable") {
+	if _, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, stubModel(t, root), nil); err == nil || !strings.Contains(err.Error(), "unusable") {
 		t.Errorf("Generate() error = %v, want tool-only turn rejected as unusable", err)
 	}
 
@@ -357,11 +392,13 @@ func TestMessageGenerator_Generate_PropagatesCancellation(t *testing.T) {
 		close(started)
 		<-r.Context().Done()
 	})
+	root := t.TempDir()
+	model := stubModel(t, root)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := NewMessageGenerator().generate(ctx, t.TempDir(), "+change\n", 0, "", nil)
+		_, err := NewMessageGenerator().generate(ctx, root, "+change\n", 0, model, nil)
 		errCh <- err
 	}()
 	<-started
@@ -375,7 +412,8 @@ func TestMessageGenerator_Generate_RejectsUnusableOutput(t *testing.T) {
 	for _, answer := range []string{" \n\t", "feat: bad\x00message"} {
 		t.Run(fmt.Sprintf("%q", answer), func(t *testing.T) {
 			gittest.Start(t, answer, nil)
-			_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, "", nil)
+			root := t.TempDir()
+			_, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, stubModel(t, root), nil)
 			if err == nil || !strings.Contains(err.Error(), "golem returned") {
 				t.Fatalf("Generate() error = %v, want unusable-output error", err)
 			}
@@ -399,16 +437,12 @@ func writeModelsConfig(t *testing.T, body string) {
 	t.Setenv("GO_LLM_CONFIG", path)
 }
 
-// chatStubModel is the model name shared by chatStubHandler's /v1/models
-// listing and every fixture's model "name" field below: RefreshModels
-// populates the router's registry from the listing, and a mismatch against
-// the configured name fails the route lookup before the stub is ever asked
-// for a completion.
+// chatStubModel is the model name every fixture's model "name" field uses.
 const chatStubModel = "chat-model"
 
-// chatStubHandler answers both the models-list and chat-completion
-// OpenAI-compatible endpoints golem's bootstrap and run path use, streaming
-// answer as the assistant's reply.
+// chatStubHandler answers the OpenAI-compatible chat-completion endpoint,
+// streaming answer as the assistant's reply, and the models listing, which
+// generation must never need.
 func chatStubHandler(answer string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, _ *http.Request) {
@@ -426,77 +460,91 @@ func chatStubHandler(answer string) http.Handler {
 	return mux
 }
 
-// F1/I2: ungranted remote -> typed denial (pre-I/O per upstream; ".invalid"
-// makes any wrong path surface a non-sentinel error).
-func TestGenerateDeniesUngrantedRemoteDestination(t *testing.T) {
-	writeModelsConfig(t, `{
-		"providers":{"remote":{"base_url":"http://firn-remote.invalid","api_format":"openai-compat","timeout":"2s","api_key":"sk-test-secret"}},
+// startRemoteStub serves answer on a non-loopback listener (a remote
+// destination) and counts every request it receives.
+func startRemoteStub(t *testing.T, answer string) (baseURL string, requests *atomic.Int32) {
+	t.Helper()
+	ln, baseURL := testutil.ListenNonLoopback(t)
+	requests = &atomic.Int32{}
+	handler := chatStubHandler(answer)
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		handler.ServeHTTP(w, r)
+	})}
+	go func() { _ = server.Serve(ln) }()
+	t.Cleanup(func() { _ = server.Close() })
+	writeModelsConfig(t, fmt.Sprintf(`{
+		"providers":{"remote":{"base_url":%q,"api_format":"openai-compat","timeout":"2s","api_key":"sk-test-secret"}},
 		"models":{"chat-model":{"name":"chat-model","provider":"remote","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},
 		"defaults":{"agent":"chat-model"}
-	}`)
+	}`, baseURL))
+	return baseURL, requests
+}
 
-	gen := NewMessageGenerator()
-	_, err := gen.generate(context.Background(), t.TempDir(), sampleDiff, 0, "", nil)
+// A remote Golem model without a grant is refused before any byte reaches
+// it, with the message generation has always shown for a denied destination.
+func TestGenerateDeniesUngrantedRemoteDestination(t *testing.T) {
+	baseURL, requests := startRemoteStub(t, "feat: must not be asked")
+	root := t.TempDir()
+
+	_, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil)
+
 	if !errors.Is(err, provider.ErrDestinationDenied) {
 		t.Fatalf("want destination denial, got %v", err)
+	}
+	canonical, _, nerr := ai.NormalizeEndpoint(baseURL)
+	if nerr != nil {
+		t.Fatal(nerr)
+	}
+	want := "commit message generation blocked: destination remote/" + canonical +
+		" is not consented for agent; use Approve missing destinations in the Golem configuration view"
+	if !strings.HasPrefix(err.Error(), want) {
+		t.Fatalf("error = %q, want it to start %q", err, want)
 	}
 	if strings.Contains(err.Error(), "sk-test-secret") {
 		t.Fatal("denial message leaked config material")
 	}
-}
-
-// I2 success half: granted + servable remote returns a real message.
-func TestGenerateSucceedsAgainstGrantedRemoteListener(t *testing.T) {
-	ln, baseURL := testutil.ListenNonLoopback(t)
-	server := &http.Server{Handler: chatStubHandler("feat: remote message")}
-	go func() { _ = server.Serve(ln) }()
-	t.Cleanup(func() { _ = server.Close() })
-
-	writeModelsConfig(t, fmt.Sprintf(`{
-		"providers":{"remote":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"}},
-		"models":{"chat-model":{"name":"chat-model","provider":"remote","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}},
-		"defaults":{"agent":"chat-model"}
-	}`, baseURL))
-
-	gen := NewMessageGenerator()
-	gen.SetDestinationPolicySource(func() provider.DestinationPolicy {
-		d, err := provider.NewDestination("remote", baseURL)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return provider.NewDestinationPolicy(d)
-	})
-	msg, err := gen.generate(context.Background(), t.TempDir(), sampleDiff, 0, "", nil)
-	if err != nil || strings.TrimSpace(msg) == "" {
-		t.Fatalf("want a message, got %q, %v", msg, err)
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("the remote stub received %d request(s)", got)
 	}
 }
 
-// F7: planning (and summarize, with compression off) are not generator
-// routes. Agent -> loopback stub; defaults.planning -> provider "planner" at
-// http://firn-planning.invalid; analysis/chat UNBOUND. A compression
-// regression would plan summarize as RECOMMEND and demand the planner
-// destination too, failing this test.
-func TestGeneratorDoesNotRequirePlanningDestination(t *testing.T) {
-	server := httptest.NewServer(chatStubHandler("feat: no planning needed"))
-	t.Cleanup(server.Close)
+// Once approved, as the Golem configuration view approves it, the remote
+// Golem model answers.
+func TestGenerateSucceedsAgainstGrantedRemoteListener(t *testing.T) {
+	_, requests := startRemoteStub(t, "feat: remote message")
+	root := t.TempDir()
+	svc := newGolemService(t, root)
+	prepared, err := svc.PrepareDestinationGrants()
+	if err != nil || prepared.Status != "consent_required" || len(prepared.Challenge.Destinations) != 1 {
+		t.Fatalf("PrepareDestinationGrants = %+v, %v, want the one remote", prepared, err)
+	}
+	if granted, err := svc.ConfirmDestinationGrants(prepared.Challenge.Token); err != nil || granted.Status != "granted" {
+		t.Fatalf("ConfirmDestinationGrants = %+v, %v", granted, err)
+	}
 
-	writeModelsConfig(t, fmt.Sprintf(`{
-		"providers":{
-			"chat":{"base_url":%q,"api_format":"openai-compat","timeout":"2s"},
-			"planner":{"base_url":"http://firn-planning.invalid","api_format":"openai-compat","timeout":"2s"}
-		},
-		"models":{
-			"chat-model":{"name":"chat-model","provider":"chat","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]},
-			"planner-model":{"name":"planner-model","provider":"planner","type":"dense","context_window":32768,"capabilities":["chat","stream","tool_call"]}
-		},
-		"defaults":{"agent":"chat-model","planning":"planner-model"}
-	}`, server.URL))
+	msg, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, golemModel(t, svc, root), nil)
 
-	gen := NewMessageGenerator() // zero grants: no destination is approved
-	msg, err := gen.generate(context.Background(), t.TempDir(), sampleDiff, 0, "", nil)
-	if err != nil || strings.TrimSpace(msg) == "" {
-		t.Fatalf("Generate() = %q, %v, want success without touching defaults.planning", msg, err)
+	if err != nil || msg != "feat: remote message" || requests.Load() != 1 {
+		t.Fatalf("want a message from one request, got %q, %v, %d request(s)", msg, err, requests.Load())
+	}
+}
+
+// Generating reads nothing back from the configuration and writes nothing to it.
+func TestGenerateLeavesTheConfigurationUnchanged(t *testing.T) {
+	gittest.Start(t, "feat: unchanged", nil)
+	before, err := os.ReadFile(os.Getenv("GO_LLM_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+
+	if _, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if after, err := os.ReadFile(os.Getenv("GO_LLM_CONFIG")); err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("configuration after generation = %q, %v, want its bytes unchanged", after, err)
 	}
 }
 

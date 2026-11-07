@@ -24,12 +24,20 @@ func newStagedGuardService(t *testing.T) *Service {
 	return svc
 }
 
+// stagedConfig is a config Golem chat can run: commit generation refuses one
+// it cannot (#491).
+const stagedConfig = `{
+  "providers": {"local": {"base_url": "http://127.0.0.1:1", "api_format": "openai-compat"}},
+  "models": {"agent-m": {"name": "wire-model", "provider": "local", "type": "dense", "capabilities": ["chat", "stream", "tool_call"]}},
+  "defaults": {"agent": "agent-m"}
+}`
+
 // outsideConfig points GO_LLM_CONFIG at a config file outside every
 // repository under test.
 func outsideConfig(t *testing.T) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "models.json")
-	writeFile(t, path, `{"providers":{},"models":{},"defaults":{}}`)
+	writeFile(t, path, stagedConfig)
 	t.Setenv("GO_LLM_CONFIG", path)
 }
 
@@ -60,15 +68,17 @@ func assertAllowed(t *testing.T, guard func(string, bool) error, paths ...string
 
 // StagedScope is the bound repository's own chat policy: the floor, the
 // manifest rules read now (no watcher event needed), and the go-llm config
-// source as discovery finds it now, which the runtime is pinned to (#384).
+// source as discovery finds it now (#384), beside the Golem model chat has
+// loaded (#491).
 func TestStagedScope_AppliesTheBoundChatPolicy(t *testing.T) {
+	outsideConfig(t) // the configuration chat loads
 	root := t.TempDir()
-	config := filepath.Join(root, "models.json")
-	t.Setenv("GO_LLM_CONFIG", config) // missing when the snapshot is cached
 	svc := newStagedGuardService(t)
 	bindStaged(t, svc, root)
 	svc.snapshotOrBuild()
-	writeFile(t, config, `{"providers":{},"models":{},"defaults":{}}`)
+	config := filepath.Join(root, "models.json")
+	writeFile(t, config, stagedConfig)
+	t.Setenv("GO_LLM_CONFIG", config) // what discovery finds now
 	writeFile(t, filepath.Join(root, "ai-kit.yaml"), "sensitive_paths:\n  - fixtures/private/**\n")
 
 	scope, err := svc.StagedScope(root)
@@ -76,8 +86,9 @@ func TestStagedScope_AppliesTheBoundChatPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StagedScope: %v", err)
 	}
-	if scope.ConfigPath != canonical(t, config) {
-		t.Errorf("config path = %q, want %q", scope.ConfigPath, canonical(t, config))
+	t.Cleanup(scope.Release)
+	if scope.Model == nil || scope.Model.target.model.Name != "wire-model" {
+		t.Errorf("model = %+v, want the loaded configuration's", scope.Model)
 	}
 	assertDenied(t, scope.Guard, ".env", "keys/deploy.pem", "fixtures/private/customers.csv", "models.json")
 	assertAllowed(t, scope.Guard, "main.go", "fixtures/public/data.csv")
@@ -242,7 +253,7 @@ func TestStagedScope_ConfigSourceOutsideProjectIsProtected(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := filepath.Join(top, "models.json")
-	writeFile(t, config, `{"providers":{},"models":{},"defaults":{}}`)
+	writeFile(t, config, stagedConfig)
 	if err := os.Link(config, filepath.Join(top, "alias.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +281,7 @@ func TestStagedScope_ConfigSourceInAnotherCaseIsProtected(t *testing.T) {
 	if err := os.MkdirAll(bound, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(top, "models.json"), `{"providers":{},"models":{},"defaults":{}}`)
+	writeFile(t, filepath.Join(top, "models.json"), stagedConfig)
 	variant := filepath.Join(top, "MODELS.json")
 	if _, err := os.Stat(variant); err != nil {
 		t.Skip("case-sensitive filesystem")

@@ -303,31 +303,6 @@ func (s *ConsentStore) Grant(destination ProviderDestination) error {
 	return s.persistGrantsLocked(next)
 }
 
-// DestinationPolicy renders the durable grant set as go-llm's exact-set
-// destination policy (spec D2). An unavailable store yields the zero
-// policy — local-only. A legacy record that cannot be rebuilt under
-// destination/v1 is skipped and logged (new grants are validated at grant
-// time, so this is defense in depth). Firn only ever builds an exact-set
-// policy here — never the go-llm variant that grants every destination
-// (invariant I3).
-func (s *ConsentStore) DestinationPolicy() provider.DestinationPolicy {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.loadErr != nil {
-		return provider.DestinationPolicy{}
-	}
-	dests := make([]provider.Destination, 0, len(s.granted))
-	for _, rec := range s.granted {
-		d, err := provider.NewDestination(rec.Provider, rec.Endpoint)
-		if err != nil {
-			log.Printf("ai: consent grant unusable as a destination identity: %v", err)
-			continue
-		}
-		dests = append(dests, d)
-	}
-	return provider.NewDestinationPolicy(dests...)
-}
-
 // GrantMany records consent for a batch with ONE atomic write: every
 // destination validated up front, the merged set encoded once, memory
 // advanced only after write, sync, and mode check succeed. A partial batch

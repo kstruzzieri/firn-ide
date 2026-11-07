@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -109,14 +108,6 @@ func TestWorkingDirectoryKeyReferenceIsRefused(t *testing.T) {
 			if public.Code != "config_key_reference_refused" || !strings.Contains(public.Message, "GO_LLM_CONFIG") {
 				t.Fatalf("public error = %+v, want the refusal naming GO_LLM_CONFIG", public)
 			}
-
-			// Commit generation hands golem.New a path it loads with go-llm's
-			// ambient environment, so the refusal has to come first.
-			if _, _, err := currentConfigSource(); err == nil {
-				t.Fatal("currentConfigSource accepted a refused working-directory config")
-			} else {
-				assertKeyReferenceRefusal(t, err)
-			}
 		})
 	}
 }
@@ -134,9 +125,6 @@ func TestWorkingDirectoryConfigNamedByGoLLMConfigExpands(t *testing.T) {
 	}
 	if got := loaded.Config.Providers["hosted"].APIKey; got != workdirSecretMarker {
 		t.Fatalf("api_key = %q, want the expanded variable", got)
-	}
-	if _, copied, err := currentConfigSource(); err != nil || copied != nil {
-		t.Fatalf("currentConfigSource via GO_LLM_CONFIG = %v, %v, want the source itself", copied, err)
 	}
 }
 
@@ -165,9 +153,6 @@ func TestWorkingDirectoryLiteralKeyKeepsIdentityAndRevision(t *testing.T) {
 	}
 	if got := loaded.Config.Providers["hosted"].APIKey; got != "literal-key" {
 		t.Fatalf("api_key = %q", got)
-	}
-	if got, copied, err := currentConfigSource(); err != nil || got != want || !bytes.Equal(copied, raw) {
-		t.Fatalf("currentConfigSource = %q, %q, %v, want %q and its bytes", got, copied, err, want)
 	}
 }
 
@@ -234,53 +219,36 @@ func TestWorkingDirectoryKeyReferenceSendsNoRequest(t *testing.T) {
 	}
 }
 
-// Commit generation hands golem.New a path, which go-llm reloads with the
-// ambient environment. For a working-directory source that path is a private
-// copy of the bytes StagedScope checked, so a file rewritten after the check
-// is never what golem loads.
-func TestStagedScopeHandsTheRuntimeTheCheckedBytes(t *testing.T) {
+// Commit generation sends with the key chat loaded (#491), never reading the
+// file again, so a file rewritten from a literal key to a ${NAME} reference
+// after the load changes nothing until Refresh, and Refresh refuses it.
+func TestStagedScopeKeepsTheLoadedKey(t *testing.T) {
 	work, _ := stageWorkdirConfig(t, workdirAgentConfig("http://127.0.0.1:1", "literal-key"), false)
-	svc := NewService(context.Background(), filesystem.NewOS(),
-		filepath.Join(t.TempDir(), "consent", "grants.json"), (&emitRecorder{}).emit, "")
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := svc.Close(ctx); err != nil {
-			t.Errorf("Close: %v", err)
+	svc, repo := newBoundScopeService(t)
+	key := func() (string, error) {
+		t.Helper()
+		scope, err := svc.StagedScope(repo)
+		if err != nil {
+			return "", err
 		}
-	})
-	repo := newRepo(t)
-	if _, _, err := svc.BindRepository(repo); err != nil {
-		t.Fatalf("BindRepository: %v", err)
+		scope.Release()
+		return scope.Model.target.apiKey, nil
 	}
+	if got, err := key(); err != nil || got != "literal-key" {
+		t.Fatalf("model key = %q, %v, want the literal", got, err)
+	}
+	writeFile(t, filepath.Join(work, "models.json"), workdirAgentConfig("http://127.0.0.1:1", "${"+workdirSecretName+"}"))
 
-	scope, err := svc.StagedScope(repo)
-	if err != nil {
-		t.Fatalf("StagedScope: %v", err)
+	if got, err := key(); err != nil || got != "literal-key" {
+		t.Fatalf("model key after the rewrite = %q, %v, want the loaded literal", got, err)
 	}
-	if scope.Release == nil {
-		t.Fatal("StagedScope returned no Release for its copy")
-	}
-	t.Cleanup(scope.Release)
-	source := filepath.Join(work, "models.json")
-	if err := os.WriteFile(source, []byte(workdirAgentConfig("http://127.0.0.1:1", "${"+workdirSecretName+"}")), 0o600); err != nil {
+	if _, err := svc.ReloadSettings(); err != nil {
 		t.Fatal(err)
 	}
-
-	cfg, err := config.Load(scope.ConfigPath)
-	if err != nil {
-		t.Fatalf("loading the runtime config: %v", err)
-	}
-	if got := cfg.Providers["hosted"].APIKey; got != "literal-key" {
-		t.Fatalf("runtime config api_key = %q, want the checked literal", got)
-	}
-	info, err := os.Stat(scope.ConfigPath)
-	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0) {
-		t.Fatalf("runtime config copy = %v, %v, want private to the user", info, err)
-	}
-	scope.Release()
-	if _, err := os.Stat(scope.ConfigPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("copy after Release: %v, want removed", err)
+	if _, err := key(); err == nil {
+		t.Fatal("StagedScope accepted the rewritten config after Refresh")
+	} else {
+		assertKeyReferenceRefusal(t, err)
 	}
 }
 
@@ -373,43 +341,35 @@ func newBoundScopeService(t *testing.T) (*Service, string) {
 	return svc, repo
 }
 
-// With no config anywhere, go-llm would discover its own when golem.New runs,
-// and so read a models.json created in the working directory meanwhile. The
-// runtime gets go-llm's built-in fallback, written out, instead.
-func TestStagedScopePinsTheFallbackWhenNoConfigExists(t *testing.T) {
+// With no config anywhere, generation refuses as chat does. A models.json
+// created in the working directory afterwards is not read until Refresh, which
+// refuses its ${NAME} key.
+func TestStagedScopeIgnoresAConfigCreatedAfterTheLoad(t *testing.T) {
 	sandboxAgentConfigEnv(t)
 	t.Setenv(workdirSecretName, workdirSecretMarker)
 	work := t.TempDir()
 	t.Chdir(work)
 	svc, repo := newBoundScopeService(t)
-
-	scope, err := svc.StagedScope(repo)
-	if err != nil {
-		t.Fatalf("StagedScope: %v", err)
+	if _, err := svc.StagedScope(repo); !errors.Is(err, ErrAgentConfigMissing) {
+		t.Fatalf("StagedScope = %v, want the missing-configuration refusal", err)
 	}
-	if scope.ConfigPath == "" || scope.Release == nil {
-		t.Fatalf("scope = %+v, want a pinned runtime config", scope)
-	}
-	t.Cleanup(scope.Release)
 	writeFile(t, filepath.Join(work, "models.json"), workdirAgentConfig("http://127.0.0.1:1", "${"+workdirSecretName+"}"))
 
-	cfg, err := config.Load(scope.ConfigPath)
-	if err != nil {
-		t.Fatalf("loading the runtime config: %v", err)
+	if _, err := svc.StagedScope(repo); !errors.Is(err, ErrAgentConfigMissing) {
+		t.Fatalf("StagedScope after the file appeared = %v, want the loaded refusal until Refresh", err)
 	}
-	ollama, ok := cfg.Providers["ollama"]
-	if len(cfg.Providers) != 1 || !ok || ollama.BaseURL != "http://localhost:11434" ||
-		ollama.APIFormat != "ollama" || ollama.APIKey != "" || len(cfg.Models) != 0 || len(cfg.Defaults) != 0 {
-		t.Fatalf("runtime config = %+v, want go-llm's no-config fallback", cfg)
+	if _, err := svc.ReloadSettings(); err != nil {
+		t.Fatal(err)
 	}
-	scope.Release()
-	if _, err := os.Stat(scope.ConfigPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("copy after Release: %v, want removed", err)
+	if _, err := svc.StagedScope(repo); err == nil {
+		t.Fatal("StagedScope accepted the new config after Refresh")
+	} else {
+		assertKeyReferenceRefusal(t, err)
 	}
 }
 
-// A working-directory config that does not load is refused before golem sees
-// it, with the coarse error, not go-llm's text about a file path.
+// A working-directory config that does not load refuses generation with the
+// coarse error, not go-llm's text about a file path.
 func TestStagedScopeRefusesAnInvalidWorkingDirectoryConfig(t *testing.T) {
 	stageWorkdirConfig(t, `{"providers": `, false)
 	svc, repo := newBoundScopeService(t)

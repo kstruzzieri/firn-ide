@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"firn/internal/ai"
-	"firn/internal/filesystem"
 	"firn/internal/testutil"
 	"firn/internal/watcher"
 	"fmt"
@@ -1598,18 +1597,16 @@ func TestGolemWriteMethodsUninitializedService(t *testing.T) {
 // destination is durably approved.
 // ---------------------------------------------------------------------------
 
-// golemApproveFallbackEndpoint is the destination the user has NOT approved.
-// ".invalid" can never resolve, so a run that reaches it fails with something
-// other than the denial sentinel and the assertion below stays honest.
+// golemApproveFallbackEndpoint is a fallback only the golem CLI reaches.
+// ".invalid" can never resolve, so a run that reached it would fail and the
+// assertions below stay honest.
 const golemApproveFallbackEndpoint = "http://firn-approve-fallback.invalid"
 
-// golemChatStubModel is the model name the stub lists and every fixture below
-// configures: RefreshModels fills the router's registry from the listing, so a
-// mismatch fails the route lookup before a completion is ever requested.
+// golemChatStubModel is the model name every fixture below configures.
 const golemChatStubModel = "chat-model"
 
-// golemChatStubHandler answers the two OpenAI-compatible endpoints golem's
-// bootstrap and run path use, streaming answer as the assistant's reply.
+// golemChatStubHandler answers the OpenAI-compatible chat-completion endpoint,
+// streaming answer as the assistant's reply, and the models listing.
 func golemChatStubHandler(answer string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, _ *http.Request) {
@@ -1629,7 +1626,7 @@ func golemChatStubHandler(answer string) http.Handler {
 	return mux
 }
 
-// golemPrimaryOnlyConfigJSON routes the agent role at the served remote and
+// golemPrimaryOnlyConfigJSON routes the agent role at the served endpoint and
 // nothing else.
 func golemPrimaryOnlyConfigJSON(primaryURL string) string {
 	return fmt.Sprintf(`{
@@ -1640,9 +1637,8 @@ func golemPrimaryOnlyConfigJSON(primaryURL string) string {
 }`, primaryURL)
 }
 
-// golemFallbackConfigJSON is the same document plus a fallback the user has
-// never been asked about: the agent route now reaches two remotes and only one
-// of them is granted.
+// golemFallbackConfigJSON routes the agent role at the served remote, with a
+// fallback that only the golem CLI would reach (#491).
 func golemFallbackConfigJSON(primaryURL string) string {
 	return fmt.Sprintf(`{
   "providers": {
@@ -1692,22 +1688,14 @@ func golemApproveGrants(t *testing.T, app *App) []ai.ApplyDestination {
 	return prepared.Challenge.Destinations
 }
 
+// Approving missing destinations names the Golem model alone, never its
+// fallback, and that one grant is what commit messages need (#491).
 func TestApproveMissingDestinationsUnblocksCommitMessageGeneration(t *testing.T) {
 	listener, primaryURL := testutil.ListenNonLoopback(t)
 	server := &http.Server{Handler: golemChatStubHandler("feat: approved and generated")}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
-
-	// The store's on-disk grant identity is deliberately not reconstructible
-	// from outside the ai package, so the prior grant is seeded through the
-	// flow itself: approve the primary alone, THEN introduce the fallback. That
-	// is also the real sequence — a user approves what they have, and a later
-	// configuration change adds a destination they have not seen.
-	app, path := newGolemAppWithTarget(t, golemPrimaryOnlyConfigJSON(primaryURL))
-	golemApproveGrants(t, app)
-	if err := os.WriteFile(path, []byte(golemFallbackConfigJSON(primaryURL)), 0o600); err != nil {
-		t.Fatalf("introduce the fallback: %v", err)
-	}
+	app, path := newGolemAppWithTarget(t, golemFallbackConfigJSON(primaryURL))
 
 	// The shipped binding: the app's own generator, wired at startup.
 	repo := initGitRepoForApp(t)
@@ -1724,35 +1712,21 @@ func TestApproveMissingDestinationsUnblocksCommitMessageGeneration(t *testing.T)
 	before := golemFileDigest(t, path)
 	shown := golemApproveGrants(t, app)
 
-	if len(shown) != 1 {
-		t.Fatalf("approved %d destinations, want only the fallback: %+v", len(shown), shown)
-	}
-	if shown[0].Provider != "fallback" || shown[0].Endpoint != golemApproveFallbackEndpoint ||
-		shown[0].Model != "fallback-model" || shown[0].Classification != "remote" ||
-		len(shown[0].Provenance) != 1 || shown[0].Provenance[0] != "agent" {
-		t.Fatalf("approved %+v, want the fallback reached by the agent route", shown[0])
-	}
-
-	// Durable, not merely in memory: a store opened fresh from disk permits it.
-	store, err := ai.OpenConsentStore(filesystem.NewOS(), filepath.Join(app.firnDir, "golem-consent.json"))
-	if err != nil {
-		t.Fatalf("reopen consent store: %v", err)
-	}
-	fallback, err := provider.NewDestination("fallback", golemApproveFallbackEndpoint)
-	if err != nil {
-		t.Fatalf("fallback destination identity: %v", err)
-	}
-	if !store.DestinationPolicy().Permits(fallback) {
-		t.Fatal("the approved fallback is not durably granted")
+	if len(shown) != 1 || shown[0].Provider != "primary" || shown[0].Model != "chat-model" ||
+		shown[0].Classification != "remote" || len(shown[0].Provenance) != 1 || shown[0].Provenance[0] != "agent" {
+		t.Fatalf("approved %+v, want the Golem model alone", shown)
 	}
 	if after := golemFileDigest(t, path); after != before {
 		t.Fatal("approving destinations rewrote the configuration")
 	}
+	if prepared, err := app.PrepareGolemDestinationGrants(); err != nil || prepared.Status != "none" {
+		t.Fatalf("PrepareGolemDestinationGrants after approval = %+v, %v, want none: the fallback is never asked about", prepared, err)
+	}
 
 	// The SAME generator instance, with no restart and no re-injection: the
-	// policy source is evaluated fresh on every run.
+	// grant is read fresh on every run.
 	result, err := app.GitGenerateCommitMessage(repo)
-	if err != nil || strings.TrimSpace(result.Message) == "" {
+	if err != nil || result.Message != "feat: approved and generated" {
 		t.Fatalf("GitGenerateCommitMessage after approval = %+v, %v, want a message", result, err)
 	}
 }
@@ -1807,5 +1781,39 @@ func TestGolemChatIdentifiesAsFirnAndSendsNoSessionHeader(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the turn never reached the provider")
+	}
+}
+
+// Commit generation sends through chat's transport (#491), so it identifies as
+// Firn and, to an endpoint that is not opencode, sends no session header.
+func TestCommitGenerationIdentifiesAsFirnAndSendsNoSessionHeader(t *testing.T) {
+	headers := make(chan http.Header, 4)
+	stub := golemChatStubHandler("feat: identified")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/chat/completions" {
+			headers <- r.Header.Clone()
+		}
+		stub.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	app, _ := newGolemAppWithTarget(t, golemPrimaryOnlyConfigJSON(server.URL))
+	repo := initGitRepoForApp(t)
+	if _, err := app.GetWorkspaceInfo(repo); err != nil {
+		t.Fatalf("bind repository: %v", err)
+	}
+	if err := app.GitStage(repo, []string{"f.txt"}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+
+	if result, err := app.GitGenerateCommitMessage(repo); err != nil || result.Message != "feat: identified" {
+		t.Fatalf("GitGenerateCommitMessage = %+v, %v", result, err)
+	}
+
+	h := <-headers
+	if got, want := h.Get("User-Agent"), firnUserAgent(); got != want {
+		t.Errorf("User-Agent = %q, want %q", got, want)
+	}
+	if got, ok := h["X-Opencode-Session"]; ok {
+		t.Errorf("x-opencode-session = %q, want the header absent for a non-opencode destination", got)
 	}
 }
