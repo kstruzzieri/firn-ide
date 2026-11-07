@@ -1,6 +1,6 @@
 # Releases
 
-Firn ships a minor release every three weeks. Each release has a contract in
+Firn targets a minor release every three weeks. Each release has a contract in
 this directory, `vX.Y.Z.md`, and a GitHub milestone of the same name. The
 contract is the source of truth. The milestone mirrors its In and Stretch lists
 so every issue shows the release it targets. Contracts are edited only on
@@ -8,17 +8,21 @@ so every issue shows the release it targets. Contracts are edited only on
 
 ## The train
 
-- A release ships on a Tuesday, three weeks after the one before it.
-- Seven days before that, the release freezes: `release/vX.Y.Z` is cut from
-  `develop` and the packaged build is used daily for the rest of the week.
+- A release targets a Tuesday, three weeks after the one before it.
+- Seven days before the target release date, the release freezes:
+  `release/vX.Y.Z` is cut from `develop` and the packaged build is used daily
+  for the rest of the week.
 - The `protect-release-branches` ruleset covers `release/*`: no force-push, no
   deletion, and every change needs the six required checks listed under
   [Exit criteria](#exit-criteria). A push to a release branch runs no CI of its
   own, so changes reach it through pull requests.
 - `develop` never closes. Work merged to `develop` after a freeze ships in the
   next train.
-- The date holds. An In item that has not merged by the freeze moves to the
-  next train through an amendment that names the reason.
+- The scope holds and the dates move. If In has not merged in time for the
+  freeze, the freeze and the release move together, decided as late as the work
+  allows, by an amendment that names the new dates. After the freeze, the
+  release date moves if the exit criteria need more time. An In item moves to
+  the next train only by an owner decision.
 - A patch release (for example `v0.13.1` after `v0.13.0`) is cut only for a
   regression against the previous release or for data loss.
 
@@ -31,7 +35,7 @@ so every issue shows the release it targets. Contracts are edited only on
   notable exclusions and where each one goes.
 - **Known issues**: defects that ship in the release, each with its target.
 - **Exit criteria**: the list below, plus any the contract adds.
-- **Dates**: the freeze and the release.
+- **Dates**: the target freeze and release.
 
 ## Changing a contract
 
