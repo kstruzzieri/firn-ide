@@ -24,10 +24,12 @@ import {
   isIdentifier,
   type APIFormat,
   type ProviderProjection,
+  type SettingsSourceOrigin,
 } from '../../types/golem';
 import { isKeyValue, type Change, type KeyVault } from '../../types/golemConfig';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import styles from './GolemConfig.module.css';
+import { CUSTOM_PRESET_ID, PROVIDER_PRESETS, keyLine, listingLine } from './providerPresets';
 
 /** The one copy vocabulary, shared with the diagnostics the backend returns. */
 const copy = (code: Parameters<typeof formatSettingsDiagnostic>[0]): string =>
@@ -137,6 +139,25 @@ const keyProblem = (value: string): string | undefined => {
   return isKeyValue(value) ? undefined : KEY_INVALID;
 };
 
+/**
+ * #322: go-llm stores a typed key verbatim as the provider's `api_key`
+ * (`Document.SetProviderAPIKey`), and Apply writes that document to the source
+ * file. Create only ever targets the user config directory, so the commit
+ * warning belongs to a working-directory source alone.
+ */
+const KEY_HINT =
+  'Saved as plain text in the configuration file and never shown again. Nothing is written until you apply.';
+const KEY_COMMIT_WARNING =
+  'The configuration file is a models.json in the working directory, so a commit can include this key.';
+
+/** The fields a preset fills; each reads "from preset" until edited. */
+type PresetField = 'name' | 'endpoint' | 'apiFormat';
+const PRESET_FIELDS: readonly PresetField[] = ['name', 'endpoint', 'apiFormat'];
+
+/** A space-separated id list, or undefined when nothing describes the field. */
+const ids = (...parts: (string | false)[]): string | undefined =>
+  parts.filter((part) => part !== false).join(' ') || undefined;
+
 const sameFields = (a: ProviderFields, b: ProviderFields): boolean =>
   a.name === b.name &&
   a.endpoint === b.endpoint &&
@@ -158,6 +179,8 @@ export interface ProviderEditorProps {
   /** True while a model still references this provider. */
   inUse: boolean;
   vault: KeyVault;
+  /** Where the loaded configuration came from; Apply writes the key there. */
+  sourceOrigin: SettingsSourceOrigin;
   rowKey: string;
   onStage: (changes: Change[], drop: string[]) => void;
   onClose: () => void;
@@ -172,6 +195,7 @@ export function ProviderEditor({
   takenNames,
   inUse,
   vault,
+  sourceOrigin,
   rowKey,
   onStage,
   onClose,
@@ -215,6 +239,10 @@ export function ProviderEditor({
   const [committed, setCommitted] = useState<ProviderFields>(initial);
   const [problems, setProblems] = useState<Problems>({});
   const [refusal, setRefusal] = useState('');
+  /** #322: only a brand-new provider starts from a preset. */
+  const [presetId, setPresetId] = useState(CUSTOM_PRESET_ID);
+  const [fromPreset, setFromPreset] = useState<ReadonlySet<PresetField>>(new Set());
+  const preset = PROVIDER_PRESETS.find((candidate) => candidate.id === presetId);
 
   const unstaged = !sameFields(fields, committed);
 
@@ -232,6 +260,41 @@ export function ProviderEditor({
     setProblems({});
     setRefusal('');
   };
+
+  /** A user edit makes the field theirs: its "from preset" mark goes. */
+  const edit = (field: PresetField, next: Partial<ProviderFields>) => {
+    patch(next);
+    setFromPreset((marks) => new Set([...marks].filter((mark) => mark !== field)));
+  };
+
+  /**
+   * Fills the name, format and endpoint, with no request. Custom fills blanks
+   * and marks nothing; it has no format to give, so the format stays as it is.
+   *
+   * The key field is EMPTIED, never filled: a key typed for one provider must
+   * not be staged under the next, or Apply would save it for that endpoint and
+   * Golem would send it with every request there.
+   */
+  const pickPreset = (nextId: string) => {
+    const next = PROVIDER_PRESETS.find((candidate) => candidate.id === nextId);
+    if (next === undefined || next.disabledReason !== undefined) return;
+    setPresetId(next.id);
+    patch({
+      name: next.name,
+      endpoint: next.endpoint,
+      ...(next.apiFormat === null ? {} : { apiFormat: next.apiFormat }),
+      keyValue: '',
+    });
+    setFromPreset(new Set(next.id === CUSTOM_PRESET_ID ? [] : PRESET_FIELDS));
+  };
+
+  const presetMark = (field: PresetField) =>
+    fromPreset.has(field) && (
+      <span className={styles.presetMark} id={`${id}-${field}-preset`}>
+        from preset
+      </span>
+    );
+  const presetMarkId = (field: PresetField) => fromPreset.has(field) && `${id}-${field}-preset`;
 
   const name = provider?.name ?? fields.name;
   const keyLocked = stagedRemoval;
@@ -277,11 +340,10 @@ export function ProviderEditor({
     onClose();
   };
 
-  /** A hint always describes its field; an error joins it while it stands. */
-  const describedBy = (field: 'endpoint' | 'key'): string =>
-    problems[field] === undefined
-      ? `${id}-${field}-hint`
-      : `${id}-${field}-hint ${id}-${field}-error`;
+  /** An error joins a field's description while it stands. */
+  const errorId = (field: keyof Problems) =>
+    problems[field] !== undefined && `${id}-${field}-error`;
+  const keyInWorkingDirectory = sourceOrigin === 'working_directory';
 
   // tabIndex is how an Apply-bar chip focuses the editor it names (§3.3).
   return (
@@ -298,19 +360,64 @@ export function ProviderEditor({
       </legend>
 
       <div className={styles.editorGrid}>
+        {!nameFixed && (
+          <div className={`${styles.field} ${styles.presetField}`}>
+            <label className={styles.fieldLabel} htmlFor={`${id}-preset`}>
+              Preset
+            </label>
+            <select
+              className={styles.input}
+              id={`${id}-preset`}
+              aria-describedby={`${id}-preset-facts`}
+              value={presetId}
+              onChange={(event) => pickPreset(event.target.value)}
+            >
+              {PROVIDER_PRESETS.map((option) => (
+                <option
+                  key={option.id}
+                  value={option.id}
+                  disabled={option.disabledReason !== undefined}
+                >
+                  {option.disabledReason === undefined
+                    ? option.label
+                    : `${option.label} (${option.disabledReason})`}
+                </option>
+              ))}
+            </select>
+            {/* Mounted while empty, so the facts of the next pick are announced
+                without moving focus off the dropdown. */}
+            <div className={styles.presetFacts} id={`${id}-preset-facts`} aria-live="polite">
+              {preset !== undefined && preset.id !== CUSTOM_PRESET_ID && (
+                <>
+                  <p className={styles.fieldHint}>{listingLine(preset)}</p>
+                  <p className={styles.fieldHint}>{keyLine(preset)}</p>
+                  {preset.notes?.map((note) => (
+                    <p key={note} className={styles.fieldHint}>
+                      {note}
+                    </p>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className={styles.field}>
           {!nameFixed ? (
             <>
-              <label className={styles.fieldLabel} htmlFor={`${id}-name`}>
-                Provider name
-              </label>
+              <span className={styles.labelRow}>
+                <label className={styles.fieldLabel} htmlFor={`${id}-name`}>
+                  Provider name
+                </label>
+                {presetMark('name')}
+              </span>
               <input
                 className={styles.input}
                 id={`${id}-name`}
                 aria-invalid={problems.name === undefined ? undefined : true}
-                aria-describedby={problems.name === undefined ? undefined : `${id}-name-error`}
+                aria-describedby={ids(presetMarkId('name'), errorId('name'))}
                 value={fields.name}
-                onChange={(event) => patch({ name: event.target.value })}
+                onChange={(event) => edit('name', { name: event.target.value })}
               />
             </>
           ) : (
@@ -332,16 +439,23 @@ export function ProviderEditor({
         </div>
 
         <div className={styles.field}>
-          <label className={styles.fieldLabel} htmlFor={`${id}-endpoint`}>
-            Endpoint
-          </label>
+          <span className={styles.labelRow}>
+            <label className={styles.fieldLabel} htmlFor={`${id}-endpoint`}>
+              Endpoint
+            </label>
+            {presetMark('endpoint')}
+          </span>
           <input
             className={styles.input}
             id={`${id}-endpoint`}
             aria-invalid={problems.endpoint === undefined ? undefined : true}
-            aria-describedby={describedBy('endpoint')}
+            aria-describedby={ids(
+              presetMarkId('endpoint'),
+              `${id}-endpoint-hint`,
+              errorId('endpoint')
+            )}
             value={fields.endpoint}
-            onChange={(event) => patch({ endpoint: event.target.value })}
+            onChange={(event) => edit('endpoint', { endpoint: event.target.value })}
           />
           <span className={styles.fieldHint} id={`${id}-endpoint-hint`}>
             An http:// or https:// URL. Firn checks the shape; Golem validates the rest when you
@@ -355,14 +469,18 @@ export function ProviderEditor({
         </div>
 
         <div className={styles.field}>
-          <label className={styles.fieldLabel} htmlFor={`${id}-format`}>
-            API format
-          </label>
+          <span className={styles.labelRow}>
+            <label className={styles.fieldLabel} htmlFor={`${id}-format`}>
+              API format
+            </label>
+            {presetMark('apiFormat')}
+          </span>
           <select
             className={styles.input}
             id={`${id}-format`}
+            aria-describedby={ids(presetMarkId('apiFormat'))}
             value={fields.apiFormat}
-            onChange={(event) => patch({ apiFormat: event.target.value as APIFormat })}
+            onChange={(event) => edit('apiFormat', { apiFormat: event.target.value as APIFormat })}
           >
             {API_FORMATS.map((format) => (
               <option key={format} value={format}>
@@ -383,13 +501,22 @@ export function ProviderEditor({
             autoComplete="off"
             disabled={keyLocked || fields.clearKey}
             aria-invalid={problems.key === undefined ? undefined : true}
-            aria-describedby={describedBy('key')}
+            aria-describedby={ids(
+              `${id}-key-hint`,
+              keyInWorkingDirectory && `${id}-key-warning`,
+              errorId('key')
+            )}
             value={fields.keyValue}
             onChange={(event) => patch({ keyValue: event.target.value })}
           />
           <span className={styles.fieldHint} id={`${id}-key-hint`}>
-            Staged as a literal value and never shown again. Nothing is written until you apply.
+            {KEY_HINT}
           </span>
+          {keyInWorkingDirectory && (
+            <span className={styles.fieldCaution} id={`${id}-key-warning`}>
+              {KEY_COMMIT_WARNING}
+            </span>
+          )}
           {problems.key !== undefined && (
             <span className={styles.fieldError} id={`${id}-key-error`}>
               {problems.key}

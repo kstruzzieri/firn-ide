@@ -22,6 +22,7 @@ const cardProps = (over: Partial<ComponentProps<typeof ProvidersCard>> = {}) => 
   diagnostics: [],
   vault: new KeyVault(new Map<string, string>()),
   editable: true,
+  sourceOrigin: 'user_config' as const,
   onStage: () => {},
   onUnstagedChange: () => {},
   ...over,
@@ -117,6 +118,7 @@ it('keeps an unstaged provider edit mounted when Edit is clicked again', async (
   const onUnstagedChange = jest.fn();
   render(
     <ProvidersCard
+      sourceOrigin="user_config"
       providers={[provider]}
       usedProviders={[]}
       changes={[]}
@@ -175,6 +177,7 @@ it('keeps an unstaged provider addition mounted when Add provider is clicked aga
       diagnostics={[]}
       vault={new KeyVault(new Map<string, string>())}
       editable
+      sourceOrigin="user_config"
       onStage={() => {}}
       onUnstagedChange={() => {}}
     />
