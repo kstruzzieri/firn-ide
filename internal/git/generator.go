@@ -40,14 +40,20 @@ var (
 	// errNoToolAccess denies every runtime file tool: the staged diff is the
 	// only workspace content a commit message may use.
 	errNoToolAccess = errors.New("commit message generation reads no workspace files")
+	// errNoGolemModel stops a scope that names no model before any request.
+	errNoGolemModel = errors.New("commit message generation has no Golem model")
 )
 
+// noWindowInputCeiling is the input budget, in tokens, for a Golem model that
+// declares no context window: the 48 KiB byte-bounded diff is ~12K tokens,
+// well under it, and past it the provider's own limit applies (#506).
+const noWindowInputCeiling = 32 * 1024
+
 // MessageGenerator produces commit messages from a staged diff via the public
-// golem runtime, behind the consent-derived destination policy and the AI
-// scope policy for staged paths.
+// golem runtime, sent only to the Golem model (#491), behind the AI scope
+// policy for staged paths.
 type MessageGenerator struct {
-	destinationPolicy func() provider.DestinationPolicy
-	scopeSource       func(repoRoot string) (StagedScope, error)
+	scopeSource func(repoRoot string) (StagedScope, error)
 }
 
 // StagedScope decides which staged paths of one git working tree may reach
@@ -60,10 +66,10 @@ type StagedScope struct {
 	// and deleted protected files are checked as copy sources; nil checks
 	// none.
 	Protected func(path string) bool
-	// ConfigPath is the go-llm config the runtime loads; "" lets go-llm
-	// discover its own.
-	ConfigPath string
-	// Release, when set, runs once generation is done with ConfigPath.
+	// Model is the Golem model generation sends to: the target Golem chat
+	// resolved from the configuration it has loaded (#491). Nil sends nothing.
+	Model *ai.GolemModel
+	// Release, when set, runs once generation is done with Model.
 	Release func()
 }
 
@@ -106,7 +112,7 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 	if scope.Release != nil {
 		defer scope.Release()
 	}
-	guard, configPath := scope.Guard, scope.ConfigPath
+	guard := scope.Guard
 	changes, err := svc.StagedChanges(ctx, dir, memoize(scope.Protected))
 	if err != nil {
 		return CommitMessageResult{}, err
@@ -142,7 +148,7 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 	if err := recheck(); err != nil {
 		return CommitMessageResult{}, err
 	}
-	result.Message, err = g.generate(ctx, dir, diff, len(withheld), configPath, recheck)
+	result.Message, err = g.generate(ctx, dir, diff, len(withheld), scope.Model, recheck)
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
@@ -195,15 +201,6 @@ func partitionStaged(changes []StagedChange, guard agenttools.ScopeGuard) (allow
 	return allowed, withheld, excluded
 }
 
-// SetDestinationPolicySource injects the consent-derived policy, evaluated
-// fresh on every Generate so a new grant applies without restart. Nil (the
-// default) leaves the zero policy: local-only, fail closed. Firn only ever
-// builds an exact-grant policy here — the go-llm variant that grants every
-// destination is forbidden in Firn (spec D2).
-func (g *MessageGenerator) SetDestinationPolicySource(src func() provider.DestinationPolicy) {
-	g.destinationPolicy = src
-}
-
 // deniedFieldCap bounds each rendered field in RUNES.
 const deniedFieldCap = 256
 
@@ -224,24 +221,29 @@ func scrubField(s string) string {
 	return string(out)
 }
 
-// destinationDeniedMessage renders a boundary-safe description from the
-// TYPED error's own fields only — never from the surrounding chain (F14).
-// runError words a failed generation run for the Git panel.
-func runError(err error) error {
-	if msg, ok := destinationDeniedMessage(err); ok {
-		return fmt.Errorf("commit message generation blocked: %s; use Approve missing destinations in the Golem configuration view: %w", msg, provider.ErrDestinationDenied)
-	}
+// runError words a failed generation run for the Git panel. window is the
+// Golem model's declared context window.
+func runError(err error, window int) error {
 	// Golem joins a cancellation that lands before it commits the run's end onto
 	// the run's error, and that is no reason to send anyone to their config.
-	if errors.Is(err, provider.ErrBudgetExceeded) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		// The router uses this sentinel for both unknown context metadata and
-		// an input that exceeds every candidate's budget. Do not guess which
-		// happened or replace a model's capacity with our prompt ceiling.
-		return fmt.Errorf("commit message generation blocked: model context is unknown or too small; verify context_window for the agent model and its fallbacks in the Golem model configuration, or reduce the staged diff: %w", provider.ErrBudgetExceeded)
+	if errors.Is(err, agent.ErrContextExhausted) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return contextWindowError(window)
 	}
 	return fmt.Errorf("golem runtime run: %w", err)
 }
 
+// contextWindowError refuses a prompt the Golem model's context window cannot
+// hold. No request was sent.
+func contextWindowError(window int) error {
+	size := "no context_window"
+	if window != 0 {
+		size = fmt.Sprintf("context_window %d", window)
+	}
+	return fmt.Errorf("commit message generation blocked: the Golem model's context window (%s) is too small for this staged diff; raise context_window for the Golem model in the Golem configuration view, or stage less: %w", size, ai.ErrContextWindowTooSmall)
+}
+
+// destinationDeniedMessage renders a boundary-safe description from the
+// TYPED error's own fields only — never from the surrounding chain (F14).
 func destinationDeniedMessage(err error) (string, bool) {
 	var denied *provider.DestinationDeniedError
 	if !errors.As(err, &denied) {
@@ -259,55 +261,55 @@ func destinationDeniedMessage(err error) (string, bool) {
 }
 
 // Available reports whether commit-message generation is embedded in Firn.
-// Always true: a static probe cannot predict whether generation will work — a
-// missing models.json falls back to a synthetic local-provider config, and a
-// present config can still point at a stopped provider — so failures surface
-// as errors from Generate instead of hiding the feature.
+// Always true: a static probe cannot predict whether generation will work — the
+// Golem model may be missing, unapproved or stopped — so failures surface as
+// errors from Generate instead of hiding the feature.
 func (*MessageGenerator) Available(context.Context) bool { return true }
 
 // generate runs one golem turn over diff, which the caller has already
-// filtered. withheld is the number of staged paths left out of diff; the
-// prompt states the count and nothing else. configPath pins the go-llm config
-// the runtime loads; "" lets it discover its own.
-func (g *MessageGenerator) generate(ctx context.Context, root, diff string, withheld int, configPath string, beforeSend func() error) (message string, err error) {
+// filtered, sent only to model (#491). withheld is the number of staged paths
+// left out of diff; the prompt states the count and nothing else.
+func (g *MessageGenerator) generate(ctx context.Context, root, diff string, withheld int, model *ai.GolemModel, beforeSend func() error) (message string, err error) {
 	if strings.TrimSpace(diff) == "" {
 		return "", errNothingStaged
+	}
+	if model == nil {
+		return "", errNoGolemModel
 	}
 	stagedDiff, err := stagedDiffContext(diff)
 	if err != nil {
 		return "", fmt.Errorf("golem runtime context: %w", err)
 	}
 
-	policy := provider.DestinationPolicy{}
-	if g.destinationPolicy != nil {
-		policy = g.destinationPolicy()
-	}
-	runtime, err := golem.New(ctx, golem.Options{
-		Root:       root,
-		ConfigPath: configPath,
-		ScopeGuard: func(string, bool) error { return errNoToolAccess },
-		System:     generateSystem,
-		MaxSteps:   1, // Never send built-in read-tool output in a second provider request.
-		// Every generation is one isolated conversation. Keep its session only
-		// in memory; a non-empty ThreadID otherwise opens golem's durable store.
-		SessionStore: ai.NewMemorySessionStore(),
-		// No history is reused; disabling compression also keeps the summarize
-		// route OUT of destination admission entirely (spec D3a).
-		DisableCompression: true,
-		// InputCeiling is tokens, not bytes: the 48 KiB byte-bounded context is
-		// ~12K tokens, well under it. It does not track the configured model's
-		// real context window; the router checks each candidate's known capacity
-		// separately and tries configured fallbacks before rejecting the run.
-		Budget:            agent.Budget{InputCeiling: 32 * 1024},
-		DestinationPolicy: policy,
-		OnWarning:         func(warning error) { log.Printf("git: golem warning: %v", warning) },
-	})
+	// The model's own orchestrator, budget and options: golem bootstraps no
+	// provider and loads no configuration. Its destination is admitted here.
+	opts, err := model.Options()
 	if err != nil {
 		if msg, ok := destinationDeniedMessage(err); ok {
 			// Wraps the SENTINEL only: classification survives, the original
 			// chain does not travel (spec D3b).
 			return "", fmt.Errorf("commit message generation blocked: %s; use Approve missing destinations in the Golem configuration view: %w", msg, provider.ErrDestinationDenied)
 		}
+		if errors.Is(err, ai.ErrContextWindowTooSmall) {
+			return "", contextWindowError(model.ContextWindow())
+		}
+		return "", fmt.Errorf("golem runtime initialization: %w", err)
+	}
+	if opts.Budget.InputCeiling == 0 {
+		opts.Budget.InputCeiling = noWindowInputCeiling
+	}
+	opts.Root = root
+	opts.ScopeGuard = func(string, bool) error { return errNoToolAccess }
+	opts.System = generateSystem
+	opts.MaxSteps = 1 // Never send built-in read-tool output in a second provider request.
+	// Every generation is one isolated conversation. Keep its session only in
+	// memory; a non-empty ThreadID otherwise opens golem's durable store.
+	opts.SessionStore = ai.NewMemorySessionStore()
+	// No history is reused, so nothing is ever summarized.
+	opts.DisableCompression = true
+	opts.OnWarning = func(warning error) { log.Printf("git: golem warning: %v", warning) }
+	runtime, err := golem.New(ctx, opts)
+	if err != nil {
 		return "", fmt.Errorf("golem runtime initialization: %w", err)
 	}
 	defer func() {
@@ -325,25 +327,26 @@ func (g *MessageGenerator) generate(ctx context.Context, root, diff string, with
 		}
 		instruction += fmt.Sprintf("\n%d staged %s withheld from this diff by the repository's AI policy. Do not guess at what was withheld.", withheld, noun)
 	}
-	// Provider discovery can block during bootstrap; recheck before sending
-	// the diff in case the repository, policy, or staged paths changed there.
+	// Recheck just before sending the diff, in case the repository, policy, or
+	// staged paths changed since the first recheck.
 	if beforeSend != nil {
 		if err := beforeSend(); err != nil {
 			return "", err
 		}
 	}
 	result, err := runtime.Run(ctx, golem.Turn{
-		// OpenCode Go requires a session even for an auxiliary coding request.
-		// go-llm forwards it through primary/fallback calls. Unlike chat's
-		// repo-derived thread ID, this carries no repository or user identity
-		// and cannot correlate separate generations (#306).
+		// OpenCode Go requires a session even for an auxiliary coding request;
+		// the model's caller blinds this thread ID into the one opencode gets,
+		// as chat's does. Unlike chat's repo-derived thread ID, it carries no
+		// repository or user identity and cannot correlate separate
+		// generations (#306).
 		ThreadID: "firn-commit-" + rand.Text(),
 		RunID:    "firn-commit-message",
 		Message:  instruction,
 		Context:  []golem.ContextItem{stagedDiff},
 	}, func(golem.Event) error { return nil })
 	if err != nil {
-		return "", runError(err)
+		return "", runError(err, model.ContextWindow())
 	}
 
 	message = strings.TrimSpace(result.Answer)

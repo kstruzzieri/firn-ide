@@ -2629,13 +2629,6 @@ func wantFallbackDestinations() []ApplyDestination {
 	return []ApplyDestination{alpha, beta}
 }
 
-func sameApplyDestinations(got, want []ApplyDestination) bool {
-	return slices.EqualFunc(got, want, func(a, b ApplyDestination) bool {
-		return a.Provider == b.Provider && a.Model == b.Model && a.Endpoint == b.Endpoint &&
-			a.Classification == b.Classification && slices.Equal(a.Provenance, b.Provenance)
-	})
-}
-
 type applyHarness struct {
 	svc  *Service
 	rec  *emitRecorder
@@ -3695,54 +3688,31 @@ func TestApplySettingsConsentMatrix(t *testing.T) {
 	}
 }
 
-// TestApplySettingsChallengesTheWholeNewRemoteBatch: a write that opens more
-// than one new remote destination asks about ALL of them at once, and the
-// single confirmation commits the whole batch durably. Nothing here unbinds
-// the agent route: what moves is where two of its fallbacks point.
-func TestApplySettingsChallengesTheWholeNewRemoteBatch(t *testing.T) {
+// TestApplySettingsAsksNothingForFallbackDestinations (#491): Golem chat and
+// commit messages send to the agent's model alone, so a write that points two
+// of its fallbacks at new remote destinations opens no destination Firn
+// reaches. It applies on the first call and grants nothing.
+func TestApplySettingsAsksNothingForFallbackDestinations(t *testing.T) {
 	consentPath := filepath.Join(t.TempDir(), "consent", "grants.json")
 	h := newApplyHarnessWithConsent(t, fallbackChainTargetJSON, consentPath)
-	req := h.request(t, remoteFallbackChanges()...)
 	before := h.targetBytes(t)
 
-	res, err := h.svc.ApplySettings(req)
+	res, err := h.svc.ApplySettings(h.request(t, remoteFallbackChanges()...))
 	if err != nil {
 		t.Fatalf("ApplySettings: %v", err)
 	}
 	if err := validateSettingsApplyResult(res); err != nil {
 		t.Fatalf("result is not contract-valid: %v (%+v)", err, res)
 	}
-	if res.Status != "consent_required" {
-		t.Fatalf("status = %q, want consent_required (%+v)", res.Status, res)
+	if res.Status != "applied" || res.Challenge != nil {
+		t.Fatalf("res = %+v, want applied with no challenge", res)
 	}
-	if want := wantFallbackDestinations(); !sameApplyDestinations(res.Challenge.Destinations, want) {
-		t.Fatalf("challenge destinations = %+v, want %+v", res.Challenge.Destinations, want)
-	}
-	if !bytes.Equal(before, h.targetBytes(t)) {
-		t.Fatal("the challenge wrote to the target")
+	if bytes.Equal(before, h.targetBytes(t)) {
+		t.Fatal("the write published nothing")
 	}
 	for _, dest := range wantFallbackDestinations() {
 		if h.svc.consent.Has(destinationDigest(dest.Provider, dest.Endpoint)) {
-			t.Fatalf("the challenge granted %s", dest.Provider)
-		}
-	}
-
-	confirmed := h.confirm(t, res.Challenge.Token, req)
-	if confirmed.Status != "applied" {
-		t.Fatalf("confirm = %+v, want applied", confirmed)
-	}
-	if bytes.Equal(before, h.targetBytes(t)) {
-		t.Fatal("the confirmation published nothing")
-	}
-	// Durable, not merely in memory: only a store reopened from the same file
-	// proves the whole batch survived the write.
-	reopened, err := OpenConsentStore(filesystem.NewOS(), consentPath)
-	if err != nil {
-		t.Fatalf("reopen consent store: %v", err)
-	}
-	for _, dest := range wantFallbackDestinations() {
-		if !reopened.Has(destinationDigest(dest.Provider, dest.Endpoint)) {
-			t.Fatalf("the reopened store holds no grant for %q", dest.Provider)
+			t.Fatalf("the write granted %s", dest.Provider)
 		}
 	}
 }

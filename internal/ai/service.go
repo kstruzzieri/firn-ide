@@ -19,7 +19,6 @@ import (
 	agenttools "github.com/kstruzzieri/go-llm/agent/tools"
 	"github.com/kstruzzieri/go-llm/config"
 	"github.com/kstruzzieri/go-llm/golem"
-	"github.com/kstruzzieri/go-llm/provider"
 
 	"github.com/google/uuid"
 )
@@ -187,6 +186,9 @@ type Service struct {
 	newRunner  runnerFactory
 	now        func() time.Time
 	newID      func() string
+	// userAgent is the HTTP identity commit generation's provider sends, as
+	// newRunner's does.
+	userAgent string
 }
 
 // NewService constructs the Service with its production collaborators.
@@ -224,6 +226,7 @@ func NewService(ctx context.Context, fs filesystem.FileSystem, consentPath strin
 		newRunner:      newRunner,
 		now:            time.Now,
 		newID:          uuid.NewString,
+		userAgent:      userAgent,
 	}
 	consent, err := OpenConsentStore(fs, consentPath)
 	s.consent = consent
@@ -336,14 +339,6 @@ func (s *Service) clearConsentDegraded() bool {
 	return was != nil
 }
 
-// DestinationPolicy exposes the consent store's exact-grant policy for
-// config-driven golem consumers (the commit-message generator). Keys off the
-// STORE's availability (loadErr), not the service's degraded-warning
-// bookkeeping, which also tracks transient persist failures (spec D2).
-func (s *Service) DestinationPolicy() provider.DestinationPolicy {
-	return s.consent.DestinationPolicy()
-}
-
 // StagedScope is what commit-message generation applies to the staged paths
 // of one git working tree, relative to its top level. It mirrors git.StagedScope
 // field for field, so the app converts one to the other.
@@ -353,61 +348,55 @@ type StagedScope struct {
 	// Protected reports a path whose content the policy protects: inside the
 	// open project the full policy, outside it the floor alone.
 	Protected func(path string) bool
-	// ConfigPath is the go-llm config the runtime loads: the source Guard
-	// protects, or a private copy of the bytes checked here when that source
-	// is the working directory's, or of go-llm's built-in fallback when there
-	// is no source (#524). Release removes a copy.
-	ConfigPath string
-	// Release removes that copy once the runtime has loaded it.
+	// Model is the Golem model generation sends to (#491).
+	Model *GolemModel
+	// Release drops the model's idle connections once generation is done.
 	Release func()
 }
 
 // StagedScope returns the scope commit-message generation applies to the git
 // working tree at gitRoot (#384): the bound repository's own chat policy, over
-// paths relative to gitRoot, and the go-llm config source that policy now
-// protects, for the runtime to load, or the private copy it loads in that
-// source's place (#524). One policy instance serves both features,
-// so they cannot drift: the floor, the manifests (reloaded here, so an edit
-// applies without a watcher event), and the config source as discovery finds
-// it now, not as a cached snapshot recorded it. The guard reads live policy
-// state, so it denies everything once the repository is unbound or replaced,
-// and it denies a staged path outside the bound root, which chat cannot see
-// either. No bound repository, a closing service, or a config source that
-// cannot be resolved or protected is an error, and generation sends nothing.
+// paths relative to gitRoot, and the Golem model, the target chat resolves
+// from the configuration it has loaded (#491). One policy instance serves both
+// features, so they cannot drift: the floor, the manifests (reloaded here, so
+// an edit applies without a watcher event), and the config source, both as
+// discovery finds it now and as the loaded configuration recorded it. The
+// guard reads live policy state, so it denies everything once the repository
+// is unbound or replaced, and it denies a staged path outside the bound root,
+// which chat cannot see either. No bound repository, a closing service, a
+// config source that cannot be resolved or protected, or a configuration chat
+// cannot run is an error, and generation sends nothing.
 func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 	top, err := filepath.EvalSymlinks(gitRoot)
 	if err != nil {
 		return StagedScope{}, fmt.Errorf("%w: canonicalizing the repository: %w", ErrWorkspaceUnavailable, err)
 	}
-	configPath, pinned, err := currentConfigSource()
+	configPath, err := currentConfigSource()
 	if err != nil {
 		return StagedScope{}, err
 	}
-	guard, boundRoot, warningsChanged, err := s.stagedPolicy(configPath)
+	guard, boundRoot, target, loadedSource, warningsChanged, err := s.stagedPolicy(configPath)
 	if warningsChanged {
 		s.emit(EventGolemStatusChanged, nil)
 	}
 	if err != nil {
 		return StagedScope{}, err
 	}
-	// isConfigSource reports the config source itself or a hard link to it.
-	// A path that no longer exists matches by name alone.
-	isConfigSource := func(string) bool { return false }
-	if configPath != "" {
-		configInfo, configErr := filesystem.Lstat(s.fs, configPath)
-		// Windows loads a file ID lazily, by path; SameFile on itself loads
-		// it now, before anything can replace the file.
-		if configErr == nil && !os.SameFile(configInfo, configInfo) {
-			configErr = errors.New("config source identity unavailable")
-		}
-		isConfigSource = func(abs string) bool {
-			if abs == configPath {
-				return true
-			}
-			info, err := filesystem.Lstat(s.fs, abs)
-			return err == nil && configErr == nil && os.SameFile(info, configInfo)
-		}
+	backend, transport, err := buildProvider(*target, s.userAgent)
+	if err != nil {
+		return StagedScope{}, err
 	}
+	// Each generation is a thread of its own that is never reset, so the
+	// opencode session header has no reset generation to mix in.
+	orchestrator, err := newFixedOrchestrator(backend, *target, func(string) uint64 { return 0 })
+	if err != nil {
+		transport.CloseIdleConnections()
+		return StagedScope{}, err
+	}
+	// isConfigSource reports a config source, the one discovery finds now or
+	// the one chat loaded, which a repointed GO_LLM_CONFIG or symlink can make
+	// differ, or a hard link to either.
+	isConfigSource := configSourceMatcher(s.fs, configPath, loadedSource)
 	// toBound maps a top-relative path onto the bound root; ok is false
 	// outside it. A bound root at or below the git top level is located by
 	// identity and spelled as git reports it: on a case-insensitive
@@ -434,13 +423,6 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 			return filepath.ToSlash(bound), true
 		}
 	}
-	runtimeConfig, release := configPath, func() {}
-	if pinned != nil {
-		if runtimeConfig, release, err = privateConfigCopy(pinned); err != nil {
-			log.Printf("ai: golem config copy: %v", err)
-			return StagedScope{}, fmt.Errorf("%w: the configuration could not be copied for the runtime", ErrAgentConfigInvalid)
-		}
-	}
 	return StagedScope{
 		Guard: func(rel string, write bool) error {
 			bound, ok := toBound(rel)
@@ -458,8 +440,8 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 			}
 			return floorDenies(rel) || isConfigSource(filepath.Join(top, filepath.FromSlash(rel)))
 		},
-		ConfigPath: runtimeConfig,
-		Release:    release,
+		Model:   &GolemModel{target: *target, orchestrator: orchestrator, consent: s.consent},
+		Release: transport.CloseIdleConnections,
 	}, nil
 }
 
@@ -512,29 +494,80 @@ func listedName(fsys filesystem.FileSystem, parent string, info fs.FileInfo) (st
 	return "", false
 }
 
-// stagedPolicy issues the current binding's guard under the binding gate's
-// read side, the way chat admission does: reload the manifests, protect the
-// config source, then issue. warningsChanged tells the caller to announce a
-// status change once the gate is released.
-func (s *Service) stagedPolicy(configPath string) (guard agenttools.ScopeGuard, boundRoot string, warningsChanged bool, err error) {
+// stagedPolicy issues the current binding's guard and the Golem model under
+// the binding gate's read side, the way chat admission does: reload the
+// manifests, protect the config source discovery finds now, resolve the
+// target through resolveTargetLocked (which protects the loaded
+// configuration's source too), then issue. loadedSource is that loaded
+// source. warningsChanged tells the caller to announce a status change once
+// the gate is released.
+func (s *Service) stagedPolicy(configPath string) (guard agenttools.ScopeGuard, boundRoot string, target *providerTarget, loadedSource string, warningsChanged bool, err error) {
 	s.bindingGate.RLock()
 	defer s.bindingGate.RUnlock()
 	if s.isClosing() {
-		return nil, "", false, fmt.Errorf("%w: commit message generation rejected", errServiceClosing)
+		return nil, "", nil, "", false, fmt.Errorf("%w: commit message generation rejected", errServiceClosing)
 	}
 	b := s.currentBinding()
 	if b == nil {
-		return nil, "", false, fmt.Errorf("commit message generation needs the repository open in Firn: %w", errPolicyDetached)
+		return nil, "", nil, "", false, fmt.Errorf("commit message generation needs the repository open in Firn: %w", errPolicyDetached)
 	}
 	warnings := b.policy.Warnings()
 	b.policy.Reload()
 	warningsChanged = !slices.Equal(warnings, b.policy.Warnings())
 	if configPath != "" {
 		if err := b.policy.ProtectConfigSource(configPath); err != nil {
-			return nil, "", warningsChanged, fmt.Errorf("%w: config source could not be protected: %w", ErrAgentConfigInvalid, err)
+			return nil, "", nil, "", warningsChanged, fmt.Errorf("%w: config source could not be protected: %w", ErrAgentConfigInvalid, err)
 		}
 	}
-	return b.policy.Guard(""), b.repoRoot, warningsChanged, nil
+	// Every snapshot swap holds the binding gate's write side, so the snapshot
+	// read here is the one resolveTargetLocked resolves.
+	loadedSource = s.snapshotOrBuild().canonicalPath
+	if target, _, err = s.resolveTargetLocked(b.policy); err != nil {
+		return nil, "", nil, "", warningsChanged, err
+	}
+	return b.policy.Guard(""), b.repoRoot, target, loadedSource, warningsChanged, nil
+}
+
+// configSourceMatcher reports a path that is one of sources, by name or, when
+// the path exists, as a hard link to one. "" sources are skipped. Each source
+// is sampled now: Windows loads a file ID lazily, by path, so SameFile on
+// itself loads it before anything can replace the file.
+func configSourceMatcher(fsys filesystem.FileSystem, sources ...string) func(abs string) bool {
+	type source struct {
+		path string
+		info fs.FileInfo // nil when the source's identity is unavailable
+	}
+	var known []source
+	for _, path := range sources {
+		if path == "" || slices.ContainsFunc(known, func(k source) bool { return k.path == path }) {
+			continue
+		}
+		info, err := filesystem.Lstat(fsys, path)
+		if err != nil || !os.SameFile(info, info) {
+			info = nil
+		}
+		known = append(known, source{path: path, info: info})
+	}
+	return func(abs string) bool {
+		var info fs.FileInfo
+		looked := false
+		for _, k := range known {
+			if abs == k.path {
+				return true
+			}
+			if k.info == nil {
+				continue
+			}
+			if !looked {
+				info, _ = filesystem.Lstat(fsys, abs)
+				looked = true
+			}
+			if info != nil && os.SameFile(info, k.info) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // BindRepository makes repoPath the current repository incarnation and returns
@@ -660,12 +693,13 @@ func (s *Service) resolveTurnIdentity(id RunIdentity) (ResolvedWorkspace, error)
 	return resolved, nil
 }
 
-// resolveTargetLocked is the one target-resolution path Status and StartTurn
-// share. Loading a snapshot never authorizes its source for a workspace: the
+// resolveTargetLocked is the one target-resolution path Status, StartTurn and
+// commit generation share. Loading a snapshot never authorizes its source for a workspace: the
 // CURRENT binding's policy protects the canonical source on EVERY call,
 // cache hit or not, because policy is per binding incarnation while the
 // snapshot lives until reload. Returns the snapshot's configEpoch so
-// admission can stamp runner reuse. Caller holds bindingGate and conv.mu.
+// admission can stamp runner reuse. Caller holds bindingGate (admission
+// holds conv.mu too).
 func (s *Service) resolveTargetLocked(policy *ScopePolicy) (*providerTarget, uint64, error) {
 	sn := s.snapshotOrBuild()
 	if sn.loadErr != nil {

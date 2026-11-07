@@ -4840,15 +4840,15 @@ func remoteFallbackAlpha() ApplyDestination {
 		Classification: "remote", Provenance: []string{"agent"}}
 }
 
-func remoteFallbackBeta() ApplyDestination {
-	return ApplyDestination{Provider: "beta", Model: "beta-model", Endpoint: betaFallbackEndpoint,
-		Classification: "remote", Provenance: []string{"agent"}}
-}
+// remotePrimaryTargetJSON is remoteFallbackTargetJSON with the agent routed to
+// alpha's model: Golem's one remote destination (#491). beta stays configured
+// and nothing Firn sends reaches it.
+var remotePrimaryTargetJSON = strings.Replace(remoteFallbackTargetJSON,
+	`"defaults": {"agent": "agent-m"}`, `"defaults": {"agent": "alpha-m"}`, 1)
 
 // grantRecommendConfigJSON is an EXTERNALLY authored configuration with no
-// defaults.agent at all: upstream's recommendation route reaches every
-// configured provider, so both remotes are missing destinations reached by a
-// provider hop that names no model (spec D13 / upstream I8).
+// defaults.agent at all. The golem CLI's recommendation route reaches every
+// configured provider; Golem chat and commit messages refuse it (#491).
 const grantRecommendConfigJSON = `{
   "providers": {
     "alpha": {"base_url": "https://alpha.example.com/v1", "api_format": "openai-compat"},
@@ -4863,38 +4863,41 @@ const grantRecommendConfigJSON = `{
   "defaults": {}
 }`
 
-// TestPrepareDestinationGrantsListsEveryMissingRemote: the whole ungranted
-// remote batch of the ACTIVE configuration, digest-sorted, with the provenance
-// that reaches each one — and nothing local.
-func TestPrepareDestinationGrantsListsEveryMissingRemote(t *testing.T) {
-	h := newApplyHarness(t, remoteFallbackTargetJSON)
+// TestPrepareDestinationGrantsListsOnlyTheGolemModel (#491): the ACTIVE
+// configuration's one destination Golem sends to, with its provenance, and
+// none that only a fallback reaches.
+func TestPrepareDestinationGrantsListsOnlyTheGolemModel(t *testing.T) {
+	h := newApplyHarness(t, remotePrimaryTargetJSON)
 	before := h.targetBytes(t)
 
 	res := h.prepareGrants(t)
 	if res.Status != "consent_required" {
 		t.Fatalf("prepare = %+v, want consent_required", res)
 	}
-	assertGrantDestinations(t, res.Challenge.Destinations, remoteFallbackAlpha(), remoteFallbackBeta())
+	assertGrantDestinations(t, res.Challenge.Destinations, remoteFallbackAlpha())
 	if !bytes.Equal(before, h.targetBytes(t)) {
 		t.Fatal("preparing an approval wrote to the configuration")
 	}
 }
 
-// TestPrepareDestinationGrantsNamesTheRecommendationRoute (D13): a config
-// without defaults.agent reaches every provider through upstream's
-// recommendation route, which names a provider and NO model.
-func TestPrepareDestinationGrantsNamesTheRecommendationRoute(t *testing.T) {
+// A local Golem model whose fallbacks are remote leaves nothing to approve.
+func TestPrepareDestinationGrantsSkipsRemoteFallbacks(t *testing.T) {
+	h := newApplyHarness(t, remoteFallbackTargetJSON)
+
+	if res := h.prepareGrants(t); res.Status != "none" {
+		t.Fatalf("prepare = %+v, want none", res)
+	}
+}
+
+// TestPrepareDestinationGrantsAsksNothingWithoutAnAgentSetting (#491): a
+// config without defaults.agent runs neither chat nor commit messages, so
+// nothing it names is a destination Firn sends to.
+func TestPrepareDestinationGrantsAsksNothingWithoutAnAgentSetting(t *testing.T) {
 	h := newApplyHarness(t, grantRecommendConfigJSON)
 
-	res := h.prepareGrants(t)
-	if res.Status != "consent_required" {
-		t.Fatalf("prepare = %+v, want consent_required", res)
+	if res := h.prepareGrants(t); res.Status != "none" {
+		t.Fatalf("prepare = %+v, want none", res)
 	}
-	assertGrantDestinations(t, res.Challenge.Destinations,
-		ApplyDestination{Provider: "alpha", Endpoint: alphaFallbackEndpoint,
-			Classification: "remote", Provenance: []string{"agent (recommendation)"}},
-		ApplyDestination{Provider: "beta", Endpoint: betaFallbackEndpoint,
-			Classification: "remote", Provenance: []string{"agent (recommendation)"}})
 }
 
 // TestPrepareDestinationGrantsNothingToApprove: there is no consent question
@@ -4903,7 +4906,7 @@ func TestPrepareDestinationGrantsNamesTheRecommendationRoute(t *testing.T) {
 // must never read as one of these (see the config_invalid test below).
 func TestPrepareDestinationGrantsNothingToApprove(t *testing.T) {
 	t.Run("already granted", func(t *testing.T) {
-		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		h := newApplyHarness(t, remotePrimaryTargetJSON)
 		if res := h.confirmGrants(t, h.grantChallengeToken(t)); res.Status != "granted" {
 			t.Fatalf("confirm = %+v, want granted", res)
 		}
@@ -4948,8 +4951,8 @@ func TestPrepareDestinationGrantsEnforcesResponseBounds(t *testing.T) {
 		wantStatus    string
 		wantChallenge int
 	}{
-		{"destination count at limit", 256, "", endpoint, "consent_required", 1},
-		{"destination count over limit", 257, "", endpoint, "config_invalid", 0},
+		{"provider count at limit", 256, "", endpoint, "consent_required", 1},
+		{"provider count over limit", 257, "", endpoint, "config_invalid", 0},
 		// Each control byte becomes a three-byte replacement rune in the response.
 		{"sanitized identifier at limit", 1, strings.Repeat("\x01", 85) + "x", endpoint, "consent_required", 1},
 		{"sanitized identifier over limit", 1, strings.Repeat("\x01", 85) + "xx", endpoint, "config_invalid", 0},
@@ -4964,6 +4967,12 @@ func TestPrepareDestinationGrantsEnforcesResponseBounds(t *testing.T) {
 					name = fmt.Sprintf("remote-%03d", i)
 				}
 				cfg.Providers[name] = config.ProviderConfig{BaseURL: tc.endpoint, APIFormat: "openai-compat"}
+				if i == 0 {
+					// The Golem model, whose destination is the one to approve (#491).
+					cfg.Models = map[string]config.ModelConfig{"agent-m": {Name: "agent-model", Provider: name,
+						Type: "dense", Capabilities: []string{"chat", "stream", "tool_call"}}}
+					cfg.Defaults = map[string]string{"agent": "agent-m"}
+				}
 			}
 			raw, err := json.Marshal(cfg)
 			if err != nil {
@@ -4994,7 +5003,7 @@ func TestPrepareDestinationGrantsEnforcesResponseBounds(t *testing.T) {
 // store can neither answer "already granted" nor record a new grant, so the
 // flow refuses before issuing a challenge it could never honor.
 func TestPrepareDestinationGrantsRefusesAnUnavailableStore(t *testing.T) {
-	h := newApplyHarnessWithConsent(t, remoteFallbackTargetJSON, "")
+	h := newApplyHarnessWithConsent(t, remotePrimaryTargetJSON, "")
 
 	res := h.prepareGrants(t)
 	if res.Status != "unavailable" {
@@ -5007,19 +5016,19 @@ func TestPrepareDestinationGrantsRefusesAnUnavailableStore(t *testing.T) {
 // grant-only token symmetrically (TestConfirmSettingsApplyRefusesAGrantOnlyChallenge).
 func TestConfirmDestinationGrantsRefusesForeignTokens(t *testing.T) {
 	t.Run("unknown token", func(t *testing.T) {
-		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		h := newApplyHarness(t, remotePrimaryTargetJSON)
 		if res := h.confirmGrants(t, "never-issued-token"); res.Status != "conflict" {
 			t.Fatalf("confirm = %+v, want conflict", res)
 		}
 	})
 	t.Run("malformed token", func(t *testing.T) {
-		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		h := newApplyHarness(t, remotePrimaryTargetJSON)
 		if res := h.confirmGrants(t, ""); res.Status != "conflict" {
 			t.Fatalf("confirm = %+v, want conflict", res)
 		}
 	})
 	t.Run("expired token", func(t *testing.T) {
-		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		h := newApplyHarness(t, remotePrimaryTargetJSON)
 		token := h.grantChallengeToken(t)
 		h.svc.challengeMu.Lock()
 		h.svc.pendingApplies[token].expiresAt = h.svc.now().Add(-time.Minute).UnixMilli()
@@ -5043,7 +5052,7 @@ func TestConfirmDestinationGrantsRefusesForeignTokens(t *testing.T) {
 // TestDestinationGrantsRefuseWhileBusy: busy is the one NONTERMINAL result —
 // nothing is consumed and the same token retries once the turn ends.
 func TestDestinationGrantsRefuseWhileBusy(t *testing.T) {
-	h := newApplyHarness(t, remoteFallbackTargetJSON)
+	h := newApplyHarness(t, remotePrimaryTargetJSON)
 	token := h.grantChallengeToken(t)
 
 	markConversationBusy(h.svc, "busy-conversation", stateRunning)
@@ -5070,9 +5079,9 @@ func TestDestinationGrantsRefuseWhileBusy(t *testing.T) {
 // the target identity alone.
 func TestConfirmDestinationGrantsRequiresAFreshTarget(t *testing.T) {
 	t.Run("revision moved", func(t *testing.T) {
-		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		h := newApplyHarness(t, remotePrimaryTargetJSON)
 		token := h.grantChallengeToken(t)
-		if err := os.WriteFile(h.path, []byte(strings.Replace(remoteFallbackTargetJSON,
+		if err := os.WriteFile(h.path, []byte(strings.Replace(remotePrimaryTargetJSON,
 			`"ollama": {"base_url": "http://localhost:11434"}`,
 			`"ollama": {"base_url": "http://localhost:11434"}, "added": {"base_url": "http://localhost:11999"}`,
 			1)), 0o600); err != nil {
@@ -5086,12 +5095,12 @@ func TestConfirmDestinationGrantsRequiresAFreshTarget(t *testing.T) {
 		}
 	})
 	t.Run("target moved", func(t *testing.T) {
-		h := newApplyHarness(t, remoteFallbackTargetJSON)
+		h := newApplyHarness(t, remotePrimaryTargetJSON)
 		token := h.grantChallengeToken(t)
 		// Byte-identical content at a different path: the revision still
 		// matches, so only the target identity can refuse this.
 		other := filepath.Join(t.TempDir(), "models.json")
-		if err := os.WriteFile(other, []byte(remoteFallbackTargetJSON), 0o600); err != nil {
+		if err := os.WriteFile(other, []byte(remotePrimaryTargetJSON), 0o600); err != nil {
 			t.Fatalf("write second target: %v", err)
 		}
 		t.Setenv("GO_LLM_CONFIG", other)
@@ -5112,7 +5121,7 @@ func TestConfirmDestinationGrantsRequiresAFreshTarget(t *testing.T) {
 // TestCancelSettingsApplyInvalidatesAGrantChallenge (R3/I18/F20): cancel is
 // mode-agnostic, so the approve flow needs no cancel operation of its own.
 func TestCancelSettingsApplyInvalidatesAGrantChallenge(t *testing.T) {
-	h := newApplyHarness(t, remoteFallbackTargetJSON)
+	h := newApplyHarness(t, remotePrimaryTargetJSON)
 	token := h.grantChallengeToken(t)
 
 	if res := h.svc.CancelSettingsApply(token); res.Status != "cancelled" {
@@ -5128,10 +5137,11 @@ func TestCancelSettingsApplyInvalidatesAGrantChallenge(t *testing.T) {
 }
 
 // TestConfirmDestinationGrantsRecordsTheBatchWithoutWriting: the terminal
-// success records the WHOLE approved batch and leaves the configuration byte
-// for byte as it was — the approve flow is a consent write, never a config one.
+// success records the approved destination, and nothing only a fallback
+// reaches, and leaves the configuration byte for byte as it was — the approve
+// flow is a consent write, never a config one.
 func TestConfirmDestinationGrantsRecordsTheBatchWithoutWriting(t *testing.T) {
-	h := newApplyHarness(t, remoteFallbackTargetJSON)
+	h := newApplyHarness(t, remotePrimaryTargetJSON)
 	before := h.targetBytes(t)
 	token := h.grantChallengeToken(t)
 	beforeEmits := h.rec.count(EventGolemStatusChanged)
@@ -5139,12 +5149,11 @@ func TestConfirmDestinationGrantsRecordsTheBatchWithoutWriting(t *testing.T) {
 	if res := h.confirmGrants(t, token); res.Status != "granted" {
 		t.Fatalf("confirm = %+v, want granted", res)
 	}
-	for _, d := range []struct{ provider, endpoint string }{
-		{"alpha", alphaFallbackEndpoint}, {"beta", betaFallbackEndpoint},
-	} {
-		if !h.svc.consent.Has(destinationDigest(d.provider, d.endpoint)) {
-			t.Errorf("%s was approved but not granted", d.provider)
-		}
+	if !h.svc.consent.Has(destinationDigest("alpha", alphaFallbackEndpoint)) {
+		t.Error("alpha was approved but not granted")
+	}
+	if h.svc.consent.Has(destinationDigest("beta", betaFallbackEndpoint)) {
+		t.Error("beta, which nothing Firn sends reaches, was granted")
 	}
 	if !bytes.Equal(before, h.targetBytes(t)) {
 		t.Fatal("the approve flow wrote to the configuration")

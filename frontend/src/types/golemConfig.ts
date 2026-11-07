@@ -148,10 +148,9 @@ export interface ConfirmSettingsApplyRequest {
 /**
  * One remote egress identity a challenge asks about — never a key, never a
  * path. `classification` is always `remote`: a local destination never
- * challenges. `model` is EMPTY on a destination reached by upstream's
- * recommendation route, which names a provider and no model at all.
- * `provenance` names the routing hops that reach it ("agent",
- * "agent (recommendation)").
+ * challenges. Since #491 the backend names only the Golem model's destination,
+ * reached by "agent"; `model` and `provenance` stay open shapes so an older
+ * backend's empty model or "agent (recommendation)" hop still renders.
  */
 export interface ApplyDestination {
   provider: string;

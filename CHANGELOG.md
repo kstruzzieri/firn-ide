@@ -23,6 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Commit messages come only from the Golem model, the model Golem chat
+  answers with, read from the configuration Golem chat has loaded. When that
+  model fails, generation fails with its error instead of trying the model's
+  fallbacks, and Approve missing destinations and Apply ask about that one
+  destination, never one only a fallback reaches. An edit made to the
+  configuration file outside Firn reaches commit messages when it reaches
+  chat: on Refresh, or when Golem Configuration opens while Golem is idle.
+  Opening Golem Configuration while Golem is busy now shows the busy notice.
+  A configuration with no agent model, or none at all, refuses generation with
+  chat's reason. A model with no context window now generates a message
+  instead of being refused (#506); a declared window too small for the staged
+  diff sends nothing and says so. Generation identifies as Firn and sends a
+  session header only to opencode, as chat does. The golem command-line tool
+  keeps its fallbacks. (#491)
+
 - The API key field in Golem Configuration says a key is saved as plain text in
   the configuration file. When that file is a `models.json` in the working
   directory, it also warns that a commit can include the key. (#322)

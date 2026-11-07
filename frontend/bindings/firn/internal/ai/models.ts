@@ -89,8 +89,7 @@ export class ApplyChallenge {
  * ApplyDestination is the bounded egress identity shown in the consent
  * prompt — never an API key, never a path. Classification is always "remote"
  * (local destinations never challenge). Provenance names the routing hops
- * that reach it ("agent", "agent (recommendation)"); Model is empty when the
- * hop names a provider and no model.
+ * that reach it; since #491 that is the Golem model's "agent" alone.
  */
 export class ApplyDestination {
     "provider": string;

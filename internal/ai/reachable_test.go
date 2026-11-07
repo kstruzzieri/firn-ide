@@ -3,6 +3,7 @@ package ai
 import (
 	"bytes"
 	"log"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,63 +26,61 @@ func reachableFixtureConfig() *config.Config {
 	}
 }
 
-// F8 strict half: agent chain INCLUDING fallbacks, provenance attached;
-// providers on no route are absent.
-func TestReachableDestinationsCoverAgentChain(t *testing.T) {
+// #491: Golem chat and commit messages send to the agent's primary model
+// alone, so its destination is the whole set; a fallback is never reached.
+func TestReachableDestinationsAreTheGolemModel(t *testing.T) {
 	got := reachableDestinations(reachableFixtureConfig())
-	if len(got) != 2 {
-		t.Fatalf("want hosted+backup, got %d: %+v", len(got), got)
-	}
-	byProvider := map[string]ReachableDestination{}
-	for _, d := range got {
-		byProvider[d.Destination.Provider] = d
-	}
-	if d := byProvider["backup"]; len(d.Hops) != 1 || d.Hops[0] != (ReachableHop{UseCase: "agent", Source: "agent"}) {
-		t.Fatalf("fallback hop: %+v", d.Hops)
-	}
-	if _, ok := byProvider["local"]; ok {
-		t.Fatal("provider on no route must be absent")
-	}
-	for i := 1; i < len(got); i++ {
-		if got[i-1].Destination.Digest >= got[i].Destination.Digest {
-			t.Fatal("result must be digest-sorted")
-		}
+
+	want := []ReachableDestination{{
+		Destination: ProviderDestination{
+			Provider: "hosted", Model: "front", Endpoint: "https://api.example.com/v1",
+			Classification: "remote", Digest: destinationDigest("hosted", "https://api.example.com/v1"),
+		},
+		Hops: []ReachableHop{{UseCase: "agent", Source: "agent"}},
+	}}
+	if !slices.EqualFunc(got, want, func(a, b ReachableDestination) bool {
+		return a.Destination == b.Destination && slices.Equal(a.Hops, b.Hops)
+	}) {
+		t.Fatalf("reachable = %+v, want the agent model alone %+v", got, want)
 	}
 }
 
-// F8 recommendation half: absent Defaults["agent"] reaches EVERY provider.
-func TestReachableDestinationsRecommendWhenAgentUnbound(t *testing.T) {
-	cfg := reachableFixtureConfig()
-	delete(cfg.Defaults, "agent")
-	got := reachableDestinations(cfg)
-	if len(got) != 3 {
-		t.Fatalf("recommendation must reach every configured provider, got %d", len(got))
-	}
-	for _, d := range got {
-		if len(d.Hops) != 1 || !d.Hops[0].Recommend || d.Hops[0].UseCase != "agent" || d.Destination.Model != "" {
-			t.Fatalf("recommendation entry: %+v", d)
-		}
-	}
-}
-
-func TestReachableDestinationsEmptyOnUnresolvableChainOrNil(t *testing.T) {
-	cfg := reachableFixtureConfig()
-	cfg.Defaults["agent"] = "no-such-role"
-	if got := reachableDestinations(cfg); len(got) != 0 {
-		t.Fatalf("unresolvable chain: %+v", got)
+// A configuration chat cannot run reaches nothing: no agent setting (go-llm's
+// recommendation route is the golem CLI's alone now), an unknown role, a
+// model that misses agent's floor, or no configuration.
+func TestReachableDestinationsEmptyWhenChatCannotRun(t *testing.T) {
+	for name, edit := range map[string]func(*config.Config){
+		"no agent setting": func(cfg *config.Config) { delete(cfg.Defaults, "agent") },
+		"unknown role":     func(cfg *config.Config) { cfg.Defaults["agent"] = "no-such-role" },
+		"misses the floor": func(cfg *config.Config) {
+			m := cfg.Models["agent-m"]
+			m.Capabilities = []string{"chat", "stream"}
+			cfg.Models["agent-m"] = m
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := reachableFixtureConfig()
+			edit(cfg)
+			if _, err := ResolveAgentTarget(cfg); err == nil {
+				t.Fatal("fixture: chat would run this configuration")
+			}
+			if got := reachableDestinations(cfg); len(got) != 0 {
+				t.Fatalf("reachable = %+v, want none", got)
+			}
+		})
 	}
 	if got := reachableDestinations(nil); len(got) != 0 {
 		t.Fatalf("nil config: %+v", got)
 	}
 }
 
-// #286 item 1: a hop dropped for an uncanonicalizable endpoint must not
-// vanish silently -- it logs the provider key (never the base URL, which may
-// carry userinfo credentials or a query like this fixture's).
-func TestReachableHopDroppedIsLogged(t *testing.T) {
+// #286 item 1: an agent endpoint that cannot be canonicalized reaches nothing,
+// and the host log names the provider, never the base URL (it may carry
+// userinfo credentials or a query like this fixture's).
+func TestReachableUnusableEndpointIsLogged(t *testing.T) {
 	cfg := reachableFixtureConfig()
-	cfg.Providers["backup"] = config.ProviderConfig{
-		BaseURL:   "https://alt.example.net/v1?tenant=secret",
+	cfg.Providers["hosted"] = config.ProviderConfig{
+		BaseURL:   "https://api.example.com/v1?tenant=secret",
 		APIFormat: "openai-compat",
 	}
 
@@ -90,53 +89,15 @@ func TestReachableHopDroppedIsLogged(t *testing.T) {
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(previousLog) })
 
-	got := reachableDestinations(cfg)
-
-	byProvider := map[string]bool{}
-	for _, d := range got {
-		byProvider[d.Destination.Provider] = true
+	if got := reachableDestinations(cfg); len(got) != 0 {
+		t.Fatalf("reachable = %+v, want none", got)
 	}
-	if byProvider["backup"] {
-		t.Fatalf("backup hop must be dropped (uncanonicalizable endpoint): %+v", got)
-	}
-	if !byProvider["hosted"] {
-		t.Fatalf("hosted hop must still be reachable: %+v", got)
-	}
-
 	out := logs.String()
-	if !strings.Contains(out, "reachable hop dropped") {
-		t.Fatalf("log missing drop message: %q", out)
-	}
-	if !strings.Contains(out, `"backup"`) {
-		t.Fatalf("log must name the provider: %q", out)
+	if !strings.Contains(out, "endpoint rejected") {
+		t.Fatalf("log missing the rejection: %q", out)
 	}
 	if strings.Contains(out, "tenant=secret") {
 		t.Fatalf("log must never leak the endpoint query: %q", out)
-	}
-}
-
-// A hop whose model names a provider the config does not define is dropped
-// like an uncanonicalizable one, and logged the same way, so the gap the
-// consent screens cannot show stays visible in the host log.
-func TestReachableUnknownProviderHopIsLogged(t *testing.T) {
-	cfg := reachableFixtureConfig()
-	fb := cfg.Models["agent-fb"]
-	fb.Provider = "ghost"
-	cfg.Models["agent-fb"] = fb
-
-	var logs bytes.Buffer
-	previousLog := log.Writer()
-	log.SetOutput(&logs)
-	t.Cleanup(func() { log.SetOutput(previousLog) })
-
-	got := reachableDestinations(cfg)
-	for _, d := range got {
-		if d.Destination.Provider == "ghost" {
-			t.Fatalf("unknown provider hop must be dropped: %+v", got)
-		}
-	}
-	if out := logs.String(); !strings.Contains(out, "reachable hop dropped") || !strings.Contains(out, `"ghost"`) {
-		t.Fatalf("log = %q, want the drop message naming the provider", out)
 	}
 }
 
@@ -144,7 +105,7 @@ func TestRenderHop(t *testing.T) {
 	if got := renderHop(ReachableHop{UseCase: "agent", Source: "agent"}); got != "agent" {
 		t.Fatalf("direct: %q", got)
 	}
-	if got := renderHop(ReachableHop{UseCase: "agent", Recommend: true}); got != "agent (recommendation)" {
-		t.Fatalf("recommend: %q", got)
+	if got := renderHop(ReachableHop{UseCase: "agent", Source: "fast"}); got != "agent via defaults.fast" {
+		t.Fatalf("via: %q", got)
 	}
 }

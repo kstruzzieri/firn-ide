@@ -1,30 +1,20 @@
 package ai
 
 import (
-	"log"
-	"sort"
-	"strings"
-
 	"github.com/kstruzzieri/go-llm/config"
 )
 
-// Mirrors, through the PUBLIC config API only, the admission planning
-// go-llm's internal providerbootstrap performs for the one library route any
-// Firn consumer enables: the agent route. The chat runtime supplies its own
-// orchestrator and the commit generator sets DisableCompression, so no
-// summarize route exists; planning is routed only by cmd/golem. Both
-// exclusions are pinned by behavior (F7) and the admission-parity corpus
-// (F15): if either reddens after a pin bump, re-decide spec D7. The one
-// exception to being a pure derivation: dropping a hop below also logs the
-// provider key, never the endpoint (it may carry userinfo credentials).
+// Golem chat and commit-message generation both send through
+// fixedModelCaller, with no router and no fallback (#491), so the one target
+// ResolveAgentTarget names is everywhere Firn sends. Fallback chains and the
+// recommendation route belong to the golem CLI, which keeps them; Firn asks
+// approval for none of their destinations. The reachable-set corpus test
+// (F15) pins that the approval set is this one target.
 
-// ReachableHop names how the agent route reaches a destination. Recommend
-// marks upstream's recommendation route — Defaults["agent"] absent, every
-// configured provider reachable (upstream I8).
+// ReachableHop names how the agent route reaches a destination.
 type ReachableHop struct {
-	UseCase   string
-	Source    string
-	Recommend bool
+	UseCase string
+	Source  string
 }
 
 // ReachableDestination is one destination in the reachable set with every
@@ -37,96 +27,28 @@ type ReachableDestination struct {
 // renderHop is the provenance string for one hop. The literals are fixed
 // vocabulary; only Source is interpolated (boundary callers sanitize it).
 func renderHop(h ReachableHop) string {
-	if h.Recommend {
-		return h.UseCase + " (recommendation)"
-	}
 	if h.Source == "" || h.Source == h.UseCase {
 		return h.UseCase
 	}
 	return h.UseCase + " via defaults." + h.Source
 }
 
-// reachableDestinations derives the digest-sorted deduplicated destination
-// set of the agent route exactly as upstream plans it: a present
-// Defaults["agent"] (LITERAL key check, matching PlanAgentRoute) yields the
-// strict transitive fallback chain; an absent one yields the recommendation
-// set — every configured provider. A present-but-unresolvable chain is
-// fatal upstream before any I/O, so it derives to empty; an unresolvable
-// single hop (unknown provider, uncanonicalizable endpoint) contributes
-// nothing here — upstream's planner would refuse to admit the whole route on
-// that same failure, while Firn only drops the hop from this read-only
-// listing (logging the provider key so the gap stays visible).
+// reachableDestinations is the destination Golem chat and commit generation
+// send to for cfg: the agent use case's primary model, resolved exactly as
+// ResolveAgentTarget resolves it. A configuration chat cannot run (no agent
+// setting, an unknown role, a model that misses agent's floor, an endpoint
+// that cannot be canonicalized) reaches nothing; ResolveAgentTarget logs an
+// unusable endpoint without the endpoint itself.
 func reachableDestinations(cfg *config.Config) []ReachableDestination {
 	if cfg == nil {
 		return nil
 	}
-	byDigest := map[string]*ReachableDestination{}
-	add := func(providerName, modelName string, hop ReachableHop) {
-		prov := cfg.Provider(providerName)
-		if prov == nil {
-			log.Printf("ai: reachable hop dropped: provider %q is not configured", providerName)
-			return
-		}
-		endpoint, local, err := NormalizeEndpoint(prov.BaseURL)
-		if err != nil {
-			// Never log prov.BaseURL: it may carry userinfo credentials or a
-			// query string. NormalizeEndpoint's error strings never include
-			// the raw input either (see its doc comment), so this is safe.
-			log.Printf("ai: reachable hop dropped: provider %q: %v", providerName, err)
-			return
-		}
-		classification := "remote"
-		if local {
-			classification = "local"
-		}
-		digest := destinationDigest(providerName, endpoint)
-		entry, ok := byDigest[digest]
-		if !ok {
-			entry = &ReachableDestination{Destination: ProviderDestination{
-				Provider: providerName, Model: modelName, Endpoint: endpoint,
-				Classification: classification, Digest: digest,
-			}}
-			byDigest[digest] = entry
-		}
-		for _, h := range entry.Hops {
-			if h == hop {
-				return
-			}
-		}
-		entry.Hops = append(entry.Hops, hop)
+	target, err := ResolveAgentTarget(cfg)
+	if err != nil {
+		return nil
 	}
-
-	if _, ok := cfg.Defaults[useCaseAgent]; !ok {
-		names := make([]string, 0, len(cfg.Providers))
-		for name := range cfg.Providers {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			add(name, "", ReachableHop{UseCase: useCaseAgent, Recommend: true})
-		}
-	} else {
-		chain, err := cfg.RoleFallbackChain(useCaseAgent)
-		if err != nil {
-			return nil
-		}
-		for _, selector := range chain {
-			providerName, modelName, found := strings.Cut(selector, "/")
-			if !found {
-				continue
-			}
-			add(providerName, modelName, ReachableHop{UseCase: useCaseAgent, Source: useCaseAgent})
-		}
-	}
-
-	digests := make([]string, 0, len(byDigest))
-	for d := range byDigest {
-		digests = append(digests, d)
-	}
-	sort.Strings(digests)
-	out := make([]ReachableDestination, 0, len(digests))
-	for _, d := range digests {
-		out = append(out, *byDigest[d])
-	}
-	return out
+	return []ReachableDestination{{
+		Destination: target.destination,
+		Hops:        []ReachableHop{{UseCase: useCaseAgent, Source: useCaseAgent}},
+	}}
 }

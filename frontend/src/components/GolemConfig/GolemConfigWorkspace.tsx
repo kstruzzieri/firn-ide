@@ -459,40 +459,33 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     setSending(false);
   };
 
-  const load = useCallback(
-    async (explicit: boolean): Promise<boolean> => {
-      const gen = ++generation.current;
-      setSourceLoading(false);
-      setFocusRequest(null);
-      setInFlight(true);
-      try {
-        const result = parseSettingsReloadResult(await ReloadGolemSettings());
-        if (gen !== generation.current) return false; // superseded or unmounted
-        setPhase({
-          kind: 'ready',
-          projection: result.projection,
-          // A busy reload on open silently shows the effective snapshot; only the
-          // explicit Refresh action surfaces the notice.
-          busyNotice: explicit && result.busy,
-        });
-        if (explicit && result.busy) announce(REFRESH_BUSY);
-        // The draft targets whichever revision the document is on now — including
-        // after a conflict, where adopting it is the whole point of the reload.
-        setDraft((current) => setTargetRevision(current, result.projection.revision));
-        return !result.busy;
-      } catch (err) {
-        if (gen !== generation.current) return false;
-        setPhase({ kind: 'error', message: boundedGolemMessage(err) });
-        return false;
-      } finally {
-        if (gen === generation.current) setInFlight(false);
-      }
-    },
-    [announce]
-  );
+  const load = useCallback(async (): Promise<boolean> => {
+    const gen = ++generation.current;
+    setSourceLoading(false);
+    setFocusRequest(null);
+    setInFlight(true);
+    try {
+      const result = parseSettingsReloadResult(await ReloadGolemSettings());
+      if (gen !== generation.current) return false; // superseded or unmounted
+      // A busy reload shows the configuration in effect, which Golem chat and
+      // commit messages both use (#491), so say so on open as on Refresh.
+      setPhase({ kind: 'ready', projection: result.projection, busyNotice: result.busy });
+      if (result.busy) announce(REFRESH_BUSY);
+      // The draft targets whichever revision the document is on now — including
+      // after a conflict, where adopting it is the whole point of the reload.
+      setDraft((current) => setTargetRevision(current, result.projection.revision));
+      return !result.busy;
+    } catch (err) {
+      if (gen !== generation.current) return false;
+      setPhase({ kind: 'error', message: boundedGolemMessage(err) });
+      return false;
+    } finally {
+      if (gen === generation.current) setInFlight(false);
+    }
+  }, [announce]);
 
   useEffect(() => {
-    void load(false);
+    void load();
     return () => {
       generation.current += 1; // invalidate any pending response on unmount
     };
@@ -778,7 +771,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   const refresh = async () => {
     if (!unsavedRef.current) {
-      await load(true);
+      await load();
       void refreshProfileList();
       return;
     }
@@ -786,7 +779,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       return;
     settle({ kind: 'discard' });
     setPreview(null);
-    await load(true);
+    await load();
     void refreshProfileList();
   };
 
@@ -1219,7 +1212,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       return;
     }
     if (kind === 'target') {
-      if (await load(true)) setOutcome(NO_OUTCOME);
+      if (await load()) setOutcome(NO_OUTCOME);
       return;
     }
     // A `challenge` conflict has nothing to reload — no document moved, and the
@@ -1233,13 +1226,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     // A discard that could not cancel its challenge left the draft standing;
     // reloading on top of it would show a fresh document under changes the user
     // still holds.
-    if (await discard()) await load(true);
+    if (await discard()) await load();
   };
 
   const recover = async () => {
     // Busy or another transport failure keeps the recovery state, and the old
     // request is never resent (§5.2).
-    if (await load(true)) setOutcome(NO_OUTCOME);
+    if (await load()) setOutcome(NO_OUTCOME);
   };
 
   // -------------------------------------------------------------------------
@@ -1685,7 +1678,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               type="button"
               className={styles.button}
               disabled={inFlight}
-              onClick={() => void load(true)}
+              onClick={() => void load()}
             >
               Retry
             </button>

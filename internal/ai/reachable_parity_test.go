@@ -1,19 +1,13 @@
 package ai
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/kstruzzieri/go-llm/config"
-	"github.com/kstruzzieri/go-llm/golem"
-	"github.com/kstruzzieri/go-llm/provider"
-
-	"firn/internal/testutil"
 )
 
 // writeParityConfig writes a models.json fixture and returns its path.
@@ -24,18 +18,6 @@ func writeParityConfig(t *testing.T, body string) string {
 		t.Fatal(err)
 	}
 	return path
-}
-
-// parityStubHandler answers the OpenAI-compatible models-list endpoint that
-// RefreshModels calls after admission. The corpus below only exercises
-// golem.New (bootstrap), never Run, so no chat-completion endpoint is needed.
-func parityStubHandler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":[{"id":"stub-model"}]}`)
-	})
-	return mux
 }
 
 // explicitRouteParityConfig: agent -> A only.
@@ -66,8 +48,8 @@ func transitiveFallbacksParityConfig(remoteA, remoteB, _ string) string {
 	}`, remoteA, remoteB)
 }
 
-// absentAgentBindingParityConfig: no defaults.agent; providers A and B are
-// both reachable via the recommendation route (upstream I8).
+// absentAgentBindingParityConfig: no defaults.agent. The golem CLI reaches A
+// and B through its recommendation route (upstream I8); chat refuses it.
 func absentAgentBindingParityConfig(remoteA, remoteB, _ string) string {
 	return fmt.Sprintf(`{
 		"providers": {
@@ -97,9 +79,8 @@ func sharedDestinationParityConfig(remoteA, _, _ string) string {
 	}`, remoteA)
 }
 
-// isolatedPlanningParityConfig: agent -> A; defaults.planning -> C. The
-// generator sets DisableCompression, and golem.New never plans a route for
-// "planning", so C must never enter the reachable set or the manifest.
+// isolatedPlanningParityConfig: agent -> A; defaults.planning -> C, a route
+// neither chat nor commit generation ever sends to.
 func isolatedPlanningParityConfig(remoteA, _, remoteC string) string {
 	return fmt.Sprintf(`{
 		"providers": {
@@ -114,176 +95,49 @@ func isolatedPlanningParityConfig(remoteA, _, remoteC string) string {
 	}`, remoteA, remoteC)
 }
 
-// #286 item 1 parity sibling: a provider whose base URL carries a query is
-// exactly the shape reachableDestinations silently drops (F15's own log
-// counterpart lives in reachable_test.go). golem.New must reject the SAME
-// config with the config-error sentinel, not the policy-denial one -- proof
-// that dropping the hop from the read-only listing does not paper over a
-// real admission failure. Materialize validates every configured provider up
-// front (even ones off the active route), so this needs no listener and the
-// query-carrying provider being B (on the active fallback chain here) versus
-// off-route makes no difference; it never skips.
-func TestGolemNewRejectsQueryCarryingBaseURLAsInvalidNotDenied(t *testing.T) {
-	path := writeParityConfig(t, transitiveFallbacksParityConfig(
-		"http://firn-parity-a.invalid",
-		"http://firn-parity-b.invalid/v1?tenant=x",
-		"",
-	))
-	doc, err := config.LoadDocument(path)
-	if err != nil {
-		t.Fatalf("LoadDocument: %v", err)
-	}
-	derived := reachableDestinations(doc.Config())
-	if len(derived) != 1 || derived[0].Destination.Provider != "A" {
-		t.Fatalf("want derived set exactly {A} (B's query-carrying endpoint dropped), got %+v", derived)
-	}
-
-	grant, err := provider.NewDestination(derived[0].Destination.Provider, derived[0].Destination.Endpoint)
-	if err != nil {
-		t.Fatalf("NewDestination(A): %v", err)
-	}
-
-	rt, err := golem.New(context.Background(), golem.Options{
-		Root:               t.TempDir(),
-		ConfigPath:         path,
-		MaxSteps:           1,
-		DisableCompression: true,
-		DestinationPolicy:  provider.NewDestinationPolicy(grant),
-	})
-	if rt != nil {
-		_ = rt.Close()
-	}
-	if !errors.Is(err, provider.ErrDestinationInvalid) {
-		t.Fatalf("want errors.Is(err, ErrDestinationInvalid), got %v", err)
-	}
-	if errors.Is(err, provider.ErrDestinationDenied) {
-		t.Fatalf("must not be the denial sentinel (this is a config error, not a policy decision): %v", err)
-	}
-}
-
-// F15: the D7 mirror (reachableDestinations) is honest against real golem
-// admission. Denial half is pre-I/O (.invalid endpoints are fine — gate.Install
-// runs before any provider is constructed). Admission half runs RefreshModels
-// against every active provider after admission, so granted cases serve
-// stubs on non-loopback listeners (skipped when the host has none).
-func TestReachableSetMatchesGolemAdmission(t *testing.T) {
-	type fixture struct {
+// F15 (#491): Golem chat and commit generation both send to the one target
+// chat resolves, through a caller with no router and no fallback, so for
+// every case of the corpus the approval set is exactly that target; a
+// configuration chat refuses (no agent setting) approves nothing.
+func TestReachableSetIsTheGolemModel(t *testing.T) {
+	corpus := []struct {
 		name       string
 		modelsJSON func(remoteA, remoteB, remoteC string) string
-	}
-	corpus := []fixture{
+	}{
 		{"explicit-route", explicitRouteParityConfig},
 		{"transitive-fallbacks", transitiveFallbacksParityConfig},
 		{"absent-agent-binding", absentAgentBindingParityConfig},
 		{"shared-destination", sharedDestinationParityConfig},
 		{"isolated-planning", isolatedPlanningParityConfig},
 	}
-
 	for _, tc := range corpus {
 		t.Run(tc.name, func(t *testing.T) {
-			// --- Denial half -------------------------------------------------
-			denyPath := writeParityConfig(t, tc.modelsJSON(
+			path := writeParityConfig(t, tc.modelsJSON(
 				"http://firn-parity-a.invalid",
 				"http://firn-parity-b.invalid",
 				"http://firn-parity-c.invalid",
 			))
-			doc, err := config.LoadDocument(denyPath)
+			doc, err := config.LoadDocument(path)
 			if err != nil {
 				t.Fatalf("LoadDocument: %v", err)
 			}
-			derived := reachableDestinations(doc.Config())
-			if len(derived) == 0 {
-				t.Fatal("derived reachable set is empty")
+			got := reachableDestinations(doc.Config())
+			target, err := ResolveAgentTarget(doc.Config())
+			if tc.name == "absent-agent-binding" {
+				if err == nil || len(got) != 0 {
+					t.Fatalf("reachable = %+v, target error = %v, want chat's refusal and nothing to approve", got, err)
+				}
+				return
 			}
-			for _, d := range derived {
-				if d.Destination.Classification != "remote" {
-					t.Fatalf("fixture destination %q classified %q, want remote", d.Destination.Provider, d.Destination.Classification)
-				}
-			}
-			if tc.name == "isolated-planning" {
-				for _, d := range derived {
-					if d.Destination.Provider == "C" {
-						t.Fatal("isolated-planning: derived must not include the planning-only destination C")
-					}
-				}
-			}
-
-			for i, target := range derived {
-				var grants []provider.Destination
-				for j, other := range derived {
-					if j == i {
-						continue
-					}
-					d, err := provider.NewDestination(other.Destination.Provider, other.Destination.Endpoint)
-					if err != nil {
-						t.Fatalf("NewDestination(%s): %v", other.Destination.Provider, err)
-					}
-					grants = append(grants, d)
-				}
-				policy := provider.NewDestinationPolicy(grants...)
-				rt, err := golem.New(context.Background(), golem.Options{
-					Root:               t.TempDir(),
-					ConfigPath:         denyPath,
-					MaxSteps:           1,
-					DisableCompression: true,
-					DestinationPolicy:  policy,
-				})
-				if rt != nil {
-					_ = rt.Close()
-				}
-				var denied *provider.DestinationDeniedError
-				if !errors.As(err, &denied) {
-					t.Fatalf("denying %s: want *provider.DestinationDeniedError, got %v", target.Destination.Provider, err)
-				}
-				if !errors.Is(err, provider.ErrDestinationDenied) {
-					t.Fatalf("denying %s: errors.Is(err, ErrDestinationDenied) = false", target.Destination.Provider)
-				}
-				if got := denied.Destination.Provider(); got != target.Destination.Provider {
-					t.Fatalf("denial names %q, want %q", got, target.Destination.Provider)
-				}
-			}
-
-			// --- Admission half ------------------------------------------------
-			// One non-loopback listener per derived remote. A host without one
-			// skips the subtest locally and fails it in CI, where
-			// FIRN_REQUIRE_NONLOOPBACK=1 (testutil.ListenNonLoopback).
-			listeners := map[string]string{}
-			for _, d := range derived {
-				ln, baseURL := testutil.ListenNonLoopback(t)
-				server := &http.Server{Handler: parityStubHandler()}
-				go func() { _ = server.Serve(ln) }()
-				t.Cleanup(func() { _ = server.Close() })
-				listeners[d.Destination.Provider] = baseURL
-			}
-			admitPath := writeParityConfig(t, tc.modelsJSON(
-				listeners["A"], listeners["B"], "http://firn-parity-c.invalid",
-			))
-
-			admitDoc, err := config.LoadDocument(admitPath)
 			if err != nil {
-				t.Fatalf("LoadDocument (admission): %v", err)
+				t.Fatalf("ResolveAgentTarget: %v", err)
 			}
-			admitDerived := reachableDestinations(admitDoc.Config())
-			grants := make([]provider.Destination, 0, len(admitDerived))
-			for _, d := range admitDerived {
-				dest, err := provider.NewDestination(d.Destination.Provider, d.Destination.Endpoint)
-				if err != nil {
-					t.Fatalf("NewDestination(%s): %v", d.Destination.Provider, err)
-				}
-				grants = append(grants, dest)
+			if target.destination.Provider != "A" || target.destination.Classification != "remote" {
+				t.Fatalf("fixture target = %+v, want remote A", target.destination)
 			}
-			rt, err := golem.New(context.Background(), golem.Options{
-				Root:               t.TempDir(),
-				ConfigPath:         admitPath,
-				MaxSteps:           1,
-				DisableCompression: true,
-				DestinationPolicy:  provider.NewDestinationPolicy(grants...),
-			})
-			if err != nil {
-				t.Fatalf("golem.New with full grant: %v", err)
-			}
-			if err := rt.Close(); err != nil {
-				t.Fatalf("Close: %v", err)
+			if len(got) != 1 || got[0].Destination != target.destination ||
+				!slices.Equal(got[0].Hops, []ReachableHop{{UseCase: "agent", Source: "agent"}}) {
+				t.Fatalf("reachable = %+v, want exactly the target %+v", got, target.destination)
 			}
 		})
 	}
