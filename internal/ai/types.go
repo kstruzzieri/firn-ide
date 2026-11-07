@@ -161,6 +161,8 @@ func SanitizeError(err error) PublicError {
 	switch {
 	case errors.Is(err, ErrAgentConfigMissing):
 		return PublicError{Code: "config_missing", Message: "Golem configuration was not found."}
+	case errors.Is(err, errWorkingDirectoryKeyReference):
+		return PublicError{Code: "config_key_reference_refused", Message: "Golem configuration in Firn's working directory cannot use ${NAME} API-key references. Set GO_LLM_CONFIG to its path to allow them."}
 	case errors.Is(err, ErrAgentConfigInvalid):
 		return PublicError{Code: "config_invalid", Message: "Golem configuration is invalid."}
 	case errors.Is(err, ErrConsentUnavailable):

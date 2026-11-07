@@ -1242,6 +1242,9 @@ func loadApplyTarget(mode applyMode, wantRevision *string) (settingsWriteTarget,
 		// Newly invalid: the draft was built on a document that no longer
 		// parses or validates. Not a conflict — there is nothing to reconcile
 		// against until the file is repaired externally.
+		if errors.Is(err, errWorkingDirectoryKeyReference) {
+			return settingsWriteTarget{}, nil, blockingDiagnostics(Diagnostic{Code: codeKeyReferenceRefused})
+		}
 		return settingsWriteTarget{}, nil, blockingDiagnostics(Diagnostic{Code: codeConfigInvalid})
 	}
 	projection := buildSettingsProjection(loaded, nil)

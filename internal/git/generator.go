@@ -60,9 +60,11 @@ type StagedScope struct {
 	// and deleted protected files are checked as copy sources; nil checks
 	// none.
 	Protected func(path string) bool
-	// ConfigPath is the go-llm config source Guard protects, which the runtime
-	// then loads; "" lets go-llm discover its own.
+	// ConfigPath is the go-llm config the runtime loads; "" lets go-llm
+	// discover its own.
 	ConfigPath string
+	// Release, when set, runs once generation is done with ConfigPath.
+	Release func()
 }
 
 func NewMessageGenerator() *MessageGenerator { return &MessageGenerator{} }
@@ -100,6 +102,9 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 		if scope, err = g.scopeSource(root); err != nil {
 			return CommitMessageResult{}, err
 		}
+	}
+	if scope.Release != nil {
+		defer scope.Release()
 	}
 	guard, configPath := scope.Guard, scope.ConfigPath
 	changes, err := svc.StagedChanges(ctx, dir, memoize(scope.Protected))

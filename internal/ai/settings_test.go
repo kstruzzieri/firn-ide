@@ -1775,8 +1775,8 @@ func TestMapConfigDiagnosticSubjectKinds(t *testing.T) {
 }
 
 // TestSettingsDiagnosticCodesContractOrder pins the Firn-side vocabulary
-// exactly as spec §5.6 aliases it — Slice A's 21 codes plus the ten Slice B
-// action/write codes. The frontend's DIAGNOSTIC_CODES mirrors this list
+// exactly as spec §5.6 aliases it — Slice A's 21 codes, the working-directory
+// key reference refusal (#524), and the ten Slice B action/write codes. The frontend's DIAGNOSTIC_CODES mirrors this list
 // byte-for-byte.
 func TestSettingsDiagnosticCodesContractOrder(t *testing.T) {
 	want := []string{
@@ -1787,7 +1787,7 @@ func TestSettingsDiagnosticCodesContractOrder(t *testing.T) {
 		"provider_endpoint_invalid", "provider_format_invalid",
 		"slot_policy_invalid", "model_invalid", "think_invalid",
 		"provider_not_found", "defaults_invalid", "key_reference_malformed",
-		"key_reference_unavailable", "selector_conflict",
+		"key_reference_unavailable", "key_reference_refused", "selector_conflict",
 		"identifier_not_editable",
 		"invalid_argument", "role_not_found", "provider_exists",
 		"provider_in_use", "eligibility_ineligible", "eligibility_unknown",
