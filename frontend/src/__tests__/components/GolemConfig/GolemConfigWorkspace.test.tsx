@@ -3,6 +3,7 @@ import path from 'path';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
+import { openSharedConfiguration } from '../../helpers/sharedConfiguration';
 
 jest.mock('../../../wails/bindings', () => ({
   ReloadGolemSettings: jest.fn(),
@@ -511,21 +512,25 @@ describe('GolemConfigWorkspace', () => {
     ).toEqual(['Provider', 'Endpoint', 'Type', 'API key', 'Actions']);
     expect(within(providerRow).getAllByRole('cell')).toHaveLength(5);
 
+    await openSharedConfiguration();
     const routeRow = screen.getByTestId('route-row-agent');
-    const routes = screen.getByRole('table', { name: 'Model routing' });
-    // §4.1: the rows are Firn's known use cases plus the authored ones, so a
-    // known use case with no route is an offer rather than an omission.
+    // #490: Shared configuration groups the routes: the one Firn uses, then
+    // the rest. §4.1: the rows are Firn's known use cases plus the authored
+    // ones, so a known use case with no route is an offer, not an omission.
+    const used = screen.getByRole('table', { name: 'Used by Firn' });
+    const routes = screen.getByRole('table', { name: 'Other configured routes' });
+    expect(within(used).getAllByRole('row').slice(1)).toEqual([routeRow]);
     expect(within(routes).getAllByRole('row').slice(1)).toEqual([
-      routeRow,
       screen.getByTestId('route-row-chat'),
       screen.getByTestId('route-row-embedding'),
       screen.getByTestId('route-row-planning'),
     ]);
-    expect(
-      within(routes)
-        .getAllByRole('columnheader')
-        .map((h) => h.textContent)
-    ).toEqual(['Use case', 'Provider', 'Model', 'Think', 'Status', 'Actions']);
+    for (const table of [used, routes])
+      expect(
+        within(table)
+          .getAllByRole('columnheader')
+          .map((h) => h.textContent)
+      ).toEqual(['Use case', 'Provider', 'Model', 'Think', 'Status', 'Actions']);
     // The record-form inline labels are visual echoes only — never a second announcement.
     for (const label of within(routeRow).queryAllByText(/^(Think|Type|API key)$/)) {
       expect(label).toHaveAttribute('aria-hidden', 'true');
@@ -534,6 +539,7 @@ describe('GolemConfigWorkspace', () => {
 
   it('wraps an open route row and its editor in one rowgroup', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
+    await openSharedConfiguration();
     await userEvent.click(
       within(await screen.findByTestId('route-row-agent')).getByRole('button', { name: /^Edit/ })
     );
@@ -553,6 +559,7 @@ describe('GolemConfigWorkspace', () => {
 
   it('Cancel returns focus to the row Edit button in both cards', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
+    await openSharedConfiguration();
     const providerEdit = within(await screen.findByTestId('provider-row-llama-swap')).getByRole(
       'button',
       { name: /^Edit/ }

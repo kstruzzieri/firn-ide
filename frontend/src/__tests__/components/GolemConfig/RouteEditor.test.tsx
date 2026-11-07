@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { RoutingCard, type RoutingCardProps } from '../../../components/GolemConfig/RoutingCard';
 import { routeRowKey, routeUseCases } from '../../../components/GolemConfig/routingRows';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
+import { openSharedConfiguration } from '../../helpers/sharedConfiguration';
 import {
   buildApplyRequest,
   cleanDraft,
@@ -3661,6 +3662,7 @@ describe('GolemConfigWorkspace route editing', () => {
 
   it('counts a staged route and marks its row, holding Apply while fields are unstaged', async () => {
     render(<GolemConfigWorkspace onClose={() => {}} />);
+    await openSharedConfiguration();
     await screen.findByTestId('route-row-chat');
 
     await openRoute('chat');
@@ -3700,6 +3702,7 @@ describe('GolemConfigWorkspace route editing', () => {
       },
     });
     render(<GolemConfigWorkspace onClose={() => {}} />);
+    await openSharedConfiguration();
     await screen.findByTestId('route-row-chat');
 
     await openRoute('chat');
@@ -3739,6 +3742,7 @@ describe('GolemConfigWorkspace route editing', () => {
       },
     });
     render(<GolemConfigWorkspace onClose={() => {}} />);
+    await openSharedConfiguration();
     await screen.findByTestId('route-row-chat');
 
     // Stage chat onto the summarize selector, keeping `thinking` and Auto.
@@ -3786,6 +3790,7 @@ describe('GolemConfigWorkspace route editing', () => {
       },
     });
     render(<GolemConfigWorkspace onClose={() => {}} />);
+    await openSharedConfiguration();
     const row = await screen.findByTestId('route-row-chat');
 
     // [C6] The row-owned diagnostic is a sibling `detailRow` in the row's rowgroup.

@@ -1,0 +1,727 @@
+{
+  "busy": false,
+  "projection": {
+    "diagnostics": [],
+    "editable": true,
+    "models": [
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "capabilityOverride": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "description": "Agent / tool-use - 86.4% tau2-bench, native function calling, 80.0% LiveCodeBench.",
+        "effectiveCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "fallbacks": [
+          "fast",
+          "lightweight",
+          "cc-coder"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "gemma4:31b",
+        "provider": "llamacpp",
+        "removable": true,
+        "role": "agent",
+        "routedUseCases": [],
+        "thinkMode": "",
+        "type": "dense"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "capabilityOverride": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "description": "CommandCode GOAT: primary cloud agent. Full $70 allocation ($1.40/$4.40 per 1M), 1M ctx, tools verified 2026-08-16. Reasoning model - needs generous max_tokens.",
+        "effectiveCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "fallbacks": [
+          "cc-coder",
+          "fast"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "zai-org/GLM-5.2",
+        "provider": "commandcode",
+        "removable": true,
+        "role": "cc-agent",
+        "routedUseCases": [],
+        "thinkMode": "",
+        "type": "moe"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "capabilityOverride": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "description": "CommandCode GOAT: coding-tuned, strong tool calling, 256K ctx. Cloud coding + agent bursts.",
+        "effectiveCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "fallbacks": [
+          "cc-pro"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "moonshotai/Kimi-K2.7-Code",
+        "provider": "commandcode",
+        "removable": false,
+        "role": "cc-coder",
+        "routedUseCases": [
+          "agent",
+          "chat",
+          "completion"
+        ],
+        "thinkMode": "",
+        "type": "moe"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "description": "CommandCode GOAT: cheap bulk workhorse. Full $70 allocation ($0.22/$0.66 per 1M), 1M ctx. Summaries, drafts, scaffolds.",
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "fallbacks": [
+          "cc-mimo"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "deepseek/deepseek-v4-flash",
+        "provider": "commandcode",
+        "removable": false,
+        "role": "cc-flash",
+        "routedUseCases": [
+          "agent",
+          "analysis",
+          "chat",
+          "completion",
+          "reasoning"
+        ],
+        "thinkMode": "",
+        "type": "moe"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "description": "CommandCode GOAT: frontier alternate, 500K ctx. Fallback for cc-review.",
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "fallbacks": [
+          "cc-luna"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "xai/grok-4.6",
+        "provider": "commandcode",
+        "removable": false,
+        "role": "cc-grok",
+        "routedUseCases": [
+          "code-review"
+        ],
+        "thinkMode": "",
+        "type": "dense"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "description": "CommandCode GOAT: only GPT in plan. Fast frontier, zero reasoning-token overhead - interactive quick asks, cross-family judge.",
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "gpt-5.6-luna",
+        "provider": "commandcode",
+        "removable": false,
+        "role": "cc-luna",
+        "routedUseCases": [
+          "code-review"
+        ],
+        "thinkMode": "",
+        "type": "dense"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "description": "CommandCode GOAT: 98% off promo while it lasts - near-free 1M-ctx burst model.",
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "xiaomi/mimo-v2.5-pro",
+        "provider": "commandcode",
+        "removable": false,
+        "role": "cc-mimo",
+        "routedUseCases": [
+          "agent",
+          "analysis",
+          "chat",
+          "completion",
+          "reasoning"
+        ],
+        "thinkMode": "",
+        "type": "moe"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "description": "CommandCode GOAT: analysis/reasoning workhorse, 1M ctx. Reasoning model - needs generous max_tokens.",
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "fallbacks": [
+          "cc-flash"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "deepseek/deepseek-v4-pro",
+        "provider": "commandcode",
+        "removable": false,
+        "role": "cc-pro",
+        "routedUseCases": [
+          "agent",
+          "analysis",
+          "chat",
+          "completion",
+          "reasoning"
+        ],
+        "thinkMode": "",
+        "type": "moe"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "description": "CommandCode GOAT: frontier-tier review/consults, 1M ctx. Likely $20 credit tier - single-shot, never loops.",
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "fallbacks": [
+          "cc-grok"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "moonshotai/Kimi-K3",
+        "provider": "commandcode",
+        "removable": false,
+        "role": "cc-review",
+        "routedUseCases": [
+          "code-review"
+        ],
+        "thinkMode": "",
+        "type": "moe"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "description": "Qwen3-Coder-Next MoE - 70.6% SWE-bench, dedicated agentic coding.",
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "fallbacks": [
+          "fast",
+          "lightweight",
+          "cc-coder"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "qwen3-coder-next:latest",
+        "provider": "llamacpp",
+        "removable": false,
+        "role": "coding",
+        "routedUseCases": [
+          "completion"
+        ],
+        "thinkMode": "",
+        "type": "moe"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "embed"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "description": "Qwen3 embedding - #1 MTEB multilingual, strong code retrieval. llama-swap entry must start llama-server with --embeddings.",
+        "effectiveCapabilities": [
+          "embed"
+        ],
+        "exposedCapabilities": [
+          "embed"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "qwen3-embedding:8b",
+        "provider": "llamacpp",
+        "removable": false,
+        "role": "embedding",
+        "routedUseCases": [
+          "embedding"
+        ],
+        "thinkMode": "",
+        "type": "embedding"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "capabilityOverride": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "description": "Qwen 3.6 MoE - 73.4% SWE-bench, 3B active for fast inference, tool use.",
+        "effectiveCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "fallbacks": [
+          "lightweight",
+          "cc-coder"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "qwen3.6:35b-a3b",
+        "provider": "llamacpp",
+        "removable": false,
+        "role": "fast",
+        "routedUseCases": [
+          "agent",
+          "chat",
+          "completion"
+        ],
+        "thinkMode": "",
+        "type": "moe"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "description": "Gemma 4 31B dense - reasoning, analysis, multimodal; configurable thinking mode. Served on demand via llama-swap.",
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "fallbacks": [
+          "fast",
+          "lightweight",
+          "cc-pro"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "gemma4:31b",
+        "provider": "llamacpp",
+        "removable": false,
+        "role": "general",
+        "routedUseCases": [
+          "chat"
+        ],
+        "thinkMode": "",
+        "type": "dense"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "description": "Local LLM-as-judge for trace replay scoring; must not score itself in llm-bench.",
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "fallbacks": [
+          "fast",
+          "lightweight"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "gemma4:31b",
+        "provider": "llamacpp",
+        "removable": true,
+        "role": "judge",
+        "routedUseCases": [],
+        "thinkMode": "",
+        "type": "dense"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "description": "Qwen3.5 9B MTP - lightweight FIM / inline completion, simple tasks.",
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "qwen3.5:9b-mtp",
+        "provider": "llamacpp",
+        "removable": false,
+        "role": "lightweight",
+        "routedUseCases": [
+          "agent",
+          "chat",
+          "completion"
+        ],
+        "thinkMode": "",
+        "type": "dense"
+      }
+    ],
+    "providers": [
+      {
+        "apiFormat": "openai-compat",
+        "classification": "remote",
+        "credentialState": "none",
+        "endpoint": "https://api.commandcode.ai/provider",
+        "name": "commandcode"
+      },
+      {
+        "apiFormat": "openai-compat",
+        "classification": "local",
+        "credentialState": "none",
+        "endpoint": "http://127.0.0.1:8090",
+        "name": "llamacpp"
+      }
+    ],
+    "readOnly": false,
+    "revision": "13e5e6c7f236152220c9da80974d655696b7db5c247945f3cf7373c22c00d1f9",
+    "routes": [
+      {
+        "role": "fast",
+        "useCase": "agent"
+      },
+      {
+        "role": "cc-pro",
+        "useCase": "analysis"
+      },
+      {
+        "role": "general",
+        "useCase": "chat"
+      },
+      {
+        "role": "cc-review",
+        "useCase": "code-review"
+      },
+      {
+        "role": "coding",
+        "useCase": "completion"
+      },
+      {
+        "role": "embedding",
+        "useCase": "embedding"
+      },
+      {
+        "role": "cc-pro",
+        "useCase": "reasoning"
+      }
+    ],
+    "sourceOrigin": "env",
+    "state": "ready"
+  }
+}

@@ -32,6 +32,8 @@ import styles from './GolemConfig.module.css';
 export interface EditorFocusRequest {
   changeId: string;
   nonce: number;
+  /** [#490] A name the route editor's filter opens with (the Golem model picker's pointer). */
+  query?: string;
 }
 
 /**

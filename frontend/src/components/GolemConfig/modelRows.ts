@@ -34,6 +34,13 @@ export interface ModelRow {
   descriptions: { role: string; description: string }[];
 }
 
+/**
+ * [#490] A model as the Golem picker lists it: one entry per provider and
+ * model, whatever facts its cards carry.
+ */
+export const selectorKey = (model: ModelProjection): string =>
+  [model.provider, model.modelName].join('\u0000');
+
 /** The tuple `sameModelFacts` compares, flattened — the identity of a card. */
 export const rowKey = (model: ModelProjection): string =>
   [
@@ -46,8 +53,10 @@ export const rowKey = (model: ModelProjection): string =>
   ].join('\u0000');
 
 /**
- * The band's rows for one provider, in the shared display order. One builder,
- * so Slice D adds discovered models in a single place.
+ * The band's rows for one provider — or, for `null`, every provider (#490's
+ * picker starts on All providers) — in the shared display order, grouped by
+ * provider in `providers`' order. One builder, so Slice D adds discovered
+ * models in a single place.
  *
  * `models` carries one entry per ROLE, so two roles naming the same model with
  * byte-identical facts arrive twice. The band picks a MODEL, not a role, so
@@ -60,13 +69,21 @@ export const rowKey = (model: ModelProjection): string =>
  * by-role lookup below is unambiguous; two roles that share provider+name but
  * differ in facts are different cards and never share a row.
  */
-export function buildModelRows(models: readonly ModelProjection[], provider: string): ModelRow[] {
+export function buildModelRows(
+  models: readonly ModelProjection[],
+  provider: string | null,
+  providers: readonly { name: string }[] = [],
+  /** What makes two cards one row: their full facts, or (#490) provider and model. */
+  keyOf: (model: ModelProjection) => string = rowKey
+): ModelRow[] {
+  const listed = (model: ModelProjection): boolean =>
+    provider === null || model.provider === provider;
   const byKey = new Map<string, ModelRow>();
   for (const model of models) {
-    if (model.provider !== provider) continue;
-    const row = byKey.get(rowKey(model));
+    if (!listed(model)) continue;
+    const row = byKey.get(keyOf(model));
     if (row === undefined)
-      byKey.set(rowKey(model), {
+      byKey.set(keyOf(model), {
         model,
         provenance: 'authored',
         roles: [model.role],
@@ -74,9 +91,7 @@ export function buildModelRows(models: readonly ModelProjection[], provider: str
       });
     else row.roles.push(model.role);
   }
-  const byRole = new Map(
-    models.filter((model) => model.provider === provider).map((model) => [model.role, model])
-  );
+  const byRole = new Map(models.filter(listed).map((model) => [model.role, model]));
   for (const row of byKey.values()) {
     // The projection's own order (UTF-8 bytes), not UTF-16: which note the card
     // shows and which role heads the strip both ride on it.
@@ -88,6 +103,6 @@ export function buildModelRows(models: readonly ModelProjection[], provider: str
   }
   return orderModelsForDisplay(
     [...byKey.values()].map((row) => row.model),
-    []
-  ).map((model) => byKey.get(rowKey(model))!);
+    providers
+  ).map((model) => byKey.get(keyOf(model))!);
 }

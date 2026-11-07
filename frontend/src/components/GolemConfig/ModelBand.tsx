@@ -37,9 +37,10 @@ import {
 } from '../../types/golem';
 import { shortfallLine, type FloorShortfall } from '../../types/golemConfig';
 import { AbilityChips } from './AbilityChips';
+import { GOLEM_FLOOR, golemModelVerdict, type GolemModelVerdict } from './golemModel';
 import styles from './GolemConfig.module.css';
 import { ModelCardPopup, type CardInfo } from './ModelCardPopup';
-import { buildModelRows, canonicalCaps, rowKey, type ModelRow } from './modelRows';
+import { buildModelRows, canonicalCaps, rowKey, selectorKey, type ModelRow } from './modelRows';
 import {
   TYPE_LABEL,
   abilitiesLine,
@@ -97,9 +98,6 @@ interface PopupHold {
   pendingKey: string | null;
   closeTimer: number;
 }
-
-const sameModel = (a: ModelProjection | null, b: ModelProjection): boolean =>
-  a !== null && rowKey(a) === rowKey(b);
 
 /** Hover detail wherever the abbreviated context renders: the exact count. */
 const contextTitle = (model: ModelProjection): string | undefined =>
@@ -163,6 +161,28 @@ export interface ModelBandProps {
   onSelect: (model: ModelProjection) => void;
   /** `commitName` marks Declare or leaving the name field, never a keystroke. */
   onManual: (manual: ManualModel | null, commitName?: boolean) => void;
+  /**
+   * [#490] A name for the filter, from the Golem model picker's pointer.
+   * Applied on mount and again whenever its nonce changes, so a repeated
+   * request reaches an editor that is already open without remounting it.
+   */
+  queryRequest?: { query: string; nonce: number };
+  /** #490: the Golem model picker's reading of this band; absent for a route editor. */
+  golem?: GolemBand;
+}
+
+/**
+ * The Golem model picker's band (#490, design 5.1): every provider at once,
+ * authored models only, grouped by whether they can run Golem, and a pointer
+ * to Shared configuration where a hand declaration lives.
+ */
+export interface GolemBand {
+  /** The model Golem runs now, marked `current`. */
+  current: ModelProjection | null;
+  /** The strip's body for the card it reads out, with every card naming that model. */
+  strip: (model: ModelProjection, cards: readonly ModelProjection[]) => ReactNode;
+  /** A typed name nothing lists: open the agent route editor on it. */
+  onNotListed: (name: string) => void;
 }
 
 export function ModelBand({
@@ -183,8 +203,19 @@ export function ModelBand({
   onProviderChange,
   onSelect,
   onManual,
+  queryRequest,
+  golem,
 }: ModelBandProps) {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(queryRequest?.query ?? '');
+  const [seenQuery, setSeenQuery] = useState(queryRequest?.nonce);
+  /**
+   * [#490] The picker lists one entry per provider and model; a route editor
+   * one card per full set of facts. `same` is that identity, for every
+   * "is this the same card" question below.
+   */
+  const groupKey = golem === undefined ? rowKey : selectorKey;
+  const same = (a: ModelProjection | null, b: ModelProjection): boolean =>
+    a !== null && groupKey(a) === groupKey(b);
   /**
    * #314: the count region mounts with the band, and a live region speaks only
    * text that arrives after it is in the accessibility tree. An effect after the
@@ -204,6 +235,13 @@ export function ModelBand({
    * only place facts are shown, so the grid geometry never moves.
    */
   const [previewing, setPreviewing] = useState(false);
+  // A later pointer request replaces the filter (render-phase adjustment).
+  if (queryRequest !== undefined && queryRequest.nonce !== seenQuery) {
+    setSeenQuery(queryRequest.nonce);
+    setQuery(queryRequest.query);
+    setActive(0);
+    setPreviewing(false);
+  }
   const gridRef = useRef<HTMLDivElement>(null);
   /** True only for the render that follows a keyboard move. */
   const navigatedRef = useRef(false);
@@ -213,18 +251,49 @@ export function ModelBand({
 
   // The verdict rides on the row: one call per card per render, and a blocked
   // card renders the very shortfall that blocked it.
-  const judged = buildModelRows(models, provider).map((row) => ({
-    ...row,
-    short: shortfalls(row.model),
-  }));
-  const eligible = judged.filter((row) => row.short.length === 0);
-  const blocked = judged.filter((row) => row.short.length > 0);
+  // #490: the picker lists every provider while its select reads All providers.
+  // One entry per provider and model; its card is the current one when the
+  // entry holds it, so its verdict and the change it stages carry those facts.
+  const judged = buildModelRows(
+    models,
+    golem !== undefined && provider === '' ? null : provider,
+    providers,
+    groupKey
+  )
+    .map((row) =>
+      golem !== undefined && golem.current !== null && same(golem.current, row.model)
+        ? { ...row, model: golem.current }
+        : row
+    )
+    .map((row) => {
+      const short = shortfalls(row.model);
+      // [#490] The picker's groups are `golemModelVerdict`'s, the one function
+      // #493 pins to Apply's gates; a route editor reads the shortfall.
+      const verdict: GolemModelVerdict =
+        golem === undefined
+          ? short.length === 0
+            ? { eligible: true }
+            : { eligible: false, reason: shortfallLine(short) }
+          : golemModelVerdict(row.model, short);
+      return { ...row, short, verdict };
+    });
+  const eligible = judged.filter((row) => row.verdict.eligible);
+  const blocked = judged.filter((row) => !row.verdict.eligible);
 
   const needle = query.trim().toLowerCase();
-  const matches = eligible.filter((row) => row.model.modelName.toLowerCase().includes(needle));
-  const exact = eligible.some((row) => row.model.modelName.toLowerCase() === needle);
-  /** A typed name nothing matches pins the declare card as the grid's last stop. */
-  const declaring = needle !== '' && !exact;
+  const named = (row: ModelRow): boolean => row.model.modelName.toLowerCase().includes(needle);
+  const matches = eligible.filter(named);
+  /** The picker filters its folded group too; a route editor lists its blocked cards whole. */
+  const shownBlocked = golem === undefined ? blocked : blocked.filter(named);
+  const exact = (golem === undefined ? eligible : judged).some(
+    (row) => row.model.modelName.toLowerCase() === needle
+  );
+  /**
+   * A typed name nothing matches pins the declare card as the grid's last
+   * stop; the picker offers no declaration and points to Shared configuration.
+   */
+  const unlisted = needle !== '' && !exact;
+  const declaring = golem === undefined && unlisted;
 
   // Navigable stops: the matching cards, then the declare card. Blocked cards
   // are shown for their REASON, never chosen, so they stay out of the walk.
@@ -265,6 +334,8 @@ export function ModelBand({
     abilities: abilitiesLine(row.model.capabilityFacts.caps),
     notes: row.descriptions,
     usedBy: usedByOf(routes, row.roles),
+    // #490: the picker names no role.
+    showRoles: golem === undefined,
   });
 
   /**
@@ -499,10 +570,12 @@ export function ModelBand({
   // Leaving the declare fieldset returns the caret to the filter it was opened
   // from (§4.4).
   const wasManual = useRef(manual !== null);
+  // The picker never opens the declare form, so leaving one is a card click there.
+  const declares = golem === undefined;
   useEffect(() => {
-    if (wasManual.current && manual === null) filterRef.current?.focus();
+    if (declares && wasManual.current && manual === null) filterRef.current?.focus();
     wasManual.current = manual !== null;
-  }, [manual]);
+  }, [manual, declares]);
 
   /**
    * What the strip READS OUT. Preview follows keyboard focus, so the left half
@@ -516,7 +589,7 @@ export function ModelBand({
   const previewEntry = previewing ? matches[activeIndex] : undefined;
   /** A walked card: its row, plus the floor IT would meet — asked once per render. */
   const previewed =
-    previewEntry === undefined || sameModel(selected, previewEntry.model)
+    previewEntry === undefined || same(selected, previewEntry.model)
       ? undefined
       : { ...previewEntry, shape: preview(previewEntry.model) };
   const previewingOther = previewed !== undefined;
@@ -537,7 +610,7 @@ export function ModelBand({
     previewed?.descriptions ??
     (detail === null
       ? []
-      : (judged.find((row) => sameModel(detail, row.model))?.descriptions ??
+      : (judged.find((row) => same(detail, row.model))?.descriptions ??
         (detail.description === undefined
           ? []
           : [{ role: detail.role, description: detail.description }])));
@@ -638,8 +711,16 @@ export function ModelBand({
       }}
     >
       <div className={styles.bandHead}>
-        <span className={styles.fieldLabel}>{`Model — every card below can serve ${useCase}`}</span>
-        <span className={styles.bandFilter}>{filterLabel}</span>
+        {golem === undefined ? (
+          <>
+            <span
+              className={styles.fieldLabel}
+            >{`Model — every card below can serve ${useCase}`}</span>
+            <span className={styles.bandFilter}>{filterLabel}</span>
+          </>
+        ) : (
+          <span className={styles.bandFilter}>{`Golem needs ${GOLEM_FLOOR.join(' · ')}`}</span>
+        )}
         <span className={styles.grow} />
         {/* SLICE D: the "Refresh list" affordance lands here, explicit-only
             (RefreshInventory, contract b241d01). Nothing renders today. */}
@@ -656,7 +737,7 @@ export function ModelBand({
           value={provider}
           onChange={(event) => onProviderChange(event.target.value)}
         >
-          <option value="">Choose a provider</option>
+          <option value="">{golem === undefined ? 'Choose a provider' : 'All providers'}</option>
           {providers.map((entry) => (
             <option key={entry.name} value={entry.name}>
               {entry.name}
@@ -671,7 +752,11 @@ export function ModelBand({
           className={styles.input}
           id={`${id}-filter`}
           autoComplete="off"
-          placeholder="Filter models — or type a new name to declare it"
+          placeholder={
+            golem === undefined
+              ? 'Filter models — or type a new name to declare it'
+              : 'Filter models'
+          }
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -681,11 +766,17 @@ export function ModelBand({
         />
       </div>
 
+      {golem !== undefined && (
+        <span id={`${id}-can`} className={styles.bandGroup}>
+          Can run Golem
+        </span>
+      )}
       <div
         ref={gridRef}
         id={gridId}
         role="listbox"
-        aria-label={`Models for ${useCase}`}
+        aria-label={golem === undefined ? `Models for ${useCase}` : undefined}
+        aria-labelledby={golem === undefined ? undefined : `${id}-can`}
         className={styles.modelGrid}
         onKeyDown={onGridKeyDown}
         // The grid is the bounded scroller: its scroll CLIPS the anchor instead
@@ -716,7 +807,7 @@ export function ModelBand({
         }}
       >
         {matches.map((row, index) => {
-          const chosen = sameModel(selected, row.model);
+          const chosen = same(selected, row.model);
           const key = rowKey(row.model);
           const facts = factsLine(row.model);
           const abilities = abilitiesLine(row.model.capabilityFacts.caps);
@@ -810,9 +901,19 @@ export function ModelBand({
               }}
             >
               <span className={styles.modelCardTop}>
-                <span className={styles.modelName}>{row.model.modelName}</span>
-                {chosen && <span className={styles.modelCardMark}>assigned</span>}
+                <span className={styles.modelName} data-model-name>
+                  {row.model.modelName}
+                </span>
+                {golem === undefined
+                  ? chosen && <span className={styles.modelCardMark}>assigned</span>
+                  : same(golem.current, row.model) && (
+                      <span className={styles.modelCardMark}>current</span>
+                    )}
               </span>
+              {/* #490: the picker lists every provider, so each card names its own. */}
+              {golem !== undefined && (
+                <span className={styles.modelCardProvider}>{row.model.provider}</span>
+              )}
               {/*
                * Two or three lines, each ONE line: the numbers when there are
                * any, the abilities otherwise, then the note — so a card never
@@ -854,7 +955,8 @@ export function ModelBand({
           </div>
         )}
 
-        {showHidden &&
+        {golem === undefined &&
+          showHidden &&
           blocked.map((row) => (
             <div
               key={rowKey(row.model)}
@@ -865,7 +967,9 @@ export function ModelBand({
               className={`${styles.modelCard} ${styles.modelCardBlocked}`}
             >
               <span className={styles.modelCardTop}>
-                <span className={styles.modelName}>{row.model.modelName}</span>
+                <span className={styles.modelName} data-model-name>
+                  {row.model.modelName}
+                </span>
                 <span className={styles.modelCardFacts}>{shortfallLine(row.short)}</span>
               </span>
               <span className={styles.modelCardMeta}>
@@ -956,9 +1060,25 @@ export function ModelBand({
           : ''}
       </span>
 
-      {matches.length === 0 && !declaring && (
+      {golem === undefined && matches.length === 0 && !declaring && (
         <p className={styles.fieldHint}>
           No defined model meets this filter. Type a name above to declare one by hand.
+        </p>
+      )}
+
+      {/* #490: the picker offers models already in the file. A name it does not
+          list goes to Shared configuration, where the agent route editor can
+          declare it. #496 replaces this with Add by exact name. */}
+      {golem !== undefined && unlisted && (
+        <p className={styles.fieldHint} data-testid="golem-not-listed">
+          {'Not listed? '}
+          <button
+            type="button"
+            className={`${styles.button} ${styles.small} ${styles.quiet}`}
+            onClick={() => golem.onNotListed(query.trim())}
+          >
+            Add it in Shared configuration
+          </button>
         </p>
       )}
 
@@ -973,7 +1093,20 @@ export function ModelBand({
         data-testid="model-detail"
         data-state={detailState}
       >
-        {manual !== null ? (
+        {manual !== null && golem !== undefined ? (
+          // [#490] A hand declaration staged in Shared configuration reads
+          // back here, read-only: the picker offers models already in the file.
+          <>
+            <div className={styles.detailHead}>
+              <span className={styles.detailName}>{manual.model}</span>
+              <span className={styles.grow} />
+              <span className={styles.detailOwner}>declared in Shared configuration</span>
+            </div>
+            <p className={styles.fieldHint}>
+              Choose a model above, or change this one in Shared configuration.
+            </p>
+          </>
+        ) : manual !== null ? (
           <>
             <div className={styles.detailHead}>
               <span className={styles.detailName}>
@@ -998,7 +1131,11 @@ export function ModelBand({
             )}
           </>
         ) : detail === null ? (
-          'No model assigned. Select a card above — its facts and the exposure editor land here, together.'
+          golem === undefined ? (
+            'No model assigned. Select a card above — its facts and the exposure editor land here, together.'
+          ) : (
+            'Choose a model above.'
+          )
         ) : (
           <>
             <div className={styles.detailHead}>
@@ -1007,8 +1144,10 @@ export function ModelBand({
               {/* ASSIGNED is the route's actual model; a preview says so instead. */}
               {previewingOther ? (
                 <span className={styles.detailHint}>press Enter to choose</span>
-              ) : (
+              ) : golem === undefined ? (
                 <span className={styles.modelCardMark}>assigned</span>
+              ) : (
+                same(golem.current, detail) && <span className={styles.modelCardMark}>current</span>
               )}
               {detailFacts !== '' && <span className={styles.detailFacts}>{detailFacts}</span>}
               {/* Who already routes to this card — a PREVIEW's reading. An
@@ -1022,7 +1161,13 @@ export function ModelBand({
             </div>
 
             <div className={styles.detailBody}>
-              {previewed === undefined ? (
+              {golem !== undefined ? (
+                // #490: the summary and Details for whichever card the strip reads.
+                golem.strip(
+                  detail,
+                  models.filter((model) => same(detail, model))
+                )
+              ) : previewed === undefined ? (
                 /*
                  * Bound to the SELECTION (or the hand declaration), never to a
                  * preview: editing exposure you have not chosen would stage a
@@ -1052,7 +1197,7 @@ export function ModelBand({
               {/* The note in full, whichever state the body is in. */}
               {detailNotes.map((note) => (
                 <p key={note.role} className={styles.detailNote}>
-                  {detailNotes.length > 1 && (
+                  {golem === undefined && detailNotes.length > 1 && (
                     <span className={styles.detailNoteRole}>{note.role}</span>
                   )}
                   {note.description}
@@ -1063,7 +1208,39 @@ export function ModelBand({
         )}
       </div>
 
-      {blocked.length > 0 && (
+      {/* #490: the picker's folded group, each model with its reason as text.
+          Not options: nothing here can be chosen, so they sit outside the listbox. */}
+      {golem !== undefined && shownBlocked.length > 0 && (
+        <>
+          <button
+            type="button"
+            className={styles.hiddenLine}
+            aria-expanded={showHidden}
+            aria-controls={`${id}-cannot`}
+            onClick={() => setShowHidden((current) => !current)}
+          >
+            {`${shownBlocked.length} can't run Golem`}
+          </button>
+          <ul id={`${id}-cannot`} className={styles.cannotList} hidden={!showHidden}>
+            {shownBlocked.map((row) => {
+              const verdict = row.verdict;
+              return (
+                <li key={rowKey(row.model)} className={styles.cannotItem}>
+                  <span className={styles.modelName} data-model-name>
+                    {row.model.modelName}
+                  </span>
+                  <span className={styles.modelCardProvider}>{row.model.provider}</span>
+                  <span className={styles.cannotReason} data-reason>
+                    {verdict.eligible ? '' : verdict.reason}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+
+      {golem === undefined && blocked.length > 0 && (
         <button
           type="button"
           className={styles.hiddenLine}

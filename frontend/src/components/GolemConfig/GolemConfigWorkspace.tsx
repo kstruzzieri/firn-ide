@@ -107,9 +107,11 @@ import {
   SOURCE_LOADING_ID,
   SOURCE_PICKER_ID,
 } from './SourcePicker';
+import { GOLEM_CHANGE_ID, GOLEM_ROW_KEY, GolemModelCard } from './GolemModelCard';
+import { GOLEM_USE_CASE } from './golemModel';
 import { ProvidersCard } from './ProvidersCard';
 import { RoutingCard } from './RoutingCard';
-import { routingOwnsDiagnostic } from './routingRows';
+import { routeRowKey, routingOwnsDiagnostic } from './routingRows';
 import { StatusText, type StatusTone } from './StatusText';
 
 const STATE_LABEL: Record<SettingsProjection['state'], string> = {
@@ -190,6 +192,19 @@ const DOCUMENT_CONFLICT =
  */
 const CHALLENGE_CONFLICT =
   'The destination approval no longer matches this request, so nothing was written and the approval was cancelled. Re-stage each retained change, then apply again to approve the destination once more.';
+/** [#490] Why the Golem model and Shared configuration cannot be edited here. */
+const GOLEM_READ_ONLY =
+  "This configuration is read-only in Firn, so Golem's model can't be changed here. The notices above say why.";
+const SHARED_READ_ONLY =
+  "This configuration is read-only in Firn, so its routes can't be edited here. The notices above say why.";
+/**
+ * [#490] The picker and the agent route editor both stage `route:agent`.
+ * Neither replaces the other's unfinished input: it asks for it first.
+ */
+const GOLEM_BLOCKED_BY_SHARED =
+  'There are unfinished changes to this route in Shared configuration. Stage or cancel them there first.';
+const SHARED_BLOCKED_BY_GOLEM =
+  'The Golem model picker has a model chosen but not used. Use it or cancel it under Golem model first.';
 const BOOTSTRAP_GATE =
   'A blank configuration needs one provider and an agent route that meets chat, stream, and tool_call.';
 
@@ -264,6 +279,9 @@ const SOURCE_ONLY_BODY =
 const CANCEL_GRANT_TITLE = 'Cancel the pending approval?';
 const CANCEL_GRANT_BODY = 'The destination approval is cancelled. Nothing staged is dropped.';
 const CANCEL_GRANT_CONFIRM = 'Cancel approval';
+
+/** [#490] The control a write was started from. */
+type ApplyOrigin = 'page' | 'golem';
 
 type Phase =
   | { kind: 'loading' }
@@ -387,6 +405,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       (announcement.text === APPLIED || announcement.text === APPLIED_UNCERTAIN) &&
       document.activeElement === document.body
     ) {
+      // [#490] After Use model applies, the picker closes and focus returns to Change.
+      if (applyOriginRef.current === 'golem') {
+        document.getElementById(GOLEM_CHANGE_ID)?.focus();
+        return;
+      }
       const source = document.getElementById(SOURCE_PICKER_ID);
       // An overlapping profile Save can still disable Source after Apply ends.
       // The stable heading can take focus immediately, without a later retry.
@@ -410,6 +433,26 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const sendingRef = useRef(false);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [focusRequest, setFocusRequest] = useState<EditorFocusRequest | null>(null);
+  /**
+   * [#490] The Golem model picker and the Shared configuration fold. Page
+   * state: both outlive the card remount every lock and reset causes.
+   */
+  const [golemOpen, setGolemOpen] = useState(false);
+  const [sharedOpen, setSharedOpen] = useState(false);
+  /**
+   * [#490] Which control started the write the outcome belongs to: the page's
+   * Apply, or the picker's Use model, whose refusal or challenge shows in the
+   * picker. The ref is what `receive` reads: it runs in a closure from before
+   * the write.
+   */
+  const [applyOrigin, setApplyOriginState] = useState<ApplyOrigin>('page');
+  const applyOriginRef = useRef<ApplyOrigin>('page');
+  const setApplyOrigin = (origin: ApplyOrigin): void => {
+    applyOriginRef.current = origin;
+    setApplyOriginState(origin);
+  };
+  /** [#490] Use model staged its change; Apply runs once that draft has committed. */
+  const [golemApplyPending, setGolemApplyPending] = useState(false);
 
   /** The exact request Confirm and Retry resend: Call 1 retained none of it. */
   const pendingRequestRef = useRef<SettingsApplyRequest | null>(null);
@@ -978,6 +1021,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const receive = (result: SettingsApplyResult): void => {
     switch (result.status) {
       case 'applied':
+        if (applyOriginRef.current === 'golem') setGolemOpen(false);
         settle(
           { kind: 'result', result },
           { notice: result.warning === undefined ? APPLIED : APPLIED_UNCERTAIN }
@@ -1063,8 +1107,14 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     );
   };
 
-  const apply = () => {
+  /**
+   * The page's Apply, and [#490] the picker's Use model: one write path, one
+   * request built from the whole draft. Use model runs it only when the
+   * draft holds nothing but the picker's change (`golemApplies`).
+   */
+  const apply = (origin: ApplyOrigin = 'page') => {
     if (body === null) return;
+    setApplyOrigin(origin);
     let request: SettingsApplyRequest;
     try {
       request = buildApplyRequest({ routes: body.routes, models: body.models }, draft, vault, mode);
@@ -1134,6 +1184,8 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   /** Call 1, fresh on every click: there is no subscription to keep it warm. */
   const approveDestinations = (): void => {
+    // [#490] The page's own flow: its prompt never lands in the picker.
+    setApplyOrigin('page');
     setGrantNotice('');
     sendGrants(() => PrepareGolemDestinationGrants(), null);
   };
@@ -1164,8 +1216,40 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       return;
     }
     const request = pendingRequestRef.current;
-    if (request === null) apply();
+    if (request === null) apply(applyOriginRef.current);
     else dispatchRequest(request);
+  };
+
+  // [#490] Use model: the change is staged in the same event, so Apply runs
+  // after that draft commits. The ref reads this render's `apply`.
+  const applyRef = useRef(apply);
+  applyRef.current = apply;
+  useEffect(() => {
+    if (!golemApplyPending) return;
+    setGolemApplyPending(false);
+    // Checked again on the committed draft: exactly the picker's one change,
+    // or nothing is sent and the page's Apply takes it from here.
+    const { changes, source } = draftRef.current;
+    if (
+      source.kind !== 'applied' ||
+      changes.length !== 1 ||
+      changeStableID(changes[0]) !== `route:${GOLEM_USE_CASE}`
+    )
+      return;
+    applyRef.current('golem');
+  }, [golemApplyPending]);
+
+  /**
+   * Opens the editor a change belongs to. Route and defined-model rows live
+   * in Shared configuration, so it unfolds first (#490).
+   */
+  const requestEditor = (changeId: string, query?: string): void => {
+    if (changeId.startsWith('route:') || changeId.startsWith('role:')) setSharedOpen(true);
+    setFocusRequest((current) => ({
+      changeId,
+      nonce: (current?.nonce ?? 0) + 1,
+      ...(query === undefined ? {} : { query }),
+    }));
   };
 
   const cancelDestination = async () => {
@@ -1183,7 +1267,23 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    * resent on their behalf. The change is answered where it stands: moving it
    * to the end would make it its selector group's authority.
    */
+  /**
+   * [#490] Restaging a drop set rewrites the agent route's staged change,
+   * which re-seeds both editors of that route; while either holds unfinished
+   * input, the panel says so instead of discarding it. '' when it may run.
+   */
+  const dropsBlocked: string = !(outcome.drops ?? []).some(
+    (set) => set.changeId === `route:${GOLEM_USE_CASE}`
+  )
+    ? ''
+    : unstagedEditors.has(GOLEM_ROW_KEY)
+      ? SHARED_BLOCKED_BY_GOLEM
+      : unstagedEditors.has(routeRowKey(GOLEM_USE_CASE))
+        ? GOLEM_BLOCKED_BY_SHARED
+        : '';
+
   const restageDrops = () => {
+    if (dropsBlocked !== '') return;
     const sets = outcome.drops ?? [];
     setDraft((current) =>
       replaceStagedChanges(
@@ -1329,6 +1429,25 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const canEdit =
     body !== null && body.state === 'ready' && body.editable && !body.readOnly && !locked;
 
+  /**
+   * [#490] Editing the Golem model and the routes needs a writable document.
+   * A transient lock (a write, a challenge) is not a reason to show: the
+   * picker shows the write itself.
+   */
+  const documentLocked =
+    body !== null && (body.state !== 'ready' || !body.editable || body.readOnly);
+  /**
+   * [#490] Use model applies in one step only when nothing is staged on the
+   * page and no other editor holds unstaged edits, so the request carries the
+   * picker's change and nothing else — not even an earlier edit to the agent
+   * route the picker would otherwise re-send. Otherwise it reads Done.
+   */
+  const golemApplies =
+    draft.source.kind === 'applied' &&
+    draft.changes.length === 0 &&
+    draft.needsReview.length === 0 &&
+    [...unstagedEditors].every((key) => key === GOLEM_ROW_KEY);
+
   // A provider a defined model still references cannot be removed.
   const usedProviders = body?.models.map((entry) => entry.provider) ?? [];
   // Providers this draft is creating, projected from the staged adds. The
@@ -1351,11 +1470,17 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   // that row (§4.3b, §4.3); one naming an entity this projection does not show
   // stays here, where it is still readable. Apply-result diagnostics route by
   // the same (subjectKind, subjectName) tuple as loaded ones.
-  const diagnostics = [...(body?.diagnostics ?? []), ...outcome.diagnostics];
+  //
+  // [#490] A write Use model started reports in the picker while it is open:
+  // its result diagnostics render there, not in the rows or the page list.
+  const golemOutcome = applyOrigin === 'golem' && golemOpen;
+  const diagnostics = [...(body?.diagnostics ?? []), ...(golemOutcome ? [] : outcome.diagnostics)];
   const providerRows = new Set(body?.providers.map((entry) => entry.name) ?? []);
+  // A route row owns its diagnostic only while Shared configuration shows it:
+  // a folded section never hides a reason.
   const ownedByRow = (diagnostic: SettingsDiagnostic): boolean =>
     (diagnostic.subjectKind === 'provider' && providerRows.has(diagnostic.subjectName)) ||
-    routingOwnsDiagnostic(body?.routes ?? [], diagnostic);
+    (sharedOpen && routingOwnsDiagnostic(body?.routes ?? [], diagnostic));
   const pageDiagnostics = diagnostics.filter((entry) => !ownedByRow(entry));
 
   // A profile source with no row changes is a complete write on its own — the
@@ -1449,6 +1574,182 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     await start();
     setBootstrapFocusPending(true);
   };
+
+  /**
+   * Every panel a write leaves behind. [#490] Use model's refusal or challenge
+   * shows in the picker, with the result's diagnostics beside it.
+   */
+  const outcomeBlock = (
+    <>
+      {/*
+       * The result of the last write, rendered where the control that
+       * caused it lives. Above the cards these sat one or two screens up:
+       * on a real configuration the Apply button is at the bottom of a
+       * scrolled page, so every outcome — applied, busy, conflict, or a
+       * local refusal — landed out of view and Apply read as doing nothing.
+       */}
+      {outcome.challenge !== null && (
+        // [C27] No data-tone here: `.panel[data-tone='caution']` (0,2,0) would beat `.grant`
+        // (0,1,0) whatever the source order, and the approved prompt is accent-outlined.
+        <div className={`${styles.panel} ${styles.grant}`} role="alert">
+          <div className={styles.grantHead}>
+            <h3 className={styles.grantTitle}>
+              {outcome.intent === 'grant-only' ? 'Approve destinations' : 'Approve before writing'}
+            </h3>
+            <Countdown expiresAt={outcome.challenge.expiresAt} />
+          </div>
+          <p className={styles.panelText}>
+            {outcome.intent === 'grant-only'
+              ? GRANT_PROMPT_EXPLAINER
+              : `${promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a settings approval, separate from run approval.`}
+          </p>
+          {/* One row per destination in the digest order the backend sent:
+            provider · model · endpoint · class, the class as the row's
+            fourth cell rather than a repeated sentence. [C1] It reads the
+            parsed `classification` rather than repeating the word: the
+            parser refuses any other value (`readApplyDestination`), so the
+            cell now says so by construction instead of by coincidence. */}
+          <ul className={styles.grantList}>
+            {outcome.challenge.destinations.map((destination) => (
+              // [C29] The shipped key, verbatim: NUL-separated, because spaces are legal in identifiers.
+              <li
+                key={`${destination.endpoint}\u0000${destination.provider}\u0000${destination.model}`}
+              >
+                <span className={styles.grantProvider}>{destination.provider}</span>
+                <span className={styles.identifier}>
+                  {destination.model !== '' ? (
+                    destination.model
+                  ) : (
+                    <span className={styles.absent}>—</span>
+                  )}
+                </span>
+                <span className={styles.grantEndpoint}>{destination.endpoint}</span>
+                <span className={styles.grantClass}>{destination.classification}</span>
+                <span
+                  className={styles.metaSub}
+                >{`Reached by ${destination.provenance.join(', ')}`}</span>
+              </li>
+            ))}
+          </ul>
+          <div className={`${styles.panelActions} ${styles.grantActions}`}>
+            <button
+              type="button"
+              className={`${styles.button} ${styles.quiet}`}
+              disabled={inFlight || sourceLoading || sending}
+              onClick={() => void cancelDestination()}
+            >
+              {outcome.intent === 'grant-only' ? 'Cancel' : 'Cancel approval'}
+            </button>
+            <button
+              type="button"
+              className={`${styles.button} ${styles.primary}`}
+              disabled={inFlight || sourceLoading || sending}
+              onClick={confirmDestination}
+            >
+              {outcome.intent === 'grant-only'
+                ? `Approve ${outcome.challenge.destinations.length} destination${outcome.challenge.destinations.length === 1 ? '' : 's'}`
+                : 'Confirm destination'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {outcome.drops !== null && (
+        <div className={styles.panel} data-tone="caution">
+          <p className={styles.panelText}>
+            These changes remove model-specific settings the file authors. Confirm the exact set and
+            the changes are re-staged with it; nothing is written until you Apply.
+          </p>
+          {dropsBlocked !== '' && (
+            <p id="golem-config-drops-blocked" className={styles.panelText}>
+              {dropsBlocked}
+            </p>
+          )}
+          <ul className={styles.dropList}>
+            {outcome.drops.map((drop) => (
+              <li key={drop.changeId} className={styles.panelText}>
+                {`${drop.changeId} → ${drop.fields.join(', ')}`}
+              </li>
+            ))}
+          </ul>
+          <div className={styles.panelActions}>
+            <button
+              type="button"
+              className={`${styles.button} ${styles.primary}`}
+              disabled={inFlight || sourceLoading || sending || dropsBlocked !== ''}
+              aria-describedby={dropsBlocked !== '' ? 'golem-config-drops-blocked' : undefined}
+              onClick={restageDrops}
+            >
+              Confirm and restage
+            </button>
+          </div>
+        </div>
+      )}
+
+      {outcome.conflict !== null && (
+        <div className={styles.panel} data-tone="blocking" role="alert">
+          <p className={styles.panelText}>
+            {outcome.conflict === 'challenge' ? CHALLENGE_CONFLICT : DOCUMENT_CONFLICT}
+          </p>
+          <div className={styles.panelActions}>
+            <button
+              type="button"
+              className={styles.button}
+              disabled={sending || inFlight || sourceLoading}
+              onClick={() => void reviewConflict()}
+            >
+              {outcome.conflict === 'challenge' ? 'Return to draft' : 'Reload & review draft'}
+            </button>
+            <button
+              type="button"
+              className={`${styles.button} ${styles.quiet}`}
+              disabled={sending || inFlight || sourceLoading}
+              onClick={() => void discardConflict()}
+            >
+              Discard draft
+            </button>
+          </div>
+        </div>
+      )}
+
+      {outcome.notice !== '' && <p className={styles.notice}>{outcome.notice}</p>}
+
+      {outcome.busy && (
+        <div className={styles.panelActions}>
+          <button
+            type="button"
+            className={styles.button}
+            disabled={inFlight || sourceLoading || sending}
+            onClick={retry}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {golemOutcome && outcome.diagnostics.length > 0 && (
+        <ul className={styles.diagnostics} aria-label="Why the model was not applied">
+          {outcome.diagnostics.map((diagnostic, index) => {
+            const { text, subject } = formatSettingsDiagnostic(
+              diagnostic.code,
+              diagnostic.subjectKind,
+              diagnostic.subjectName
+            );
+            return (
+              <li
+                key={`${diagnostic.code}-${diagnostic.subjectKind}-${diagnostic.subjectName}-${index}`}
+                className={styles.diagnostic}
+                data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
+              >
+                <span className={styles.diagnosticText}>
+                  {subject === '' ? text : `${text} — ${subject}`}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
+  );
 
   return (
     <div className={styles.root}>
@@ -1763,12 +2064,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                                     ? `Jump to the ${jump} route and open its editor`
                                     : 'Editing is unavailable while this configuration cannot be changed.'
                                 }
-                                onClick={() =>
-                                  setFocusRequest((current) => ({
-                                    changeId: `route:${jump}`,
-                                    nonce: (current?.nonce ?? 0) + 1,
-                                  }))
-                                }
+                                onClick={() => requestEditor(`route:${jump}`)}
                               >
                                 {subject}
                               </button>
@@ -1849,6 +2145,31 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               </section>
             ) : (
               <>
+                <GolemModelCard
+                  // A document move re-derives the picker; a lock only hides
+                  // it (it is unmounted while the surface is not editable).
+                  key={`golem-${draftEpoch}:${projection.revision ?? ''}`}
+                  routes={body.routes}
+                  models={body.models}
+                  providers={routableProviders}
+                  draft={draft}
+                  changes={projected.changes}
+                  editable={canEdit}
+                  lockReason={documentLocked ? GOLEM_READ_ONLY : ''}
+                  open={golemOpen}
+                  onToggle={() => setGolemOpen((current) => !current)}
+                  onClose={() => setGolemOpen(false)}
+                  applies={golemApplies}
+                  applying={golemApplyPending || sending}
+                  outcome={golemOutcome ? outcomeBlock : undefined}
+                  onStage={stage}
+                  onUnstagedChange={noteUnstaged}
+                  onUse={() => setGolemApplyPending(true)}
+                  onNotListed={(name) => requestEditor(`route:${GOLEM_USE_CASE}`, name)}
+                  stageBlocked={
+                    unstagedEditors.has(routeRowKey(GOLEM_USE_CASE)) ? GOLEM_BLOCKED_BY_SHARED : ''
+                  }
+                />
                 <ProvidersCard
                   // Remount when the surface locks and on every document the open
                   // editors could be diffing against. An editor derives its fields
@@ -1891,151 +2212,22 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                   focusRequest={focusRequest}
                   onStage={stage}
                   onUnstagedChange={noteUnstaged}
+                  open={sharedOpen}
+                  onToggle={() => setSharedOpen((current) => !current)}
+                  lockReason={documentLocked ? SHARED_READ_ONLY : ''}
+                  agentStageBlocked={
+                    unstagedEditors.has(GOLEM_ROW_KEY) ? SHARED_BLOCKED_BY_GOLEM : ''
+                  }
                 />
               </>
             )}
 
             {/*
              * The result of the last write, rendered where the control that
-             * caused it lives. Above the cards these sat one or two screens up:
-             * on a real configuration the Apply button is at the bottom of a
-             * scrolled page, so every outcome — applied, busy, conflict, or a
-             * local refusal — landed out of view and Apply read as doing nothing.
+             * caused it lives: here, under the cards, for the page's Apply;
+             * in the picker for Use model (#490).
              */}
-            {outcome.challenge !== null && (
-              // [C27] No data-tone here: `.panel[data-tone='caution']` (0,2,0) would beat `.grant`
-              // (0,1,0) whatever the source order, and the approved prompt is accent-outlined.
-              <div className={`${styles.panel} ${styles.grant}`} role="alert">
-                <div className={styles.grantHead}>
-                  <h3 className={styles.grantTitle}>
-                    {outcome.intent === 'grant-only'
-                      ? 'Approve destinations'
-                      : 'Approve before writing'}
-                  </h3>
-                  <Countdown expiresAt={outcome.challenge.expiresAt} />
-                </div>
-                <p className={styles.panelText}>
-                  {outcome.intent === 'grant-only'
-                    ? GRANT_PROMPT_EXPLAINER
-                    : `${promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a settings approval, separate from run approval.`}
-                </p>
-                {/* One row per destination in the digest order the backend sent:
-                    provider · model · endpoint · class, the class as the row's
-                    fourth cell rather than a repeated sentence. [C1] It reads the
-                    parsed `classification` rather than repeating the word: the
-                    parser refuses any other value (`readApplyDestination`), so the
-                    cell now says so by construction instead of by coincidence. */}
-                <ul className={styles.grantList}>
-                  {outcome.challenge.destinations.map((destination) => (
-                    // [C29] The shipped key, verbatim: NUL-separated, because spaces are legal in identifiers.
-                    <li
-                      key={`${destination.endpoint}\u0000${destination.provider}\u0000${destination.model}`}
-                    >
-                      <span className={styles.grantProvider}>{destination.provider}</span>
-                      <span className={styles.identifier}>
-                        {destination.model !== '' ? (
-                          destination.model
-                        ) : (
-                          <span className={styles.absent}>—</span>
-                        )}
-                      </span>
-                      <span className={styles.grantEndpoint}>{destination.endpoint}</span>
-                      <span className={styles.grantClass}>{destination.classification}</span>
-                      <span
-                        className={styles.metaSub}
-                      >{`Reached by ${destination.provenance.join(', ')}`}</span>
-                    </li>
-                  ))}
-                </ul>
-                <div className={`${styles.panelActions} ${styles.grantActions}`}>
-                  <button
-                    type="button"
-                    className={`${styles.button} ${styles.quiet}`}
-                    disabled={inFlight || sourceLoading || sending}
-                    onClick={() => void cancelDestination()}
-                  >
-                    {outcome.intent === 'grant-only' ? 'Cancel' : 'Cancel approval'}
-                  </button>
-                  <button
-                    type="button"
-                    className={`${styles.button} ${styles.primary}`}
-                    disabled={inFlight || sourceLoading || sending}
-                    onClick={confirmDestination}
-                  >
-                    {outcome.intent === 'grant-only'
-                      ? `Approve ${outcome.challenge.destinations.length} destination${outcome.challenge.destinations.length === 1 ? '' : 's'}`
-                      : 'Confirm destination'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {outcome.drops !== null && (
-              <div className={styles.panel} data-tone="caution">
-                <p className={styles.panelText}>
-                  These changes remove model-specific settings the file authors. Confirm the exact
-                  set and the changes are re-staged with it; nothing is written until you Apply.
-                </p>
-                <ul className={styles.dropList}>
-                  {outcome.drops.map((drop) => (
-                    <li key={drop.changeId} className={styles.panelText}>
-                      {`${drop.changeId} → ${drop.fields.join(', ')}`}
-                    </li>
-                  ))}
-                </ul>
-                <div className={styles.panelActions}>
-                  <button
-                    type="button"
-                    className={`${styles.button} ${styles.primary}`}
-                    disabled={inFlight || sourceLoading || sending}
-                    onClick={restageDrops}
-                  >
-                    Confirm and restage
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {outcome.conflict !== null && (
-              <div className={styles.panel} data-tone="blocking" role="alert">
-                <p className={styles.panelText}>
-                  {outcome.conflict === 'challenge' ? CHALLENGE_CONFLICT : DOCUMENT_CONFLICT}
-                </p>
-                <div className={styles.panelActions}>
-                  <button
-                    type="button"
-                    className={styles.button}
-                    disabled={sending || inFlight || sourceLoading}
-                    onClick={() => void reviewConflict()}
-                  >
-                    {outcome.conflict === 'challenge' ? 'Return to draft' : 'Reload & review draft'}
-                  </button>
-                  <button
-                    type="button"
-                    className={`${styles.button} ${styles.quiet}`}
-                    disabled={sending || inFlight || sourceLoading}
-                    onClick={() => void discardConflict()}
-                  >
-                    Discard draft
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {outcome.notice !== '' && <p className={styles.notice}>{outcome.notice}</p>}
-
-            {outcome.busy && (
-              <div className={styles.panelActions}>
-                <button
-                  type="button"
-                  className={styles.button}
-                  disabled={inFlight || sourceLoading || sending}
-                  onClick={retry}
-                >
-                  Retry
-                </button>
-              </div>
-            )}
+            {!golemOutcome && outcomeBlock}
 
             {isDraftDirty(draft) && !recovery && (
               <ApplyBar
@@ -2046,11 +2238,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 blocked={blocked}
                 locked={locked}
                 discardLocked={inFlight || sourceLoading || sending || recovery}
-                onApply={apply}
+                onApply={() => apply('page')}
                 onDiscard={() => void discard()}
-                onOpenChange={(changeId) =>
-                  setFocusRequest((current) => ({ changeId, nonce: (current?.nonce ?? 0) + 1 }))
-                }
+                onOpenChange={(changeId) => requestEditor(changeId)}
                 onOpenSource={() => setSourceOpen((current) => !current)}
               />
             )}
