@@ -881,3 +881,35 @@ describe('a read-only configuration', () => {
     expect(screen.queryByRole('button', { name: /Assign/ })).toBeNull();
   });
 });
+
+describe('passive selector updates in the Golem picker', () => {
+  it('keeps Apply available when another route changes the untouched picker’s capabilities', async () => {
+    const reload = hybrid();
+    const models = reload.projection.models as Array<Record<string, unknown>>;
+    const fast = { ...models.find((model) => model.role === 'fast')! };
+    delete fast.fallbacks;
+    reload.projection.models = [
+      { ...fast, routedUseCases: ['agent'] },
+      { ...fast, role: 'shared-current', routedUseCases: ['chat'] },
+    ];
+    reload.projection.routes = [
+      { useCase: 'agent', role: 'fast' },
+      { useCase: 'chat', role: 'shared-current' },
+    ];
+    await mount(reload);
+    await openPicker();
+    await userEvent.click(changeButton());
+    await userEvent.click(sharedToggle());
+    await userEvent.click(screen.getByRole('button', { name: 'Edit route chat' }));
+    const editor = screen.getByRole('group', { name: 'Route chat' });
+    await userEvent.click(within(editor).getByLabelText(/^thinking/));
+    await userEvent.selectOptions(within(editor).getByLabelText('Think mode'), 'always');
+    await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+
+    expect(screen.getByText('1 staged change')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled();
+    const fold = await openPicker();
+    expect(within(fold).getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(within(fold).queryByRole('button', { name: 'Done' })).toBeNull();
+  });
+});

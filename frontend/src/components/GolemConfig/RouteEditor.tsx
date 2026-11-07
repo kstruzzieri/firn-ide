@@ -974,7 +974,8 @@ export function RouteEditor({
     ackDrops: seed.ackDrops && drops.length > 0,
   });
   const now = asked({ provider, defined, manual, exposed, think, ackUnknown, ackDrops });
-  const was = asked(baseline);
+  // The picker cannot edit exposure or Think; adopting them never holds Apply.
+  const was = asked(golem === undefined ? baseline : { ...baseline, exposed, think });
   /**
    * What Done would stage that the row does not hold, in words, for the
    * footer — and the one fact the Done/Cancel offer reads (routeEdit.ts), so
