@@ -20,7 +20,7 @@ import { useGitStore, GIT_REFRESH_DEBOUNCE_MS } from '../stores/gitStore';
 import { GitStatus } from '../wails/bindings';
 import { resetLSPDocumentSyncState } from '../utils/lspDocumentSync';
 import { ReadDirectoryShallow } from '../wails/bindings';
-import { __resetEnsurePathLoaded } from '../hooks/useEnsurePathLoaded';
+import { __resetEnsurePathLoaded, ensurePathLoaded } from '../hooks/useEnsurePathLoaded';
 import type { FileEvent } from '../types/watcher';
 import { EventsOn } from '../wails/runtime';
 
@@ -317,6 +317,58 @@ describe('App — surgical watcher reconcile', () => {
 
     expect(ReadDirectoryShallow).toHaveBeenCalledTimes(1);
     expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/data', '/r');
+  });
+
+  // A folder whose first read is still in flight has no children yet, and
+  // that read may predate the change the event reports. Dropping the event
+  // (as for a never-loaded folder) would let the old listing stand.
+  it('re-reads a folder whose first read was in flight when the event came', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [unloadedDir('/r/data')],
+        expandedPaths: new Set(['/r/data']),
+        isRootExpanded: true,
+      });
+    });
+    const stale = { name: 'a.csv', path: '/r/data/a.csv', isDir: false } as FileEntry;
+    const fresh = { name: 'b.csv', path: '/r/data/b.csv', isDir: false } as FileEntry;
+    let resolveFirst!: (entries: FileEntry[]) => void;
+    (ReadDirectoryShallow as jest.Mock).mockReset();
+    (ReadDirectoryShallow as jest.Mock)
+      .mockReturnValueOnce(
+        new Promise<FileEntry[]>((r) => {
+          resolveFirst = r;
+        })
+      )
+      .mockResolvedValue([fresh]);
+    let firstRead!: Promise<void>;
+    act(() => {
+      firstRead = ensurePathLoaded('/r/data');
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const call = (EventsOn as jest.Mock).mock.calls.find(([name]) => name === 'filetree:stale');
+    const onStale = call![1] as (dirs: string[]) => void;
+    act(() => {
+      onStale(['/r/data']);
+      jest.advanceTimersByTime(100);
+    });
+    await act(async () => {
+      resolveFirst([stale]);
+      await firstRead;
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(ReadDirectoryShallow).toHaveBeenCalledTimes(2);
+    expect(useIDEStore.getState().directoryTree[0].children).toEqual([fresh]);
   });
 
   // ── (b) loaded but collapsed dir → markDirty, no fetch ────────────────────

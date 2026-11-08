@@ -112,7 +112,13 @@ function App() {
     if (!root) return;
     const isRoot = pathsReferToSameFile(dir, root);
     const node = isRoot ? { children: s.directoryTree } : findEntryByPath(s.directoryTree, dir);
-    if (!node || node.children === undefined) return; // not loaded → ignore
+    if (!node) return;
+    if (node.children === undefined) {
+      // Its first read may predate this change: a forced call re-reads once
+      // that read settles. A folder never loaded has nothing to correct.
+      if (s.loadingPaths.has(dir)) void ensurePathLoaded(dir, { force: true });
+      return;
+    }
 
     // A dir's children are visible when: it's root (always expanded via isRootExpanded)
     // or it's in expandedPaths AND its ancestor chain is visible (isDirVisible).
