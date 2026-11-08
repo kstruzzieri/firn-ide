@@ -521,6 +521,7 @@ describe('GolemConfigWorkspace', () => {
     const routes = screen.getByRole('table', { name: 'Other configured routes' });
     expect(within(used).getAllByRole('row').slice(1)).toEqual([routeRow]);
     expect(within(routes).getAllByRole('row').slice(1)).toEqual([
+      screen.getByTestId('route-row-analysis'),
       screen.getByTestId('route-row-chat'),
       screen.getByTestId('route-row-embedding'),
       screen.getByTestId('route-row-planning'),

@@ -181,6 +181,7 @@ describe('RoutingCard rows', () => {
   it('renders one row per known-or-authored use case', () => {
     expect(routeUseCases([{ useCase: 'summarize', role: 'chat-role' }])).toEqual([
       'agent',
+      'analysis',
       'chat',
       'embedding',
       'planning',
@@ -195,7 +196,7 @@ describe('RoutingCard rows', () => {
       models: [model({ routedUseCases: ['chat', 'summarize'] })],
     });
 
-    for (const useCase of ['agent', 'chat', 'embedding', 'planning', 'summarize']) {
+    for (const useCase of ['agent', 'analysis', 'chat', 'embedding', 'planning', 'summarize']) {
       expect(routeCells(useCase)).toBeInTheDocument();
     }
     // A known use case with no route is an offer, not a defect.
@@ -210,6 +211,44 @@ describe('RoutingCard rows', () => {
       models: [model({ routedUseCases: ['agent'] })],
     });
     expect(within(routeCells('agent')).getByText('Incompatible')).toBeInTheDocument();
+  });
+
+  // #493: a route the draft leaves alone may already fall short. Apply no
+  // longer refuses an unrelated edit for it, so the row warns, naming what
+  // is missing as visible text; a route the draft changes onto a model that
+  // falls short is what Apply refuses.
+  it('warns on an untouched route that already falls short, naming what it lacks', () => {
+    renderRouting({
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'embedding', role: 'chat-role' },
+      ],
+      models: [
+        { ...other, role: 'agent-role', routedUseCases: ['agent'] },
+        model({ routedUseCases: ['embedding'] }),
+      ],
+    });
+    const status = within(routeCells('embedding')).getByText('Incompatible').closest('[data-tone]');
+    expect(status).toHaveAttribute('data-tone', 'warn');
+    expect(status).toHaveTextContent('Incompatibleneeds embed');
+  });
+
+  it('reads a staged route that falls short as Incompatible, the refusal tone', () => {
+    renderRouting({
+      routes: [{ useCase: 'chat', role: 'chat-role' }],
+      draft: draftWith({
+        kind: 'route',
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+        capabilityFacts: other.capabilityFacts,
+        exposedCaps: ['chat'],
+        thinkMode: '',
+        confirmUnknown: false,
+      }),
+    });
+    const status = within(routeCells('chat')).getByText('Incompatible').closest('[data-tone]');
+    expect(status).toHaveAttribute('data-tone', 'bad');
+    expect(status).toHaveTextContent('needs stream');
   });
 
   it('shows the staged model and marks the row Modified before Apply', () => {
@@ -632,12 +671,8 @@ describe('RouteEditor', () => {
     expect(within(caps).getByLabelText('tool_call')).not.toBeChecked();
     expect(within(caps).getByLabelText('thinking')).not.toBeChecked();
 
-    await userEvent.click(screen.getByLabelText('Apply anyway'));
-    expect(screen.getByLabelText('Apply anyway').closest('label')).toHaveAttribute(
-      'data-changed',
-      'true'
-    );
-    expect(summary()).toMatch(/· Apply anyway: acknowledged$/);
+    // [#493] The join shows summarize what it already shows: nothing to ask.
+    expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
     await stage();
     // Staging must not re-widen what `summarize` narrowed: the override is
     // selector-wide, so a wider set here would rewrite the sibling's contract.
@@ -2342,8 +2377,9 @@ describe('RouteEditor', () => {
         model({ role: 'summarize-role', modelName: 'gpt-5', routedUseCases: ['summarize'] }),
       ],
     });
-    await openRoute('chat');
-    await pickModel('gpt-5');
+    // [#493] summarize, which has no floor, is the route the edit moves.
+    await openRoute('summarize');
+    await pickModel('gpt-5-mini');
 
     expect(screen.getByText(/Firn has/)).toHaveTextContent(
       'Firn has no requirements on record for summarize, so it cannot check this model for it. Mark Apply anyway to accept that.'
@@ -2374,12 +2410,12 @@ describe('RouteEditor', () => {
         model({ role: 'summarize-role', modelName: 'gpt-5', routedUseCases: ['summarize'] }),
       ],
     });
-    await openRoute('chat');
+    await openRoute('summarize');
     const announcement = screen.getByRole('alert');
     expect(announcement).toBeEmptyDOMElement();
     expect(announcement).toHaveAttribute('aria-atomic', 'true');
     expect(announcement).not.toHaveFocus();
-    await pickModel('gpt-5');
+    await pickModel('gpt-5-mini');
     const done = screen.getByRole('button', { name: 'Done' });
     act(() => done.focus());
     await userEvent.keyboard('{Enter}');
@@ -2427,8 +2463,8 @@ describe('RouteEditor', () => {
           model({ role: 'summarize-role', modelName: 'gpt-5', routedUseCases: ['summarize'] }),
         ],
       });
-      await openRoute('chat');
-      await pickModel('gpt-5');
+      await openRoute('summarize');
+      await pickModel('gpt-5-mini');
       const announcement = screen.getByRole('alert');
       jest.useFakeTimers();
       try {
@@ -2466,8 +2502,8 @@ describe('RouteEditor', () => {
           model({ role: 'summarize-role', modelName: 'gpt-5', routedUseCases: ['summarize'] }),
         ],
       });
-      await openRoute('chat');
-      await pickModel('gpt-5');
+      await openRoute('summarize');
+      await pickModel('gpt-5-mini');
       const announcement = screen.getByRole('alert');
       const done = screen.getByRole('button', { name: 'Done' });
       act(() => done.focus());
@@ -3483,11 +3519,13 @@ describe('RouteEditor', () => {
       routes: [
         { useCase: 'chat', role: 'chat-role' },
         { useCase: 'summarize', role: 'chat-role' },
-        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'completion', role: 'completion-role' },
       ],
-      // agent is already on gpt-5: a change to that model's values reaches agent,
-      // so the reach sentence joins the notice; the fork of chat-role never reaches summarize.
-      models: [shared, { ...other, role: 'agent-role', routedUseCases: ['agent'] }],
+      // completion is already on gpt-5: a change to that model's values
+      // reaches completion, so the reach sentence joins the notice, and
+      // completion, which has no floor, is asked about [#493]; the fork of
+      // chat-role never reaches summarize.
+      models: [shared, { ...other, role: 'completion-role', routedUseCases: ['completion'] }],
     });
     await openRoute('chat');
 
@@ -3524,7 +3562,7 @@ describe('RouteEditor', () => {
     expect(merged.querySelectorAll('p')).toHaveLength(1);
     await userEvent.click(screen.getByLabelText(/^generate/));
     expect(within(merged).getByText(/belong to/)).toHaveTextContent(
-      'agent also uses gpt-5. The abilities above belong to the model, so the change reaches them too; Think applies to this route only.'
+      'completion also uses gpt-5. The abilities above belong to the model, so the change reaches them too; Think applies to this route only.'
     );
     expect(merged.querySelectorAll('p')).toHaveLength(2);
     expect(screen.getByText(/Firn has/).closest('div')).toHaveAttribute('data-tone', 'caution');
@@ -3750,7 +3788,8 @@ describe('GolemConfigWorkspace route editing', () => {
     // needed to collapse it back to its row.
     await openRoute('chat');
     await pickModel('gpt-5');
-    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    // [#493] summarize keeps what it shows: nothing to ask.
+    expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
     await stage();
     expect(within(screen.getByTestId('route-row-chat')).getByText('auto')).toBeInTheDocument();
 
@@ -3931,7 +3970,7 @@ describe('RouteEditor union floor (wave 4c)', () => {
   });
 
   it('never stages an acknowledgement alone on a route that keeps its model', async () => {
-    // [#311] analysis is floorless, so its editor carries the "Apply anyway"
+    // [#311] completion is floorless, so its editor carries the "Apply anyway"
     // acknowledgement. Ticking it with nothing else changed must not make a
     // change to stage: an override staged that way would go through
     // SetRoleOverrides and be gated on agent, which reaches the model through
@@ -3939,14 +3978,14 @@ describe('RouteEditor union floor (wave 4c)', () => {
     const { onStage } = renderRouting({
       routes: [
         { useCase: 'agent', role: 'agent-role' },
-        { useCase: 'analysis', role: 'pro-role' },
+        { useCase: 'completion', role: 'pro-role' },
       ],
       models: [
         { ...agentModel, fallbacks: ['pro-role'] },
-        model({ role: 'pro-role', modelName: 'deepseek', routedUseCases: ['agent', 'analysis'] }),
+        model({ role: 'pro-role', modelName: 'deepseek', routedUseCases: ['agent', 'completion'] }),
       ],
     });
-    await openRoute('analysis');
+    await openRoute('completion');
     expect(screen.queryByRole('checkbox', { name: 'Apply anyway' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
@@ -3991,7 +4030,8 @@ describe('RouteEditor union floor (wave 4c)', () => {
     await openRoute('chat');
     expect(screen.getByLabelText(/^thinking/)).toBeChecked();
     await userEvent.click(screen.getByLabelText(/^thinking/));
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Apply anyway' }));
+    // [#493] The group then gives summarize what it has today: nothing to ask.
+    expect(screen.queryByRole('checkbox', { name: 'Apply anyway' })).not.toBeInTheDocument();
     await stage();
     expect(onStage).toHaveBeenCalledTimes(1);
     const [staged, dropped] = onStage.mock.calls[0];
@@ -4161,7 +4201,8 @@ describe('RouteEditor union floor (wave 4c)', () => {
       // pro-role through coder-role and, behind it, mimo-role. Moving analysis
       // onto mimo-model exposing exactly the derived set asserts no override, so
       // the backend gates the new role alone: the card is offered and Done
-      // stages it (after the floorless-use-case acknowledgement).
+      // stages it. [#493] analysis has a floor, which the derived set meets:
+      // nothing to acknowledge.
       const derived: CapabilityName[] = ['chat', 'generate', 'stream'];
       const deriving = (over: Partial<ModelProjection>): ModelProjection =>
         model({
@@ -4208,7 +4249,7 @@ describe('RouteEditor union floor (wave 4c)', () => {
       expect(screen.queryByRole('button', { name: /not eligible/ })).not.toBeInTheDocument();
       await pickModel('mimo');
       expect(screen.queryByText(/does not declare|takes it from/)).not.toBeInTheDocument();
-      await userEvent.click(screen.getByRole('checkbox', { name: 'Apply anyway' }));
+      expect(screen.queryByRole('checkbox', { name: 'Apply anyway' })).not.toBeInTheDocument();
       await stage();
       expect(onStage).toHaveBeenCalledTimes(1);
       expect(onStage.mock.calls[0][0][0].exposedCaps).toEqual(derived);

@@ -1,0 +1,221 @@
+{
+  "about": "#493 shared gate fixture. Each case stages one route change, as the route editor and the Golem model picker stage it, over a base document. apply_gates_test.go runs it through Apply (refuseIneligible and checkPreparedDocument) and the derived gates; frontend applyGates.test.ts runs it through touchedUseCasesOf, the confirmation set and the picker's verdict (governedUseCasesOf, floorShortfalls, golemModelVerdict) over projections.json, which the Go test writes. touched: the use cases the change touches. asks: the floorless ones the change must acknowledge. refused: the use cases Apply refuses, by name. picker: the use cases the picker's verdict names for the card; equal to refused unless refusedForEveryCard says the refusal is not the card's.",
+  "bases": {
+    "hybrid-cc": "golem_model_row/hybrid-cc.models.json",
+    "chat-short": {
+      "providers": { "ollama": { "base_url": "http://localhost:11434" } },
+      "models": {
+        "agent-m": {
+          "name": "agent-model",
+          "provider": "ollama",
+          "type": "dense",
+          "capabilities": ["chat", "stream", "tool_call"]
+        },
+        "chat-m": { "name": "embed-model", "provider": "ollama", "type": "embedding" }
+      },
+      "defaults": { "agent": "agent-m", "chat": "chat-m" }
+    },
+    "analysis": {
+      "providers": { "ollama": { "base_url": "http://localhost:11434" } },
+      "models": {
+        "agent-m": {
+          "name": "agent-model",
+          "provider": "ollama",
+          "type": "dense",
+          "capabilities": ["chat", "stream", "tool_call"]
+        },
+        "ana-m": { "name": "analysis-model", "provider": "ollama", "type": "dense" },
+        "emb-m": { "name": "embed-model", "provider": "ollama", "type": "embedding" }
+      },
+      "defaults": { "agent": "agent-m", "analysis": "ana-m", "embedding": "emb-m" }
+    },
+    "fork-short": {
+      "providers": { "ollama": { "base_url": "http://localhost:11434" } },
+      "models": {
+        "agent-m": {
+          "name": "agent-model",
+          "provider": "ollama",
+          "type": "dense",
+          "capabilities": ["chat", "stream", "tool_call"]
+        },
+        "shared-m": { "name": "chat-model", "provider": "ollama", "type": "dense" }
+      },
+      "defaults": { "agent": "agent-m", "chat": "shared-m", "embedding": "shared-m" }
+    },
+    "reassert": {
+      "providers": { "ollama": { "base_url": "http://localhost:11434" } },
+      "models": {
+        "agent-m": {
+          "name": "shared-model",
+          "provider": "ollama",
+          "type": "dense",
+          "capabilities": ["chat", "stream", "tool_call"]
+        },
+        "embed-m": { "name": "shared-model", "provider": "ollama", "type": "dense" }
+      },
+      "defaults": { "agent": "agent-m", "embedding": "embed-m" }
+    },
+    "fallback": {
+      "providers": { "ollama": { "base_url": "http://localhost:11434" } },
+      "models": {
+        "agent-m": {
+          "name": "agent-model",
+          "provider": "ollama",
+          "type": "dense",
+          "capabilities": ["chat", "stream", "tool_call"]
+        },
+        "chat-m": {
+          "name": "chat-model",
+          "provider": "ollama",
+          "type": "dense",
+          "capabilities": ["chat", "stream"],
+          "fallbacks": ["fast-m"]
+        },
+        "fast-m": {
+          "name": "fast-model",
+          "provider": "ollama",
+          "type": "dense",
+          "capabilities": ["chat", "stream", "tool_call"]
+        }
+      },
+      "defaults": { "agent": "agent-m", "chat": "chat-m", "completion": "fast-m" }
+    },
+    "departure": {
+      "providers": { "ollama": { "base_url": "http://localhost:11434" } },
+      "models": {
+        "agent-m": {
+          "name": "shared-model",
+          "provider": "ollama",
+          "type": "dense",
+          "capabilities": ["chat", "stream", "tool_call"]
+        },
+        "plan-m": { "name": "shared-model", "provider": "ollama", "type": "dense" },
+        "vision-m": { "name": "shared-model", "provider": "ollama", "type": "dense" }
+      },
+      "defaults": { "agent": "agent-m", "planning": "plan-m", "vision": "vision-m" }
+    }
+  },
+  "cases": [
+    {
+      "name": "the Golem model picker forks fast for agent, and completion keeps its chain",
+      "base": "hybrid-cc",
+      "useCase": "agent",
+      "card": {
+        "provider": "commandcode",
+        "model": "zai-org/GLM-5.2",
+        "type": "moe",
+        "exposedCaps": ["chat", "stream", "tool_call"]
+      },
+      "touched": ["agent"],
+      "asks": [],
+      "refused": [],
+      "picker": []
+    },
+    {
+      "name": "an agent edit beside a chat route that already falls short",
+      "base": "chat-short",
+      "useCase": "agent",
+      "card": {
+        "provider": "ollama",
+        "model": "other-model",
+        "type": "dense",
+        "exposedCaps": ["chat", "stream", "tool_call"]
+      },
+      "touched": ["agent"],
+      "asks": [],
+      "refused": [],
+      "picker": []
+    },
+    {
+      "name": "analysis retargeted onto an embedding model",
+      "base": "analysis",
+      "useCase": "analysis",
+      "card": {
+        "provider": "ollama",
+        "model": "embed-model",
+        "type": "embedding",
+        "exposedCaps": ["embed"]
+      },
+      "touched": ["analysis"],
+      "asks": [],
+      "refused": ["analysis"],
+      "picker": ["analysis"]
+    },
+    {
+      "name": "analysis retargeted onto a chat model",
+      "base": "analysis",
+      "useCase": "analysis",
+      "card": {
+        "provider": "ollama",
+        "model": "other-model",
+        "type": "dense",
+        "exposedCaps": ["chat", "generate", "stream"]
+      },
+      "touched": ["analysis"],
+      "asks": [],
+      "refused": [],
+      "picker": []
+    },
+    {
+      "name": "a fork leaves the source role's embedding route, already short, unchecked",
+      "base": "fork-short",
+      "useCase": "chat",
+      "card": {
+        "provider": "ollama",
+        "model": "new-chat-model",
+        "type": "dense",
+        "exposedCaps": ["chat", "generate", "stream"]
+      },
+      "touched": ["chat"],
+      "asks": [],
+      "refused": [],
+      "picker": []
+    },
+    {
+      "name": "a retarget in place re-sends the selector's unchanged list, and embedding beside it is untouched",
+      "base": "reassert",
+      "useCase": "agent",
+      "card": {
+        "provider": "ollama",
+        "model": "shared-model",
+        "type": "moe",
+        "exposedCaps": ["chat", "stream", "tool_call"]
+      },
+      "touched": ["agent"],
+      "asks": [],
+      "refused": [],
+      "picker": []
+    },
+    {
+      "name": "an override on a role chat reaches through its fallbacks",
+      "base": "fallback",
+      "useCase": "completion",
+      "card": {
+        "provider": "ollama",
+        "model": "fast-model",
+        "type": "dense",
+        "exposedCaps": ["chat"]
+      },
+      "touched": ["chat", "completion"],
+      "asks": ["completion"],
+      "refused": ["chat"],
+      "picker": ["chat"]
+    },
+    {
+      "name": "agent leaves with its selector's only list, and the routes left behind change",
+      "base": "departure",
+      "useCase": "agent",
+      "card": {
+        "provider": "ollama",
+        "model": "agent-model",
+        "type": "dense",
+        "exposedCaps": ["chat", "stream", "tool_call"]
+      },
+      "touched": ["agent", "planning", "vision"],
+      "asks": ["vision"],
+      "refused": ["planning"],
+      "picker": [],
+      "refusedForEveryCard": "Any model agent moves to takes shared-model's only list away; planning, left deriving, falls short whatever the card."
+    }
+  ]
+}

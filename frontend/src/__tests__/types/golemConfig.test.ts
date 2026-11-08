@@ -667,7 +667,7 @@ describe('projected draft normalization', () => {
     expect(projected.changes[0]).not.toHaveProperty('confirmUnknownUseCases');
   });
 
-  it('widens the affected set to the use cases the current role already serves', () => {
+  it('asks about the use cases the current role serves only when the change touches them (#493)', () => {
     const base: DraftBaseProjection = {
       routes: [
         { useCase: 'chat', role: 'chat-role' },
@@ -675,16 +675,17 @@ describe('projected draft normalization', () => {
       ],
       models: [modelRow({ routedUseCases: ['chat', 'summarize'] })],
     };
-    const projected = projectDraft(base, stage([routeChange({ useCase: 'chat' })]));
+    // An override that sets Think changes what summarize receives too:
+    // SetRoleOverrides writes every role on the selector.
+    const projected = projectDraft(
+      base,
+      stage([routeChange({ useCase: 'chat', thinkMode: 'auto' })])
+    );
     expect(projected.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
     expect(selectorFields(projected.changes[0]).confirmUnknownUseCases).toEqual(['summarize']);
-    // An override sits on the selector the current role is on, so it governs
-    // summarize too — every override that is actually staged is applied
-    // through SetRoleOverrides, which gates every role on the selector (the
-    // editor never stages one that changes nothing: #311); a fork onto a
-    // selector nobody is on governs chat alone and summarize is
-    // confirmation-only (the source role is left as it was).
     expect(projected.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    // A fork onto a selector nobody is on leaves the source role, and
+    // summarize with it, as it was: nothing to ask, chat alone to gate.
     const forked = projectDraft(
       base,
       stage([
@@ -695,6 +696,7 @@ describe('projected draft normalization', () => {
       ])
     );
     expect(forked.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    expect(forked.changes[0]).not.toHaveProperty('confirmUnknownUseCases');
     expect(forked.governedUseCases.get('chat')).toEqual(['chat']);
   });
 
@@ -1113,12 +1115,12 @@ describe('governed set under the asserted-override rule (#311)', () => {
 
   it('governs the edited use case alone when a join exposes what the type derives on an unowned selector', () => {
     // The backend sends no override for this exposure, so upstream gates the
-    // new role alone; agent's chain through mimo-role is not in play. The
-    // confirmation set stays the wide one gateRolesFor asks for.
+    // new role alone; agent's chain through mimo-role is not in play. [#493]
+    // Nothing floorless is touched (analysis has a floor), so nothing is asked.
     const probe = probeRouteChange('analysis', mimo);
     expect(probe.exposedCaps).toEqual(DERIVED);
     expect(governedUseCasesOf(base, draft, probe)).toEqual(['analysis']);
-    expect(affectedUseCases(base, draft, probe)).toEqual(['analysis', 'agent']);
+    expect(affectedUseCases(base, draft, probe)).toEqual([]);
   });
 
   it('widens to the selector once a join exposes something other than the derived set', () => {
@@ -1149,7 +1151,7 @@ describe('governed set under the asserted-override rule (#311)', () => {
     const probe = probeRouteChange('analysis', written);
     expect(probe.exposedCaps).toEqual(DERIVED);
     expect(governedUseCasesOf(writtenBase, draft, probe)).toEqual(['analysis']);
-    expect(affectedUseCases(writtenBase, draft, probe)).toEqual(['analysis', 'agent']);
+    expect(affectedUseCases(writtenBase, draft, probe)).toEqual([]);
 
     const NARROW: CapabilityName[] = ['chat', 'stream'];
     const narrower = modelRow({
@@ -1704,6 +1706,18 @@ describe('floors across a selector (wave 4c)', () => {
     if (found === undefined) throw new Error(`no model role ${role}`);
     return found;
   };
+  /**
+   * [#493] A probe that also exposes generate, so the roles already on its
+   * selector show something new and their use cases are touched: the gate
+   * reads only what the draft touches, and these rows pin which of the
+   * selector's routes a join still meets.
+   */
+  const widen = (change: RouteChange): RouteChange => ({
+    ...change,
+    exposedCaps: CAPABILITY_NAMES.filter(
+      (cap) => cap === 'generate' || change.exposedCaps.includes(cap)
+    ),
+  });
 
   it('unions the floors of the use cases named, in canonical order', () => {
     expect(unionFloor(['reasoning'])).toEqual([]);
@@ -1715,23 +1729,25 @@ describe('floors across a selector (wave 4c)', () => {
     ]);
   });
 
-  it('lists what a candidate asks the user to confirm, the edited use case first', () => {
-    // reasoning's current role also serves agent; gpt-5's selector serves agent directly.
+  it('lists what a candidate asks the user to confirm: the floorless use cases it touches (#493)', () => {
+    // reasoning's current role also serves agent, and gpt-5's selector serves
+    // agent directly; the fork leaves both as they are, so only reasoning,
+    // which has no floor, is asked about.
     expect(
       affectedUseCases(
         base,
         cleanDraft(REVISION_A),
         probeRouteChange('reasoning', byRole('agent-role'))
       )
-    ).toEqual(['reasoning', 'agent']);
-    // A card on chat-role's selector adds chat to the set.
+    ).toEqual(['reasoning']);
+    // chat-role keeps the exposure it shows, so chat is not asked either.
     expect(
       affectedUseCases(
         base,
         cleanDraft(REVISION_A),
         probeRouteChange('reasoning', byRole('chat-role'))
       )
-    ).toEqual(['reasoning', 'agent', 'chat']);
+    ).toEqual(['reasoning']);
   });
 
   it('lists what a candidate governs: the changed use case, then the target selector routes', () => {
@@ -1743,31 +1759,26 @@ describe('floors across a selector (wave 4c)', () => {
         probeRouteChange('reasoning', byRole('agent-role'))
       )
     ).toEqual(['reasoning', 'agent']);
-    // …while on chat-role's selector agent — reached only through reasoning's
-    // CURRENT role — is confirmation-only: the fork leaves that role as it is.
+    // …while on chat-role's selector neither agent — reached only through
+    // reasoning's CURRENT role, which the fork leaves as it is — nor chat,
+    // whose exposure the join's list does not change (#493), is this
+    // change's to gate or to ask about.
     const ontoChat = probeRouteChange('reasoning', byRole('chat-role'));
-    expect(governedUseCasesOf(base, cleanDraft(REVISION_A), ontoChat)).toEqual([
-      'reasoning',
-      'chat',
-    ]);
-    expect(affectedUseCases(base, cleanDraft(REVISION_A), ontoChat)).toEqual([
-      'reasoning',
-      'agent',
-      'chat',
-    ]);
+    expect(governedUseCasesOf(base, cleanDraft(REVISION_A), ontoChat)).toEqual(['reasoning']);
+    expect(affectedUseCases(base, cleanDraft(REVISION_A), ontoChat)).toEqual(['reasoning']);
   });
 
   it('folds a staged change on the same selector into the set', () => {
     const draft = stage([
       routeChange({
-        useCase: 'chat',
+        useCase: 'summarize',
         modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
         exposedCaps: ['chat', 'stream', 'tool_call'],
       }),
     ]);
     expect(
       affectedUseCases(base, draft, probeRouteChange('reasoning', byRole('agent-role')))
-    ).toEqual(['reasoning', 'agent', 'chat']);
+    ).toEqual(['reasoning', 'summarize']);
   });
 
   it('names each missing capability with the use cases that need it', () => {
@@ -1824,6 +1835,8 @@ describe('floors across a selector (wave 4c)', () => {
     // An unassign is NOT a departure: the unbind runs after every route plan,
     // so the sibling's route is still bound when the join is gated. (agent is
     // Firn's run path and can never be unassigned; the sibling routes planning.)
+    // [#493] But no route is left to check once the Apply lands, so planning
+    // is no gate's: the governed set holds chat alone.
     const planRole: ModelProjection = { ...gpt5, role: 'plan-role', routedUseCases: ['planning'] };
     const withPlanning: DraftBaseProjection = {
       routes: [
@@ -1836,9 +1849,9 @@ describe('floors across a selector (wave 4c)', () => {
       governedUseCasesOf(
         withPlanning,
         stage([{ kind: 'route-unassign', useCase: 'planning' }]),
-        probeRouteChange('chat', planRole)
+        widen(probeRouteChange('chat', planRole))
       )
-    ).toEqual(['chat', 'planning']);
+    ).toEqual(['chat']);
   });
 
   it('keeps a use case a fork moves off the selector only for a join that runs before the fork', () => {
@@ -1866,7 +1879,7 @@ describe('floors across a selector (wave 4c)', () => {
       exposedCaps: ['chat', 'stream', 'tool_call'],
     });
     expect(
-      governedUseCasesOf(forked, stage([planningAway]), probeRouteChange('chat', pairRole))
+      governedUseCasesOf(forked, stage([planningAway]), widen(probeRouteChange('chat', pairRole)))
     ).toEqual(['chat', 'planning', 'summarize']);
 
     // route:analysis sorts before route:chat: analysis has left pair-role by
@@ -1885,7 +1898,11 @@ describe('floors across a selector (wave 4c)', () => {
     };
     const analysisAway: RouteChange = { ...planningAway, useCase: 'analysis' };
     expect(
-      governedUseCasesOf(forkedFirst, stage([analysisAway]), probeRouteChange('chat', analysisPair))
+      governedUseCasesOf(
+        forkedFirst,
+        stage([analysisAway]),
+        widen(probeRouteChange('chat', analysisPair))
+      )
     ).toEqual(['chat', 'summarize']);
   });
 
@@ -1948,9 +1965,8 @@ describe('floors across a selector (wave 4c)', () => {
     ]);
     for (const draft of [stage([agentAway]), stage([narrow, agentAway])]) {
       expect(governedUseCasesOf(sharedBase, draft, narrow)).toEqual(['chat']);
-      // The confirmation set is the backend's gateRolesFor on the applied
-      // document, and stays wide.
-      expect(affectedUseCases(sharedBase, draft, narrow)).toEqual(['chat', 'agent']);
+      // [#493] Both use cases have floors: nothing is asked.
+      expect(affectedUseCases(sharedBase, draft, narrow)).toEqual([]);
     }
     expect(
       projectDraft(sharedBase, stage([narrow, agentAway])).governedUseCases.get('chat')
@@ -2693,7 +2709,7 @@ describe('reach of a route edit, not its gate (#307)', () => {
     ]);
   });
 
-  it('reports what the edit changes, which the gate it is checked against can exceed', () => {
+  it('reports what the edit changes, and the gate reads no route it leaves alone (#493)', () => {
     const draft = cleanDraft(REVISION_A);
     const noOp = probeRouteChange('analysis', mimo);
     const reach = editReachFor(base, draft, noOp);
@@ -2708,8 +2724,9 @@ describe('reach of a route edit, not its gate (#307)', () => {
       'reasoning',
     ]);
 
-    // An owner's set is not the derived one, so a join exposing exactly it is
-    // gated against every route on the selector, yet changes none of them.
+    // An owner's set is not the derived one, so a join exposing exactly it
+    // sends the list, which changes none of the selector's routes: [#493] the
+    // gate reads none of them but agent, checked on every Apply.
     const OWNED: CapabilityName[] = ['chat', 'stream', 'tool_call'];
     const owned = chainRow('cloud-mimo', 'mimo-v2.5', {
       effectiveCapabilities: OWNED,
@@ -2718,13 +2735,7 @@ describe('reach of a route edit, not its gate (#307)', () => {
     });
     const ownedBase: DraftBaseProjection = { ...base, models: [pro, flash, owned] };
     const join = probeRouteChange('analysis', owned);
-    expect(governedUseCasesOf(ownedBase, draft, join)).toEqual([
-      'analysis',
-      'agent',
-      'chat',
-      'completion',
-      'reasoning',
-    ]);
+    expect(governedUseCasesOf(ownedBase, draft, join)).toEqual(['analysis', 'agent']);
     expect(editReachFor(ownedBase, draft, join)?.group).toMatchObject({
       sameModel: [],
       fallback: [],

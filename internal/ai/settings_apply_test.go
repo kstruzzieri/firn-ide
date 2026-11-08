@@ -1383,10 +1383,11 @@ func TestPrepareSettingsApply(t *testing.T) {
 		},
 		{
 			// "shared" also serves summarize, so retargeting chat must fork the
-			// complete authored role and leave the sibling route untouched.
+			// complete authored role and leave the sibling route untouched (#493:
+			// so the fork touches chat alone and acknowledges nothing).
 			name: "shared-role fork",
 			changes: []Change{func() Change {
-				c := confirmUnknown(routeChange("chat", "ollama", "fork-model", "chat", "stream"), "summarize")
+				c := routeChange("chat", "ollama", "fork-model", "chat", "stream")
 				c.ConfirmDrops = []string{dropFieldSlots, dropFieldThinkTags}
 				return c
 			}()},
@@ -1453,7 +1454,7 @@ func TestPrepareSettingsApply(t *testing.T) {
 			// A real retarget drops the source role's projection-hidden fields;
 			// without the exact confirmation nothing may mutate.
 			name:       "drop confirmation required",
-			changes:    []Change{confirmUnknown(routeChange("chat", "ollama", "fork-model", "chat", "stream"), "summarize")},
+			changes:    []Change{routeChange("chat", "ollama", "fork-model", "chat", "stream")},
 			wantStatus: "drop_confirmation_required",
 			wantDrops: []ChangeDropSet{{ChangeID: identityRoute + ":chat",
 				Fields: []string{dropFieldSlots, dropFieldThinkTags}}},
@@ -1461,7 +1462,7 @@ func TestPrepareSettingsApply(t *testing.T) {
 		{
 			name: "partial drop confirmation is refused",
 			changes: []Change{func() Change {
-				c := confirmUnknown(routeChange("chat", "ollama", "fork-model", "chat", "stream"), "summarize")
+				c := routeChange("chat", "ollama", "fork-model", "chat", "stream")
 				c.ConfirmDrops = []string{dropFieldThinkTags}
 				return c
 			}()},
@@ -1700,13 +1701,15 @@ func TestPrepareSettingsApply(t *testing.T) {
 			},
 		},
 		{
+			// The acknowledgement is selector-scoped: two values on one model
+			// are a selector conflict, refused before the set is compared.
 			name: "per-use-case confirmation on a shared selector is refused",
 			changes: []Change{
 				confirmUnknown(routeChange("vision", "ollama", "multi-model", "chat", "stream"), "vision"),
 				confirmUnknown(routeChange("audio", "ollama", "multi-model", "chat", "stream"), "audio"),
 			},
 			wantStatus: "diagnostics",
-			wantCodes:  []string{codeEligibilityUnknown},
+			wantCodes:  []string{codeSelectorConflict},
 		},
 		{
 			// The prepared document is the PROFILE's, scrubbed of every key
@@ -2922,10 +2925,7 @@ const chainTargetJSON = `{
 // failed, and the user was refused for a route that can serve analysis.
 func TestApplySettingsForkWithRedundantExposureSendsNoOverride(t *testing.T) {
 	h := newApplyHarness(t, chainTargetJSON)
-	change := confirmUnknown(
-		routeChange("analysis", "ollama", "mimo-model", "chat", "generate", "stream"),
-		"analysis",
-	)
+	change := routeChange("analysis", "ollama", "mimo-model", "chat", "generate", "stream")
 	res, err := h.svc.ApplySettings(h.request(t, change))
 	if err != nil {
 		t.Fatalf("ApplySettings(fork): %v", err)
@@ -2975,10 +2975,7 @@ func TestApplySettingsForkOntoARedundantlyOwnedSelectorSendsNoOverride(t *testin
 		t.Fatal("fixture replace did not apply")
 	}
 	h := newApplyHarness(t, redundantOwnerJSON)
-	change := confirmUnknown(
-		routeChange("analysis", "ollama", "mimo-model", "chat", "generate", "stream"),
-		"analysis",
-	)
+	change := routeChange("analysis", "ollama", "mimo-model", "chat", "generate", "stream")
 	res, err := h.svc.ApplySettings(h.request(t, change))
 	if err != nil {
 		t.Fatalf("ApplySettings(fork): %v", err)
@@ -3015,12 +3012,7 @@ const narrowerOwnerJSON = `{
 // land resolving chat, generate, stream beside an owner that holds less.
 func TestApplySettingsJoinWithDerivedExposureOntoANarrowerOwnerIsRefused(t *testing.T) {
 	h := newApplyHarness(t, narrowerOwnerJSON)
-	// analysis, the owner's use case, has no Firn floor: the wide confirmation
-	// set the join carries must name it.
-	join := confirmUnknown(
-		routeChange("chat", "ollama", "shared-model", "chat", "generate", "stream"),
-		"analysis",
-	)
+	join := routeChange("chat", "ollama", "shared-model", "chat", "generate", "stream")
 	res, err := h.svc.ApplySettings(h.request(t, join))
 	if err != nil {
 		t.Fatalf("ApplySettings(join): %v", err)
@@ -3054,16 +3046,8 @@ const ownerMovesAwayJSON = `{
 // the explicit set and write it.
 func TestApplySettingsJoinAfterTheOwnerMovesAwaySendsNoOverride(t *testing.T) {
 	h := newApplyHarness(t, ownerMovesAwayJSON)
-	leave := confirmUnknown(
-		routeChange("analysis", "ollama", "other-model", "chat", "generate", "stream"),
-		"analysis",
-	)
-	// The confirmation set is read from the original document, where ana-m
-	// still sits on shared-model, so the join confirms analysis as well.
-	join := confirmUnknown(
-		routeChange("chat", "ollama", "shared-model", "chat", "generate", "stream"),
-		"analysis",
-	)
+	leave := routeChange("analysis", "ollama", "other-model", "chat", "generate", "stream")
+	join := routeChange("chat", "ollama", "shared-model", "chat", "generate", "stream")
 	res, err := h.svc.ApplySettings(h.request(t, leave, join))
 	if err != nil {
 		t.Fatalf("ApplySettings(leave, join): %v", err)
@@ -3152,14 +3136,17 @@ func TestApplySettingsJoinMeetsAForkAwayOnlyIfItRunsFirst(t *testing.T) {
 		applied bool
 	}{
 		{join: "translate", applied: true}, // route:translate sorts after route:chat
-		{join: "analysis", applied: false}, // route:analysis sorts before route:chat
+		{join: "approval", applied: false}, // route:approval sorts before route:chat
 	}
 	for _, tc := range cases {
 		t.Run(tc.join, func(t *testing.T) {
 			h := newApplyHarness(t, joinAroundForkAwayJSON)
 			before := h.targetBytes(t)
 			res, err := h.svc.ApplySettings(h.request(t,
-				confirmUnknown(routeChange("chat", "ollama", "chat-model", "chat", "stream"), "summarize"),
+				// #493: chat's fork touches only chat; the join's list
+				// changes what summarize receives on x-m, so the join's
+				// group asks about it.
+				routeChange("chat", "ollama", "chat-model", "chat", "stream"),
 				confirmUnknown(routeChange(tc.join, "ollama", "shared-model", "chat", "generate"),
 					tc.join, "summarize"),
 			))
@@ -3460,10 +3447,7 @@ func TestApplySettingsRemovingRedundantOwnerPreservesSelectorSlots(t *testing.T)
 func TestApplySettingsForkWithNarrowingExposureIsRefusedByUseCase(t *testing.T) {
 	h := newApplyHarness(t, chainTargetJSON)
 	before := h.targetBytes(t)
-	change := confirmUnknown(
-		routeChange("analysis", "ollama", "mimo-model", "chat", "stream"),
-		"analysis",
-	)
+	change := routeChange("analysis", "ollama", "mimo-model", "chat", "stream")
 	res, err := h.svc.ApplySettings(h.request(t, change))
 	if err != nil {
 		t.Fatalf("ApplySettings(narrowing fork): %v", err)
@@ -3489,10 +3473,7 @@ func TestApplySettingsForkWithNarrowingExposureIsRefusedByUseCase(t *testing.T) 
 func TestApplySettingsOverrideRemovalThatBreaksAChainSiblingIsRefusedByUseCase(t *testing.T) {
 	h := newApplyHarness(t, chainTargetJSON)
 	before := h.targetBytes(t)
-	change := confirmUnknown(
-		routeChange("analysis", "ollama", "deepseek-model", "chat", "stream"),
-		"analysis",
-	)
+	change := routeChange("analysis", "ollama", "deepseek-model", "chat", "stream")
 	res, err := h.svc.ApplySettings(h.request(t, change))
 	if err != nil {
 		t.Fatalf("ApplySettings(override removal): %v", err)
@@ -3593,7 +3574,8 @@ func TestApplySettingsRetargetEvaluatesTheDerivedSetWhenItOmitsTheOverride(t *te
 
 // TestCheckPreparedDocumentNamesAnIndirectlyBrokenUseCase pins the completed-
 // document loop: a Firn floor the request never names but the finished
-// document no longer meets is reported on THAT use case. The apply path
+// document no longer meets is reported on THAT use case, when the Apply
+// touched it. The apply path
 // reaches this loop only when upstream's own gate passed (see the selector
 // override test above, where it does not).
 func TestCheckPreparedDocumentNamesAnIndirectlyBrokenUseCase(t *testing.T) {
@@ -3610,13 +3592,19 @@ func TestCheckPreparedDocumentNamesAnIndirectlyBrokenUseCase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseDocument: %v", err)
 	}
-	res := checkPreparedDocument(doc, SettingsApplyRequest{})
+	touched := &applyGates{scope: map[string]bool{"agent": true, "embedding": true}}
+	res := checkPreparedDocument(doc, SettingsApplyRequest{}, touched)
 	if res == nil || res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
 		res.Diagnostics[0].Code != codeEligibilityIneligible ||
 		res.Diagnostics[0].SubjectKind != "use_case" ||
 		res.Diagnostics[0].SubjectName != "embedding" {
 		t.Fatalf("checkPreparedDocument = %+v, want embedding %s diagnostic",
 			res, codeEligibilityIneligible)
+	}
+	// #493: a use case the Apply did not touch is not this edit's to refuse.
+	untouched := &applyGates{scope: map[string]bool{"agent": true}}
+	if res := checkPreparedDocument(doc, SettingsApplyRequest{}, untouched); res != nil {
+		t.Fatalf("checkPreparedDocument(embedding untouched) = %+v, want nil", res)
 	}
 }
 
