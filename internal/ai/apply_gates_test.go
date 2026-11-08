@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/kstruzzieri/go-llm/agent"
@@ -506,5 +507,109 @@ func TestApplyRetargetTakingTheOnlyListAwayChecksATouchedFallback(t *testing.T) 
 		routeChange("agent", "ollama", "agent-model", "chat", "stream", "tool_call"))
 	if !slices.Equal(refused, []string{"planning"}) {
 		t.Fatalf("departure refused %v (%+v), want planning", refused, res)
+	}
+}
+
+// #350: a floorless use case the change touches is asked about only when the
+// change can narrow what it receives — a capability removed, a Think cleared,
+// or a route moved to another model. Widening asks nothing.
+
+// widenTargetJSON: completion runs on fast-m, which chat reaches through its
+// fallbacks and summarize routes directly.
+const widenTargetJSON = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream"], "fallbacks": ["fast-m"]},
+    "fast-m": {"name": "fast-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"], "think_mode": "toggle"},
+    "sum-m": {"name": "fast-model", "provider": "ollama", "type": "dense"}
+  },
+  "defaults": {"agent": "agent-m", "chat": "chat-m", "completion": "fast-m", "summarize": "sum-m"}
+}`
+
+func TestApplyAsksNothingWhenTheChangeOnlyWidens(t *testing.T) {
+	h := newApplyHarness(t, widenTargetJSON)
+	change := routeChange("completion", "ollama", "fast-model", "chat", "generate", "stream", "tool_call")
+	change.ThinkMode = "toggle"
+	accepted, refused, res := applyOutcome(t, h, change)
+	if !accepted {
+		t.Fatalf("a widening override without acknowledgement was refused (%v): %+v", refused, res)
+	}
+}
+
+func TestApplyAsksAboutEveryRouteANarrowingReaches(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		caps  []string
+		think string
+		asks  []string
+	}{
+		{"unticking a capability", []string{"chat", "stream"}, "toggle", []string{"completion", "summarize"}},
+		{"clearing Think", []string{"chat", "stream", "tool_call"}, "", []string{"completion"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newApplyHarness(t, widenTargetJSON)
+			change := routeChange("completion", "ollama", "fast-model", tc.caps...)
+			change.ThinkMode = tc.think
+			before := h.targetBytes(t)
+			res, err := h.svc.ApplySettings(h.request(t, change))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Status != "diagnostics" || len(res.Diagnostics) != 1 ||
+				res.Diagnostics[0].Code != codeEligibilityUnknown || !bytes.Equal(h.targetBytes(t), before) {
+				t.Fatalf("unacknowledged narrowing = %+v, want one %s diagnostic", res, codeEligibilityUnknown)
+			}
+			if accepted, refused, res := applyOutcome(t, h, confirmUnknown(change, tc.asks...)); !accepted {
+				t.Fatalf("narrowing acknowledging %v was refused (%v): %+v", tc.asks, refused, res)
+			}
+		})
+	}
+}
+
+func TestApplyAsksAboutAFloorlessRouteItBinds(t *testing.T) {
+	h := newApplyHarness(t, widenTargetJSON)
+	change := routeChange("translate", "ollama", "agent-model", "chat", "stream", "tool_call")
+	if _, _, res := applyOutcome(t, h, change); res.Status != "diagnostics" ||
+		len(res.Diagnostics) != 1 || res.Diagnostics[0].Code != codeEligibilityUnknown {
+		t.Fatalf("unacknowledged bind = %+v, want one %s diagnostic", res, codeEligibilityUnknown)
+	}
+	if accepted, refused, res := applyOutcome(t, h, confirmUnknown(change, "translate")); !accepted {
+		t.Fatalf("acknowledged bind was refused (%v): %+v", refused, res)
+	}
+}
+
+func TestNarrowedUseCases(t *testing.T) {
+	before := parseTestConfig(t, widenTargetJSON)
+	edit := func(old, replacement string) *config.Config {
+		t.Helper()
+		body := strings.Replace(widenTargetJSON, old, replacement, 1)
+		if body == widenTargetJSON {
+			t.Fatalf("edit %q did not apply", old)
+		}
+		return parseTestConfig(t, body)
+	}
+	for _, tc := range []struct {
+		name  string
+		after *config.Config
+		want  []string
+	}{
+		{"widened", edit(`"capabilities": ["chat", "stream", "tool_call"], "think_mode"`,
+			`"capabilities": ["chat", "generate", "stream", "tool_call"], "think_mode"`), nil},
+		{"narrowed", edit(`"capabilities": ["chat", "stream", "tool_call"], "think_mode"`,
+			`"capabilities": ["chat", "stream"], "think_mode"`), []string{"chat", "completion", "summarize"}},
+		{"Think cleared", edit(`, "think_mode": "toggle"}`, `}`), []string{"chat", "completion"}},
+		{"moved", edit(`"summarize": "sum-m"`, `"summarize": "agent-m"`), []string{"summarize"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			touched := touchedUseCases(before, tc.after)
+			got := slices.Sorted(maps.Keys(narrowedUseCases(before, tc.after, touched)))
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("narrowed = %v, want %v (touched %v)", got, tc.want, slices.Sorted(maps.Keys(touched)))
+			}
+		})
 	}
 }

@@ -1,5 +1,5 @@
 {
-  "about": "#493 shared gate fixture. Each case stages one route change, as the route editor and the Golem model picker stage it, over a base document. apply_gates_test.go runs it through Apply (refuseIneligible and checkPreparedDocument) and the derived gates; frontend applyGates.test.ts runs it through touchedUseCasesOf, the confirmation set and the picker's verdict (governedUseCasesOf, floorShortfalls, golemModelVerdict) over projections.json, which the Go test writes. touched: the use cases the change touches. asks: the floorless ones the change must acknowledge. refused: the use cases Apply refuses, by name. picker: the use cases the picker's verdict names for the card; equal to refused unless refusedForEveryCard says the refusal is not the card's.",
+  "about": "#493 shared gate fixture. Each case stages one route change, as the route editor and the Golem model picker stage it, over a base document. apply_gates_test.go runs it through Apply (refuseIneligible and checkPreparedDocument) and the derived gates; frontend applyGates.test.ts runs it through touchedUseCasesOf, the confirmation set and the picker's verdict (governedUseCasesOf, floorShortfalls, golemModelVerdict) over projections.json, which the Go test writes. touched: the use cases the change touches. asks: the floorless ones the change must acknowledge, the ones it can narrow (#350). refused: the use cases Apply refuses, by name. picker: the use cases the picker's verdict names for the card; equal to refused unless refusedForEveryCard says the refusal is not the card's.",
   "bases": {
     "hybrid-cc": "golem_model_row/hybrid-cc.models.json",
     "chat-short": {
@@ -220,6 +220,21 @@
       "asks": ["completion"],
       "refused": ["chat"],
       "picker": ["chat"]
+    },
+    {
+      "name": "#350: an override that only widens what completion receives asks nothing",
+      "base": "fallback",
+      "useCase": "completion",
+      "card": {
+        "provider": "ollama",
+        "model": "fast-model",
+        "type": "dense",
+        "exposedCaps": ["chat", "generate", "stream", "tool_call"]
+      },
+      "touched": ["chat", "completion"],
+      "asks": [],
+      "refused": [],
+      "picker": []
     },
     {
       "name": "agent leaves with its selector's only list, and the routes left behind change",

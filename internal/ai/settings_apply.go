@@ -2005,10 +2005,11 @@ func refuseIneligible(cfg *config.Config, plan routePlan, asserted []string, cap
 			}
 			floor, ok := firnUseCaseFloors[useCase]
 			if !ok {
-				// Floorless: asked about only when touched, so a profile
-				// source's full scope never demands an acknowledgement the
-				// confirmation set excludes.
-				if gates.touched[useCase] && !gates.confirmed[useCase] {
+				// Floorless: asked about only when the Apply narrows it
+				// (#350), so neither a widening nor a profile source's full
+				// scope demands an acknowledgement the confirmation set
+				// excludes.
+				if gates.narrowed[useCase] && !gates.confirmed[useCase] {
 					unknown[useCase] = true
 				}
 				continue

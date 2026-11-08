@@ -58,6 +58,8 @@ import {
   editReachFor,
   reachOf,
   withReach,
+  narrowingOf,
+  touchedUseCasesOf,
 } from '../../types/golemConfig';
 
 const corpusDir = path.resolve(
@@ -673,17 +675,22 @@ describe('projected draft normalization', () => {
         { useCase: 'chat', role: 'chat-role' },
         { useCase: 'summarize', role: 'chat-role' },
       ],
-      models: [modelRow({ routedUseCases: ['chat', 'summarize'] })],
+      models: [modelRow({ routedUseCases: ['chat', 'summarize'], thinkMode: 'auto' })],
     };
-    // An override that sets Think changes what summarize receives too:
+    // An override that clears Think changes what summarize receives too:
     // SetRoleOverrides writes every role on the selector.
-    const projected = projectDraft(
-      base,
-      stage([routeChange({ useCase: 'chat', thinkMode: 'auto' })])
-    );
+    const projected = projectDraft(base, stage([routeChange({ useCase: 'chat', thinkMode: '' })]));
     expect(projected.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
     expect(selectorFields(projected.changes[0]).confirmUnknownUseCases).toEqual(['summarize']);
     expect(projected.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    // [#350] One that sets another Think mode touches summarize as well, yet
+    // narrows nothing: nothing to ask.
+    const reset = projectDraft(
+      base,
+      stage([routeChange({ useCase: 'chat', thinkMode: 'always' })])
+    );
+    expect(reset.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    expect(reset.changes[0]).not.toHaveProperty('confirmUnknownUseCases');
     // A fork onto a selector nobody is on leaves the source role, and
     // summarize with it, as it was: nothing to ask, chat alone to gate.
     const forked = projectDraft(
@@ -2966,5 +2973,72 @@ describe('reach of a route edit, not its gate (#307)', () => {
       group: { sameModel: ['planning'] },
       peersChange: true,
     });
+  });
+});
+
+describe('narrowing (#350)', () => {
+  const ALL: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+  const fast = modelRow({
+    role: 'fast-role',
+    modelName: 'fast',
+    effectiveCapabilities: ALL,
+    capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: ALL,
+    capabilityOverride: ALL,
+    thinkMode: 'toggle',
+    routedUseCases: ['completion', 'summarize'],
+  });
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'completion', role: 'fast-role' },
+      { useCase: 'summarize', role: 'fast-role' },
+    ],
+    models: [fast, modelRow({ role: 'other-role', modelName: 'other', routedUseCases: [] })],
+  };
+  const override = (over: Partial<RouteChange>): RouteChange =>
+    routeChange({
+      useCase: 'completion',
+      modelFacts: { provider: 'hosted', model: 'fast', type: 'dense' },
+      capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ALL,
+      thinkMode: 'toggle',
+      ...over,
+    });
+  const draft = cleanDraft(REVISION_A);
+
+  it('asks nothing for a change that only widens what a route receives', () => {
+    const widen = override({ exposedCaps: ['chat', 'generate', 'stream', 'tool_call'] });
+    expect(touchedUseCasesOf(base, [widen])).toEqual(new Set(['completion', 'summarize']));
+    expect(narrowingOf(base, [widen])).toEqual(new Map());
+    expect(affectedUseCases(base, draft, widen)).toEqual([]);
+  });
+
+  it('names what a narrowing change takes from every route it reaches', () => {
+    const narrow = override({ exposedCaps: ['chat', 'stream'] });
+    expect(narrowingOf(base, [narrow])).toEqual(
+      new Map([
+        ['completion', { loses: ['tool_call'], thinkCleared: false }],
+        ['summarize', { loses: ['tool_call'], thinkCleared: false }],
+      ])
+    );
+    expect(affectedUseCases(base, draft, narrow)).toEqual(['completion', 'summarize']);
+  });
+
+  it('counts a cleared Think as narrowing, and a set one as not', () => {
+    expect(narrowingOf(base, [override({ thinkMode: '' })]).get('completion')).toEqual({
+      loses: [],
+      thinkCleared: true,
+    });
+    expect(narrowingOf(base, [override({ thinkMode: 'always' })])).toEqual(new Map());
+  });
+
+  it('names the model a route moves to', () => {
+    const move = routeChange({
+      useCase: 'summarize',
+      modelFacts: { provider: 'hosted', model: 'other', type: 'dense' },
+    });
+    expect(narrowingOf(base, [move])).toEqual(
+      new Map([['summarize', { movesTo: 'other', loses: [], thinkCleared: false }]])
+    );
   });
 });

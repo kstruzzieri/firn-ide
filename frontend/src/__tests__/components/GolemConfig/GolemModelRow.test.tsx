@@ -550,22 +550,15 @@ describe('Codex round 2: the picker and the agent route editor stay in step', ()
     // Walk the picker away and back.
     await userEvent.click(optionNamed(can(), 'zai-org/GLM-5.2'));
     await userEvent.click(optionNamed(can(), 'qwen3.6:35b-a3b'));
-    // Withdraw the edit in Shared configuration. The walk left the picker
-    // with an unfinished choice (re-picking drops its acknowledgement), so
-    // the route editor asks for that first rather than replacing it.
+    // Withdraw the edit in Shared configuration. [#350] The staged edit only
+    // widens what chat and completion receive, so nothing was acknowledged:
+    // the walk ends on the staged values with no unfinished choice, and the
+    // route editor withdraws the edit at once.
     editor = await editAgent();
     await userEvent.click(within(editor).getByLabelText(/^thinking/));
     await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
-    expect(
-      within(editor).getByText(/Golem model picker has a model chosen but not used/, {
-        selector: 'p',
-      })
-    ).toBeInTheDocument();
-    await userEvent.click(within(picker()).getByRole('button', { name: 'Cancel' }));
-    await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
     expect(screen.queryByRole('group', { name: 'Route agent' })).toBeNull();
     expect(screen.queryByText(/staged change/)).toBeNull();
-    await openPicker();
 
     // The picker holds nothing the user did not pick there.
     expect(within(picker()).queryByRole('button', { name: 'Use model' })).toBeNull();

@@ -34,6 +34,9 @@ type applyGates struct {
 	confirmed map[string]bool
 	// touched is the touched set itself.
 	touched map[string]bool
+	// narrowed is the part of it the Apply can narrow (#350): the only
+	// floorless use cases asked about.
+	narrowed map[string]bool
 	// changed holds the roles whose state the Apply changes (or creates): on
 	// a touched use case's chain, each is a new answer to its floor.
 	changed map[string]bool
@@ -85,10 +88,12 @@ func deriveApplyGates(ctx context.Context, req SettingsApplyRequest, active, doc
 	if result != nil {
 		return nil, result // unreachable: the dry run planned the same request
 	}
+	narrowed := narrowedUseCases(before, after, touched)
 	gates := &applyGates{
-		confirm:   confirmationSets(before, after, plans, touched),
+		confirm:   confirmationSets(before, after, plans, narrowed),
 		confirmed: map[string]bool{},
 		touched:   touched,
+		narrowed:  narrowed,
 		changed:   changedRoles(before, after),
 	}
 	for _, useCases := range gates.confirm {
@@ -233,15 +238,16 @@ func touchedUseCases(before, after *config.Config) map[string]bool {
 	return touched
 }
 
-// confirmationSets attributes each floorless touched use case to the selector
-// groups whose changes touch it. A staged use case belongs to its own group.
+// confirmationSets attributes each floorless use case in asked — the touched
+// use cases the Apply narrows (#350) — to the selector groups whose changes
+// touch it. A staged use case belongs to its own group.
 // Any other touched use case keeps its chain and changes through a role on it
 // whose exposure or Think moved: such a role sits on a selector a group
 // routes onto (an override or an asserted list), or on one a retarget left
 // (taking the selector's only list with it), so it is asked in that group.
 // The set is per selector because the acknowledgement is selector-scoped
 // (§3.3): every staged route onto one model carries the same value.
-func confirmationSets(before, after *config.Config, plans []routePlan, touched map[string]bool) map[modelSelector][]string {
+func confirmationSets(before, after *config.Config, plans []routePlan, asked map[string]bool) map[modelSelector][]string {
 	sets := map[modelSelector]map[string]bool{}
 	staged := map[string]modelSelector{}
 	sources := map[modelSelector][]modelSelector{}
@@ -258,7 +264,7 @@ func confirmationSets(before, after *config.Config, plans []routePlan, touched m
 	}
 	routed, _ := roleUsage(before)
 	beforeOverrides, afterOverrides := selectorCapabilityOverrides(before), selectorCapabilityOverrides(after)
-	for useCase := range touched {
+	for useCase := range asked {
 		if _, floored := firnUseCaseFloors[useCase]; floored {
 			continue
 		}
@@ -287,4 +293,47 @@ func confirmationSets(before, after *config.Config, plans []routePlan, touched m
 		out[selector] = slices.Sorted(maps.Keys(set))
 	}
 	return out
+}
+
+// narrowedUseCases is the part of the touched set a change can NARROW (#350):
+// a route moved to another model (or newly bound), a capability a role on its
+// chain stops exposing, or a Think mode cleared. Only a floorless use case
+// the change narrows is asked about; adding a capability or setting Think
+// asks nothing.
+func narrowedUseCases(before, after *config.Config, touched map[string]bool) map[string]bool {
+	beforeOverrides, afterOverrides := selectorCapabilityOverrides(before), selectorCapabilityOverrides(after)
+	narrowed := map[string]bool{}
+	for useCase := range touched {
+		if narrows(chainStates(before, beforeOverrides, useCase), chainStates(after, afterOverrides, useCase)) {
+			narrowed[useCase] = true
+		}
+	}
+	return narrowed
+}
+
+// narrows compares two chains position by position: a different model at any
+// place (or a different length) moves the route; otherwise a capability the
+// earlier role exposed and the later one does not, or a Think mode cleared.
+func narrows(was, now []roleState) bool {
+	if len(was) != len(now) {
+		return true
+	}
+	for i, before := range was {
+		after := now[i]
+		if before.provider != after.provider || before.model != after.model ||
+			before.modelType != after.modelType || before.parameters != after.parameters ||
+			before.contextWindow != after.contextWindow || before.dimensions != after.dimensions {
+			return true
+		}
+		if before.think != "" && after.think == "" {
+			return true
+		}
+		kept := strings.Split(after.exposed, ",")
+		for _, capability := range strings.Split(before.exposed, ",") {
+			if capability != "" && !slices.Contains(kept, capability) {
+				return true
+			}
+		}
+	}
+	return false
 }

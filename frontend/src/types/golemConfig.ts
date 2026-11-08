@@ -1955,15 +1955,18 @@ const stagedSelectors = (
  * asserted list) or one a retarget leaves without its only list
  * (`selectorValuesOf`, the same values the reach groups paint).
  */
-const changedRoles = (base: DraftBaseProjection, changes: readonly Change[]): Set<string> => {
-  const out = new Set<string>();
+const changedRoles = (
+  base: DraftBaseProjection,
+  changes: readonly Change[]
+): Map<string, RoleValues> => {
+  const out = new Map<string, RoleValues>();
   for (const [key, selector] of stagedSelectors(base, changes)) {
     const valuesOf = selectorValuesOf(base, changes, selector);
     for (const model of base.models) {
       if (selectorKey(model.provider, model.modelName) !== key) continue;
       const after = valuesOf(model);
       if (!sameCaps(after.exposed, model.exposedCapabilities) || after.think !== model.thinkMode)
-        out.add(model.role);
+        out.set(model.role, after);
     }
   }
   return out;
@@ -2016,9 +2019,61 @@ const gateScopeOf = (
     ? new Set(['agent', ...touchedUseCasesOf(base, changes)])
     : undefined;
 
+/** [#350] What a change can take from a route it touches. */
+export interface Narrowing {
+  /** The model the route moves to (or is newly bound to). */
+  movesTo?: string;
+  /** Capabilities a role on its chain stops exposing, canonical order. */
+  loses: CapabilityName[];
+  /** A Think mode on its chain is cleared. */
+  thinkCleared: boolean;
+}
+
 /**
- * [#493] The backend's `confirmationSets`: each floorless touched use case,
- * attributed to the selector groups whose changes touch it. A staged use case
+ * [#350] The touched use cases the draft can NARROW, and how: a route moved
+ * to another model (or newly bound), a capability a role on its chain stops
+ * exposing, or a Think mode cleared. Adding a capability or setting Think
+ * narrows nothing. The backend's `narrowedUseCases` compares the documents;
+ * this reads the same changes from the projection.
+ */
+export function narrowingOf(
+  base: DraftBaseProjection,
+  changes: readonly Change[]
+): Map<string, Narrowing> {
+  const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
+  const modelOf = new Map(base.models.map((model) => [model.role, model]));
+  const staged = stagedRoutes(changes);
+  const changed = changedRoles(base, changes);
+  const out = new Map<string, Narrowing>();
+  for (const useCase of touchedUseCasesOf(base, changes)) {
+    const change = staged.get(useCase);
+    const role = roleOf.get(useCase);
+    const current = role === undefined ? undefined : modelOf.get(role);
+    if (
+      change !== undefined &&
+      (current === undefined || !sameModelFacts(current, change.modelFacts))
+    ) {
+      out.set(useCase, { movesTo: change.modelFacts.model, loses: [], thinkCleared: false });
+      continue;
+    }
+    const lost = new Set<CapabilityName>();
+    let thinkCleared = false;
+    for (const model of base.models) {
+      const after = changed.get(model.role);
+      if (after === undefined || !model.routedUseCases.includes(useCase)) continue;
+      for (const cap of model.exposedCapabilities) if (!after.exposed.includes(cap)) lost.add(cap);
+      if (model.thinkMode !== '' && after.think === '') thinkCleared = true;
+    }
+    if (lost.size > 0 || thinkCleared)
+      out.set(useCase, { loses: CAPABILITY_NAMES.filter((cap) => lost.has(cap)), thinkCleared });
+  }
+  return out;
+}
+
+/**
+ * [#493] The backend's `confirmationSets`: each floorless use case in `asked`
+ * — [#350] the touched ones the draft can narrow (`narrowingOf`) — attributed
+ * to the selector groups whose changes touch it. A staged use case
  * belongs to its own group; any other keeps its chain and changes through a
  * role whose values move (`changedRoles`), so it is asked in the group routed
  * onto that role's selector, and in every group whose retarget leaves it.
@@ -2026,7 +2081,7 @@ const gateScopeOf = (
 function confirmationSetsOf(
   base: DraftBaseProjection,
   changes: readonly Change[],
-  touched: ReadonlySet<string>
+  asked: ReadonlySet<string>
 ): Map<string, Set<string>> {
   const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
   const modelOf = new Map(base.models.map((model) => [model.role, model]));
@@ -2053,7 +2108,7 @@ function confirmationSetsOf(
     }
   }
   const changed = changedRoles(base, changes);
-  for (const useCase of touched) {
+  for (const useCase of asked) {
     if (USE_CASE_FLOORS.has(useCase)) continue;
     const own = staged.get(useCase);
     if (own !== undefined) {
@@ -2301,7 +2356,8 @@ export function projectDraft(base: DraftBaseProjection, draft: Draft): Projected
     draft.changes,
     draft.source.kind === 'applied' ? new Set(['agent', ...touched]) : undefined
   );
-  const confirmations = confirmationSetsOf(base, draft.changes, touched);
+  const narrowing = narrowingOf(base, draft.changes);
+  const confirmations = confirmationSetsOf(base, draft.changes, new Set(narrowing.keys()));
 
   for (const [key, group] of groups) {
     const affected = [...group.affected].sort(compareString);
@@ -2511,6 +2567,18 @@ export function affectedUseCases(
   const asked = probeProjection(base, draft, change).confirmUseCases.get(change.useCase) ?? [];
   return asked.includes(change.useCase) ? changedFirst(change.useCase, asked) : [...asked];
 }
+
+/**
+ * [#350] How `change`, staged over the draft as it stands, can narrow each
+ * route it touches (`narrowingOf`): what the question names for each use case
+ * it asks about.
+ */
+export const narrowingFor = (
+  base: DraftBaseProjection,
+  draft: Draft,
+  change: RouteChange
+): Map<string, Narrowing> =>
+  narrowingOf(base, stageChange(draft, change, new KeyVault(new Map())).changes);
 
 /**
  * Every use case `change` would GOVERN, the changed one first, then the rest

@@ -55,6 +55,7 @@ import {
 } from '../../types/golem';
 import {
   affectedUseCases,
+  narrowingFor,
   changeStableID,
   floorShortfalls,
   governedUseCasesOf,
@@ -79,6 +80,7 @@ import {
   type DraftBaseProjection,
   type DropField,
   type FloorShortfall,
+  type Narrowing,
   type ModelFacts,
   type RouteChange,
 } from '../../types/golemConfig';
@@ -134,6 +136,57 @@ const boldList = (names: readonly string[]): ReactNode =>
       <strong>{name}</strong>
     </Fragment>
   ));
+
+/**
+ * [#350][#337] What the change takes from each route the acknowledgement
+ * names — "This change moves summarize to gpt-5-mini and takes stream from
+ * completion and chat." — routes the change narrows the same way grouped
+ * under one clause. Said apart from why Firn asks, which is that it has no
+ * requirements on record for them.
+ */
+const narrowingSentence = (
+  useCases: readonly string[],
+  narrowed: ReadonlyMap<string, Narrowing>
+): ReactNode => {
+  const groups = new Map<string, { narrowing: Narrowing; names: string[] }>();
+  for (const useCase of useCases) {
+    const narrowing = narrowed.get(useCase);
+    if (narrowing === undefined) continue;
+    const key = JSON.stringify([narrowing.movesTo ?? '', narrowing.loses, narrowing.thinkCleared]);
+    const group = groups.get(key) ?? { narrowing, names: [] };
+    group.names.push(useCase);
+    groups.set(key, group);
+  }
+  const clauses: ReactNode[] = [];
+  for (const { narrowing, names } of groups.values()) {
+    if (narrowing.movesTo !== undefined)
+      clauses.push(
+        <>
+          moves {boldList(names)} to {narrowing.movesTo}
+        </>
+      );
+    if (narrowing.loses.length > 0)
+      clauses.push(
+        <>
+          takes {narrowing.loses.join(', ')} from {boldList(names)}
+        </>
+      );
+    if (narrowing.thinkCleared) clauses.push(<>clears Think for {boldList(names)}</>);
+  }
+  if (clauses.length === 0) return null;
+  return (
+    <>
+      This change{' '}
+      {clauses.map((clause, index) => (
+        <Fragment key={index}>
+          {index === 0 ? '' : index === clauses.length - 1 ? ' and ' : ', '}
+          {clause}
+        </Fragment>
+      ))}
+      .
+    </>
+  );
+};
 
 /**
  * [#307][#349] Who else the chosen model's values reach, by how: "agent also
@@ -604,6 +657,11 @@ export function RouteEditor({
     candidate === null || unchanged(candidate)
       ? [useCase]
       : affectedUseCases(base, draft, candidate);
+  /** [#350] What the candidate takes from each route it narrows, for the question's wording. */
+  const narrowed =
+    candidate === null || unchanged(candidate)
+      ? new Map<string, Narrowing>()
+      : narrowingFor(base, draft, candidate);
   const governed = candidate === null ? [useCase] : governedBy(candidate);
   /** [W4-2] The floor this route must meet: the union over everything it governs. */
   const floor = unionFloor(governed);
@@ -642,6 +700,8 @@ export function RouteEditor({
     candidate !== null && unchanged(candidate)
       ? []
       : affected.filter((other) => !USE_CASE_FLOORS.has(other));
+  /** [#337] The question's first half: what the change takes from each route it names. */
+  const narrowingText = narrowingSentence(unknownUseCases, narrowed);
 
   /**
    * An override — the same full facts the role already names — is the one
@@ -1349,10 +1409,16 @@ export function RouteEditor({
       {/* Staging is refused until this is acknowledged. */}
       {unknownUseCases.length > 0 && (
         <div className={styles.disclosure} data-tone="caution">
+          {narrowingText !== null && <p className={styles.disclosureText}>{narrowingText}</p>}
           <p className={styles.disclosureText}>
             Firn has <strong>no requirements on record for {listUseCases(unknownUseCases)}</strong>,
-            so it cannot check this model for {agrees(unknownUseCases, 'it', 'them')}. Mark{' '}
-            <strong>Apply anyway</strong> to accept that.
+            so it cannot tell whether{' '}
+            {agrees(
+              unknownUseCases,
+              'it still has what it needs',
+              'they still have what they need'
+            )}
+            . Mark <strong>Apply anyway</strong> to accept that.
           </p>
           <label
             className={styles.checkbox}
