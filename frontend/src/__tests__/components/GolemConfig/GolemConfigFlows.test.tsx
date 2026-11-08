@@ -2539,7 +2539,8 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     await mountWorkspace();
     await openRoute('chat');
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
-    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    // [#350] Another Think mode narrows nothing: nothing to ask.
+    expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
     await stage();
 
     const bar = screen.getByTestId('golem-config-draft');
@@ -2613,8 +2614,9 @@ describe('selector-wide siblings (firn-ide#315)', () => {
 
     await openRoute('reasoning');
     await userEvent.click(screen.getByRole('checkbox', { name: /^tool_call/ }));
-    // analysis, completion and reasoning have no floor on record: acknowledge the reach.
-    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    // [#350] completion and reasoning have no floor on record, but ticking a
+    // capability only widens what they receive: nothing to ask.
+    expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
     await stage();
 
     const rowOf = (useCase: string) => screen.getByTestId(`route-row-${useCase}`);
@@ -2688,8 +2690,9 @@ describe('selector-wide siblings (firn-ide#315)', () => {
 
     await openRoute('chat');
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'always');
-    // summarize has no floor on record: the selector-wide change needs the acknowledgement.
-    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    // summarize has no floor on record, but [#350] another Think mode
+    // narrows nothing: the selector-wide change asks nothing.
+    expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
     await stage();
 
     const sibling = screen.getByTestId('route-row-summarize');

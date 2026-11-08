@@ -1397,7 +1397,7 @@ type routePlan struct {
 // planRouteChanges classifies every route change against the pre-mutation
 // document, derives the generated role names, and runs the two non-writing
 // handshakes — exact drop confirmation and exact unknown-use-case
-// confirmation — before anything mutates. The dry run (nil gates) skips the
+// confirmation — before anything mutates. The dry run (dry gates) skips the
 // second: it is what derives the set the second checks.
 func planRouteChanges(base *config.Config, changes []Change, consumed map[string]bool, gates *applyGates) ([]routePlan, *SettingsApplyResult) {
 	routes := stagedChanges(changes, consumed, changeKindRoute)
@@ -1462,7 +1462,7 @@ func planRouteChanges(base *config.Config, changes []Change, consumed map[string
 	if result := verifySelectorGroups(plans); result != nil {
 		return nil, result
 	}
-	if gates != nil {
+	if !gates.isDry() {
 		if result := verifyRouteConfirmations(gates, plans); result != nil {
 			return nil, result
 		}
@@ -1698,6 +1698,9 @@ func applyRoutePlans(doc *config.Document, plans []routePlan, gates *applyGates)
 			if result := refuseIneligible(cfg, plan, opts.Capabilities, opts.Caps, opts.KnownMask, gates); result != nil {
 				return result
 			}
+			if opts.Capabilities != nil {
+				gates.recordWrite(plan.selector)
+			}
 		}
 		switch plan.action {
 		case routeCreate:
@@ -1741,6 +1744,7 @@ func applyRoutePlans(doc *config.Document, plans []routePlan, gates *applyGates)
 		if result := refuseIneligible(doc.Config(), plan, explicit, caps, known, gates); result != nil {
 			return result
 		}
+		gates.recordWrite(plan.selector)
 		if err := doc.SetRoleOverrides(
 			provider.ModelKey{Provider: plan.selector.provider, Model: plan.selector.model},
 			config.RoleOverrides{
@@ -1950,7 +1954,7 @@ func soleListHolder(cfg *config.Config, role string, selector modelSelector) boo
 // capabilities, only the in-scope floors and the confirmation this gate has
 // settled, so for a Firn floor it never fires first; when it does fire — a
 // parse error — its role-subject diagnostic maps as before. The dry run
-// (nil gates) checks nothing.
+// (dry gates) checks nothing.
 //
 // Roles (gateRoleEligibility, SetRoleOverrides): an override gates every role
 // on the selector; a retarget gates its own role, plus the selector's roles
@@ -1962,7 +1966,7 @@ func soleListHolder(cfg *config.Config, role string, selector modelSelector) boo
 // default whose chain contains a gated role (roleUsage), as aggregateVerdict
 // walks them.
 func refuseIneligible(cfg *config.Config, plan routePlan, asserted []string, caps, known provider.Capability, gates *applyGates) *SettingsApplyResult {
-	if gates == nil {
+	if gates.isDry() {
 		return nil
 	}
 	roles := map[string]bool{}
@@ -2005,10 +2009,11 @@ func refuseIneligible(cfg *config.Config, plan routePlan, asserted []string, cap
 			}
 			floor, ok := firnUseCaseFloors[useCase]
 			if !ok {
-				// Floorless: asked about only when touched, so a profile
-				// source's full scope never demands an acknowledgement the
-				// confirmation set excludes.
-				if gates.touched[useCase] && !gates.confirmed[useCase] {
+				// Floorless: asked about only when the Apply narrows it
+				// (#350), so neither a widening nor a profile source's full
+				// scope demands an acknowledgement the confirmation set
+				// excludes.
+				if gates.narrowed[useCase] && !gates.confirmed[useCase] {
 					unknown[useCase] = true
 				}
 				continue

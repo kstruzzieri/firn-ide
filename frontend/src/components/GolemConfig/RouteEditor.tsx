@@ -55,6 +55,7 @@ import {
 } from '../../types/golem';
 import {
   affectedUseCases,
+  narrowingFor,
   changeStableID,
   floorShortfalls,
   governedUseCasesOf,
@@ -79,6 +80,7 @@ import {
   type DraftBaseProjection,
   type DropField,
   type FloorShortfall,
+  type Narrowing,
   type ModelFacts,
   type RouteChange,
 } from '../../types/golemConfig';
@@ -134,6 +136,57 @@ const boldList = (names: readonly string[]): ReactNode =>
       <strong>{name}</strong>
     </Fragment>
   ));
+
+/**
+ * [#350][#337] What the change takes from each route the acknowledgement
+ * names — "This change moves summarize to gpt-5-mini and takes stream from
+ * completion and chat." — routes the change narrows the same way grouped
+ * under one clause. Said apart from why Firn asks, which is that it has no
+ * requirements on record for them.
+ */
+const narrowingSentence = (
+  useCases: readonly string[],
+  narrowed: ReadonlyMap<string, Narrowing>
+): ReactNode => {
+  const groups = new Map<string, { narrowing: Narrowing; names: string[] }>();
+  for (const useCase of useCases) {
+    const narrowing = narrowed.get(useCase);
+    if (narrowing === undefined) continue;
+    const key = JSON.stringify([narrowing.movesTo ?? '', narrowing.loses, narrowing.thinkCleared]);
+    const group = groups.get(key) ?? { narrowing, names: [] };
+    group.names.push(useCase);
+    groups.set(key, group);
+  }
+  const clauses: ReactNode[] = [];
+  for (const { narrowing, names } of groups.values()) {
+    if (narrowing.movesTo !== undefined)
+      clauses.push(
+        <>
+          moves {boldList(names)} to {narrowing.movesTo}
+        </>
+      );
+    if (narrowing.loses.length > 0)
+      clauses.push(
+        <>
+          takes {narrowing.loses.join(', ')} from {boldList(names)}
+        </>
+      );
+    if (narrowing.thinkCleared) clauses.push(<>clears Think for {boldList(names)}</>);
+  }
+  if (clauses.length === 0) return null;
+  return (
+    <>
+      This change{' '}
+      {clauses.map((clause, index) => (
+        <Fragment key={index}>
+          {index === 0 ? '' : index === clauses.length - 1 ? ' and ' : ', '}
+          {clause}
+        </Fragment>
+      ))}
+      .
+    </>
+  );
+};
 
 /**
  * [#307][#349] Who else the chosen model's values reach, by how: "agent also
@@ -431,6 +484,18 @@ export function RouteEditor({
   const [exposed, setExposed] = useState<CapabilityName[]>(seed.exposed);
   const [think, setThink] = useState<ThinkMode>(seed.think);
   const [ackUnknown, setAckUnknown] = useState(seed.ackUnknown);
+  /**
+   * [#350] What the acknowledgement was given for: the question on screen
+   * when it was ticked, or the record the staged change carries. It covers
+   * nothing a later staging adds to the question; a staged change with no
+   * record covers whatever is asked.
+   */
+  const stagedAckFor = staged?.kind === 'route' ? staged.confirmUnknownUseCases : undefined;
+  const [ackedFor, setAckedFor] = useState<readonly string[] | undefined>(stagedAckFor);
+  // What the staged acknowledgement covered when the editor opened, captured
+  // with `baseline`'s flag: a question that grows while the editor is open is
+  // one the row does not hold an answer to, so renewing it stays a change.
+  const [baselineAckFor] = useState<readonly string[] | undefined>(stagedAckFor);
   const [ackDrops, setAckDrops] = useState(seed.ackDrops);
   // A fresh request for every Done press, including an identical refusal.
   // Keep the visible message and keyboard focus stable while the alert clears.
@@ -604,6 +669,11 @@ export function RouteEditor({
     candidate === null || unchanged(candidate)
       ? [useCase]
       : affectedUseCases(base, draft, candidate);
+  /** [#350] What the candidate takes from each route it narrows, for the question's wording. */
+  const narrowed =
+    candidate === null || unchanged(candidate)
+      ? new Map<string, Narrowing>()
+      : narrowingFor(base, draft, candidate);
   const governed = candidate === null ? [useCase] : governedBy(candidate);
   /** [W4-2] The floor this route must meet: the union over everything it governs. */
   const floor = unionFloor(governed);
@@ -642,6 +712,8 @@ export function RouteEditor({
     candidate !== null && unchanged(candidate)
       ? []
       : affected.filter((other) => !USE_CASE_FLOORS.has(other));
+  /** [#337] The question's first half: what the change takes from each route it names. */
+  const narrowingText = narrowingSentence(unknownUseCases, narrowed);
 
   /**
    * An override — the same full facts the role already names — is the one
@@ -968,14 +1040,21 @@ export function RouteEditor({
   // staged `confirmUnknown` outlives its question when the unknown use case
   // has since been staged elsewhere (coalescing copies the flag), so an
   // untouched editor must not read it as an edit withdrawn.
-  const asked = (seed: Seed): Seed => ({
+  // [#350] And only for the use cases it was given for.
+  const asked = (seed: Seed, ackFor: readonly string[] | undefined): Seed => ({
     ...seed,
-    ackUnknown: seed.ackUnknown && unknownUseCases.length > 0,
+    ackUnknown:
+      seed.ackUnknown &&
+      unknownUseCases.length > 0 &&
+      (ackFor === undefined || unknownUseCases.every((other) => ackFor.includes(other))),
     ackDrops: seed.ackDrops && drops.length > 0,
   });
-  const now = asked({ provider, defined, manual, exposed, think, ackUnknown, ackDrops });
+  const now = asked({ provider, defined, manual, exposed, think, ackUnknown, ackDrops }, ackedFor);
   // The picker cannot edit exposure or Think; adopting them never holds Apply.
-  const was = asked(golem === undefined ? baseline : { ...baseline, exposed, think });
+  const was = asked(
+    golem === undefined ? baseline : { ...baseline, exposed, think },
+    baselineAckFor
+  );
   /**
    * What Done would stage that the row does not hold, in words, for the
    * footer — and the one fact the Done/Cancel offer reads (routeEdit.ts), so
@@ -1048,7 +1127,7 @@ export function RouteEditor({
       setRefusal(thinkConflicts.map(thinkConflictLine).join(' '));
       return;
     }
-    if (unknownUseCases.length > 0 && !ackUnknown) {
+    if (unknownUseCases.length > 0 && !now.ackUnknown) {
       setRefusal(
         `The requirements are unknown for ${unknownUseCases.join(', ')}. Confirm the change before staging it.`
       );
@@ -1077,8 +1156,13 @@ export function RouteEditor({
         {
           ...candidate,
           // The reducer derives the exact `confirmUnknownUseCases` set from the
-          // selector group; this is the acknowledgement that set requires.
+          // selector group; this is the acknowledgement that set requires,
+          // with a record of what it was given for [#350]: a later staging
+          // that grows the set does not inherit it.
           confirmUnknown: unknownUseCases.length > 0,
+          ...(unknownUseCases.length > 0
+            ? { confirmUnknownUseCases: [...unknownUseCases].sort(compareString) }
+            : {}),
           ...(drops.length > 0 ? { confirmDrops: drops } : {}),
         },
       ],
@@ -1349,10 +1433,16 @@ export function RouteEditor({
       {/* Staging is refused until this is acknowledged. */}
       {unknownUseCases.length > 0 && (
         <div className={styles.disclosure} data-tone="caution">
+          {narrowingText !== null && <p className={styles.disclosureText}>{narrowingText}</p>}
           <p className={styles.disclosureText}>
             Firn has <strong>no requirements on record for {listUseCases(unknownUseCases)}</strong>,
-            so it cannot check this model for {agrees(unknownUseCases, 'it', 'them')}. Mark{' '}
-            <strong>Apply anyway</strong> to accept that.
+            so it cannot tell whether{' '}
+            {agrees(
+              unknownUseCases,
+              'it still has what it needs',
+              'they still have what they need'
+            )}
+            . Mark <strong>Apply anyway</strong> to accept that.
           </p>
           <label
             className={styles.checkbox}
@@ -1361,9 +1451,10 @@ export function RouteEditor({
             <input
               className={styles.checkboxInput}
               type="checkbox"
-              checked={ackUnknown}
+              checked={now.ackUnknown}
               onChange={(event) => {
                 setAckUnknown(event.target.checked);
+                setAckedFor([...unknownUseCases]);
                 clearRefusal();
               }}
             />

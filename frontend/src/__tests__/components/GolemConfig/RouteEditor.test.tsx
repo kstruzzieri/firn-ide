@@ -1035,7 +1035,8 @@ describe('RouteEditor', () => {
     );
 
     await userEvent.selectOptions(screen.getByLabelText('Think mode'), 'auto');
-    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    // [#350] summarize only gains generate, and the rest have floors: nothing to ask.
+    expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
     await stage();
     const staged = onStage.mock.calls[0][0][0];
     const projected = projectDraft(
@@ -2381,8 +2382,12 @@ describe('RouteEditor', () => {
     await openRoute('summarize');
     await pickModel('gpt-5-mini');
 
+    // #337: what changes, then why the acknowledgement is needed.
+    expect(screen.getByText(/^This change/)).toHaveTextContent(
+      'This change moves summarize to gpt-5-mini.'
+    );
     expect(screen.getByText(/Firn has/)).toHaveTextContent(
-      'Firn has no requirements on record for summarize, so it cannot check this model for it. Mark Apply anyway to accept that.'
+      'Firn has no requirements on record for summarize, so it cannot tell whether it still has what it needs. Mark Apply anyway to accept that.'
     );
     await stage();
     expect(onStage).not.toHaveBeenCalled();
@@ -2392,8 +2397,154 @@ describe('RouteEditor', () => {
     await stage();
     const staged = onStage.mock.calls[0][0][0];
     expect(staged.confirmUnknown).toBe(true);
-    // The reducer owns the exact set; the editor supplies the acknowledgement.
-    expect(staged.confirmUnknownUseCases).toBeUndefined();
+    // The reducer owns the exact set; the editor supplies the acknowledgement
+    // and [#350] a record of what it was given for.
+    expect(staged.confirmUnknownUseCases).toEqual(['summarize']);
+  });
+
+  // #350: the question is asked only when the change can narrow what a
+  // route receives, and it names what the change takes from each one.
+  it('asks only when a change narrows a floorless route, naming what it takes', async () => {
+    const ALL: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    renderRouting({
+      routes: [
+        { useCase: 'completion', role: 'fast-role' },
+        { useCase: 'summarize', role: 'fast-role' },
+      ],
+      models: [
+        model({
+          role: 'fast-role',
+          modelName: 'fast',
+          effectiveCapabilities: ALL,
+          capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: ALL,
+          capabilityOverride: ALL,
+          routedUseCases: ['completion', 'summarize'],
+        }),
+      ],
+    });
+    await openRoute('completion');
+    await userEvent.click(screen.getByLabelText(/^generate/));
+    expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText(/^generate/));
+    await userEvent.click(screen.getByLabelText(/^tool_call/));
+    expect(screen.getByText(/^This change/)).toHaveTextContent(
+      'This change takes tool_call from completion and summarize.'
+    );
+    expect(screen.getByText(/Firn has/)).toHaveTextContent(
+      'Firn has no requirements on record for completion and summarize, so it cannot tell whether they still have what they need. Mark Apply anyway to accept that.'
+    );
+    expect(screen.getByLabelText('Apply anyway')).toBeInTheDocument();
+  });
+
+  // #350: an acknowledgement covers the question it was given for, not one a
+  // later edit grows.
+  it('unticks Apply anyway once the question names a route it was not given for', async () => {
+    const ALL: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    renderRouting({
+      routes: [
+        { useCase: 'completion', role: 'comp-role' },
+        { useCase: 'summarize', role: 'sum-role' },
+      ],
+      models: [
+        model({ role: 'comp-role', modelName: 'comp', routedUseCases: ['completion'] }),
+        model({
+          role: 'sum-role',
+          modelName: 'shared',
+          effectiveCapabilities: ALL,
+          capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: ALL,
+          capabilityOverride: ALL,
+          routedUseCases: ['summarize'],
+        }),
+      ],
+    });
+    await openRoute('completion');
+    await pickModel('shared');
+    expect(screen.getByText(/^This change/)).toHaveTextContent(
+      'This change moves completion to shared.'
+    );
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    expect(screen.getByLabelText('Apply anyway')).toBeChecked();
+
+    await userEvent.click(screen.getByLabelText(/^tool_call/));
+    expect(screen.getByText(/Firn has/)).toHaveTextContent(
+      'no requirements on record for completion and summarize'
+    );
+    expect(screen.getByLabelText('Apply anyway')).not.toBeChecked();
+  });
+
+  // #350 (Codex round 3): the question grows while the editor is open, here
+  // because completion's unassignment is withdrawn elsewhere. Ticking the box
+  // again is a change Done must still offer to stage.
+  it('offers Done for an acknowledgement renewed after the question grew', async () => {
+    const ALL: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    const listed = (role: string, useCase: string) =>
+      model({
+        role,
+        modelName: 'shared',
+        effectiveCapabilities: ALL,
+        capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: ALL,
+        capabilityOverride: ALL,
+        routedUseCases: [useCase],
+      });
+    const routes = [
+      { useCase: 'completion', role: 'comp-role' },
+      { useCase: 'summarize', role: 'sum-role' },
+    ];
+    const models = [listed('comp-role', 'completion'), listed('sum-role', 'summarize')];
+    const narrow: RouteChange = {
+      kind: 'route',
+      useCase: 'summarize',
+      modelFacts: { provider: 'hosted', model: 'shared', type: 'dense' },
+      capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: true,
+      confirmUnknownUseCases: ['summarize'],
+    };
+    const propsFor = (draft: ReturnType<typeof draftWith>): Partial<RoutingCardProps> => {
+      const projection = projectDraft({ routes, models }, draft);
+      return {
+        routes,
+        models,
+        draft,
+        changes: projection.changes,
+        selectorUseCases: projection.selectorUseCases,
+        routeReach: projection.routeReach,
+        reachGroups: projection.reachGroups,
+      };
+    };
+    const { rerender, onStage, onUnstagedChange } = renderRouting(
+      propsFor(draftWith({ kind: 'route-unassign', useCase: 'completion' }, narrow))
+    );
+    await openRoute('summarize');
+    expect(screen.getByLabelText('Apply anyway')).toBeChecked();
+
+    rerender(
+      <RoutingCard
+        {...({
+          providers: [providerRow()],
+          rows: new Map(),
+          roleRows: new Map(),
+          diagnostics: [],
+          editable: true,
+          onStage,
+          onUnstagedChange,
+          ...propsFor(draftWith(narrow)),
+        } as RoutingCardProps)}
+      />
+    );
+    expect(screen.getByText(/Firn has/)).toHaveTextContent(
+      'no requirements on record for summarize and completion'
+    );
+    expect(screen.getByLabelText('Apply anyway')).not.toBeChecked();
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage.mock.calls[0][0][0].confirmUnknownUseCases).toEqual(['completion', 'summarize']);
   });
 
   // Done is what refuses, so the refusal answers beside it: after the Pending
@@ -3560,7 +3711,10 @@ describe('RouteEditor', () => {
     expect(screen.getByText(/run on/).closest('[data-tone]')).toBe(merged);
     expect(merged).toHaveAttribute('data-tone', 'caution');
     expect(merged.querySelectorAll('p')).toHaveLength(1);
+    // [#350] Unticking tool_call takes it from completion too: that narrowing
+    // is what the acknowledgement below asks about.
     await userEvent.click(screen.getByLabelText(/^generate/));
+    await userEvent.click(screen.getByLabelText(/^tool_call/));
     expect(within(merged).getByText(/belong to/)).toHaveTextContent(
       'completion also uses gpt-5. The abilities above belong to the model, so the change reaches them too; Think applies to this route only.'
     );
@@ -3745,9 +3899,9 @@ describe('GolemConfigWorkspace route editing', () => {
 
     await openRoute('chat');
     await userEvent.click(screen.getByLabelText('generate'));
-    // The override reaches `summarize`, which has no Firn floor, so the
-    // acknowledgement is what unlocks the stage.
-    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    // The override reaches `summarize`, which has no Firn floor; [#350] it
+    // only gains generate, so nothing is asked.
+    expect(screen.queryByLabelText('Apply anyway')).not.toBeInTheDocument();
     // #284: a successful Done closes the editor itself now — no Cancel
     // needed to collapse it back to its row.
     await stage();
@@ -3989,15 +4143,16 @@ describe('RouteEditor union floor (wave 4c)', () => {
     expect(screen.queryByRole('checkbox', { name: 'Apply anyway' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
-    // The first real change brings the question (and the gate) back.
-    await userEvent.click(screen.getByLabelText(/^thinking/));
+    // The first real change that can narrow completion — [#350] moving it to
+    // another model — brings the question (and the gate) back.
+    await pickModel('gpt-5');
     expect(screen.getByRole('checkbox', { name: 'Apply anyway' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
     expect(onStage).not.toHaveBeenCalled();
     // Acknowledging, then undoing the only change: nothing to stage again,
     // and the acknowledgement does not survive as a change of its own.
     await userEvent.click(screen.getByRole('checkbox', { name: 'Apply anyway' }));
-    await userEvent.click(screen.getByLabelText(/^thinking/));
+    await pickModel('deepseek');
     expect(screen.queryByRole('checkbox', { name: 'Apply anyway' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();

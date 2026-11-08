@@ -20,9 +20,16 @@ import (
 // from the projection (`touchedUseCasesOf`), and the shared fixture under
 // testdata/apply_gates pins the two to each other.
 
-// applyGates is what one Apply's gates read. A nil *applyGates is the dry
-// run that derives it: every mutation runs ungated.
+// applyGates is what one Apply's gates read. The dry run that derives it
+// runs with a dry *applyGates (nil in tests that need no record): every
+// mutation runs ungated, and it records which selectors the staged changes
+// write.
 type applyGates struct {
+	// dry marks the deriving run; wrote is its record of every selector an
+	// override or an asserted capability list wrote.
+	dry   bool
+	wrote map[modelSelector]bool
+
 	// scope holds the use cases whose Firn floors are checked: agent plus the
 	// touched set. nil checks every default — a whole-document source (blank
 	// or profile) replaces the file, so every route in it is the Apply's.
@@ -34,6 +41,9 @@ type applyGates struct {
 	confirmed map[string]bool
 	// touched is the touched set itself.
 	touched map[string]bool
+	// narrowed is the part of it the Apply can narrow (#350): the only
+	// floorless use cases asked about.
+	narrowed map[string]bool
 	// changed holds the roles whose state the Apply changes (or creates): on
 	// a touched use case's chain, each is a new answer to its floor.
 	changed map[string]bool
@@ -46,6 +56,16 @@ func (g *applyGates) changedSet() map[string]bool {
 	return g.changed
 }
 
+// isDry reports whether gates belong to the deriving run, which checks nothing.
+func (g *applyGates) isDry() bool { return g == nil || g.dry }
+
+// recordWrite notes, in the deriving run, that a staged change wrote selector.
+func (g *applyGates) recordWrite(selector modelSelector) {
+	if g != nil && g.wrote != nil {
+		g.wrote[selector] = true
+	}
+}
+
 func (g *applyGates) inScope(useCase string) bool {
 	return g == nil || g.scope == nil || g.scope[useCase]
 }
@@ -56,7 +76,7 @@ func (g *applyGates) inScope(useCase string) bool {
 // already settled by the time the call runs. The dry run hands none.
 func (g *applyGates) floors() map[string]provider.Capability {
 	out := map[string]provider.Capability{}
-	if g == nil {
+	if g.isDry() {
 		return out
 	}
 	for useCase, floor := range firnUseCaseFloors {
@@ -76,7 +96,8 @@ func deriveApplyGates(ctx context.Context, req SettingsApplyRequest, active, doc
 	if result != nil {
 		return nil, result
 	}
-	if result := applyStagedChanges(scratch, req, consumed, nil); result != nil {
+	dry := &applyGates{dry: true, wrote: map[modelSelector]bool{}}
+	if result := applyStagedChanges(scratch, req, consumed, dry); result != nil {
 		return nil, result
 	}
 	before, after := doc.Config(), scratch.Config()
@@ -85,10 +106,12 @@ func deriveApplyGates(ctx context.Context, req SettingsApplyRequest, active, doc
 	if result != nil {
 		return nil, result // unreachable: the dry run planned the same request
 	}
+	narrowed := narrowedUseCases(before, after, touched)
 	gates := &applyGates{
-		confirm:   confirmationSets(before, after, plans, touched),
+		confirm:   confirmationSets(before, after, plans, narrowed, dry.wrote),
 		confirmed: map[string]bool{},
 		touched:   touched,
+		narrowed:  narrowed,
 		changed:   changedRoles(before, after),
 	}
 	for _, useCases := range gates.confirm {
@@ -233,23 +256,29 @@ func touchedUseCases(before, after *config.Config) map[string]bool {
 	return touched
 }
 
-// confirmationSets attributes each floorless touched use case to the selector
-// groups whose changes touch it. A staged use case belongs to its own group.
-// Any other touched use case keeps its chain and changes through a role on it
-// whose exposure or Think moved: such a role sits on a selector a group
-// routes onto (an override or an asserted list), or on one a retarget left
-// (taking the selector's only list with it), so it is asked in that group.
-// The set is per selector because the acknowledgement is selector-scoped
-// (§3.3): every staged route onto one model carries the same value.
-func confirmationSets(before, after *config.Config, plans []routePlan, touched map[string]bool) map[modelSelector][]string {
+// confirmationSets attributes each floorless use case in asked — the touched
+// use cases the Apply narrows (#350) — to the selector group whose change
+// narrows it, so the editor staging that change is the one that asks. A use
+// case whose own staged route moves it belongs to its own group. Any other
+// keeps its chain and is narrowed by a role on it that loses a capability or
+// its Think: that role's selector group when it WRITES the selector (an
+// override or an asserted list, as wrote records them), else every retarget
+// that left the selector taking its only list, else the selector's group. A
+// group that changes nothing on a selector never attracts a narrowing a later
+// group causes there. The set is per selector because the
+// acknowledgement is selector-scoped (§3.3): every staged route onto one
+// model carries the same value.
+func confirmationSets(before, after *config.Config, plans []routePlan, asked map[string]bool, wrote map[modelSelector]bool) map[modelSelector][]string {
 	sets := map[modelSelector]map[string]bool{}
-	staged := map[string]modelSelector{}
+	moved := map[string]modelSelector{}
 	sources := map[modelSelector][]modelSelector{}
 	for _, plan := range plans {
 		if sets[plan.selector] == nil {
 			sets[plan.selector] = map[string]bool{}
 		}
-		staged[plan.change.UseCase] = plan.selector
+		if plan.action != routeOverride {
+			moved[plan.change.UseCase] = plan.selector
+		}
 		if plan.action == routeRetarget {
 			m := before.Models[plan.role]
 			source := modelSelector{provider: m.Provider, model: m.Name}
@@ -258,11 +287,11 @@ func confirmationSets(before, after *config.Config, plans []routePlan, touched m
 	}
 	routed, _ := roleUsage(before)
 	beforeOverrides, afterOverrides := selectorCapabilityOverrides(before), selectorCapabilityOverrides(after)
-	for useCase := range touched {
+	for useCase := range asked {
 		if _, floored := firnUseCaseFloors[useCase]; floored {
 			continue
 		}
-		if group, ok := staged[useCase]; ok {
+		if group, ok := moved[useCase]; ok {
 			sets[group][useCase] = true
 			continue
 		}
@@ -270,15 +299,19 @@ func confirmationSets(before, after *config.Config, plans []routePlan, touched m
 			was, ok := before.Models[role]
 			now, still := after.Models[role]
 			if !ok || !still || !slices.Contains(users, useCase) ||
-				roleStateOf(was, beforeOverrides) == roleStateOf(now, afterOverrides) {
+				!narrows([]roleState{roleStateOf(was, beforeOverrides)}, []roleState{roleStateOf(now, afterOverrides)}) {
 				continue
 			}
 			selector := modelSelector{provider: was.Provider, model: was.Name}
-			if sets[selector] != nil {
+			switch {
+			case sets[selector] != nil && wrote[selector]:
 				sets[selector][useCase] = true
-			}
-			for _, group := range sources[selector] {
-				sets[group][useCase] = true
+			case len(sources[selector]) > 0:
+				for _, group := range sources[selector] {
+					sets[group][useCase] = true
+				}
+			case sets[selector] != nil:
+				sets[selector][useCase] = true
 			}
 		}
 	}
@@ -287,4 +320,47 @@ func confirmationSets(before, after *config.Config, plans []routePlan, touched m
 		out[selector] = slices.Sorted(maps.Keys(set))
 	}
 	return out
+}
+
+// narrowedUseCases is the part of the touched set a change can NARROW (#350):
+// a route moved to another model (or newly bound), a capability a role on its
+// chain stops exposing, or a Think mode cleared. Only a floorless use case
+// the change narrows is asked about; adding a capability or setting Think
+// asks nothing.
+func narrowedUseCases(before, after *config.Config, touched map[string]bool) map[string]bool {
+	beforeOverrides, afterOverrides := selectorCapabilityOverrides(before), selectorCapabilityOverrides(after)
+	narrowed := map[string]bool{}
+	for useCase := range touched {
+		if narrows(chainStates(before, beforeOverrides, useCase), chainStates(after, afterOverrides, useCase)) {
+			narrowed[useCase] = true
+		}
+	}
+	return narrowed
+}
+
+// narrows compares two chains position by position: a different model at any
+// place (or a different length) moves the route; otherwise a capability the
+// earlier role exposed and the later one does not, or a Think mode cleared.
+func narrows(was, now []roleState) bool {
+	if len(was) != len(now) {
+		return true
+	}
+	for i, before := range was {
+		after := now[i]
+		if before.provider != after.provider || before.model != after.model ||
+			before.modelType != after.modelType || before.parameters != after.parameters ||
+			before.contextWindow != after.contextWindow || before.dimensions != after.dimensions {
+			return true
+		}
+		if before.think != "" && after.think == "" {
+			return true
+		}
+		kept := strings.Split(after.exposed, ",")
+		for _, capability := range strings.Split(before.exposed, ",") {
+			if capability != "" && !slices.Contains(kept, capability) {
+				return true
+			}
+		}
+	}
+	return false
 }

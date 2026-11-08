@@ -58,6 +58,8 @@ import {
   editReachFor,
   reachOf,
   withReach,
+  narrowingOf,
+  touchedUseCasesOf,
 } from '../../types/golemConfig';
 
 const corpusDir = path.resolve(
@@ -673,17 +675,22 @@ describe('projected draft normalization', () => {
         { useCase: 'chat', role: 'chat-role' },
         { useCase: 'summarize', role: 'chat-role' },
       ],
-      models: [modelRow({ routedUseCases: ['chat', 'summarize'] })],
+      models: [modelRow({ routedUseCases: ['chat', 'summarize'], thinkMode: 'auto' })],
     };
-    // An override that sets Think changes what summarize receives too:
+    // An override that clears Think changes what summarize receives too:
     // SetRoleOverrides writes every role on the selector.
-    const projected = projectDraft(
-      base,
-      stage([routeChange({ useCase: 'chat', thinkMode: 'auto' })])
-    );
+    const projected = projectDraft(base, stage([routeChange({ useCase: 'chat', thinkMode: '' })]));
     expect(projected.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
     expect(selectorFields(projected.changes[0]).confirmUnknownUseCases).toEqual(['summarize']);
     expect(projected.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    // [#350] One that sets another Think mode touches summarize as well, yet
+    // narrows nothing: nothing to ask.
+    const reset = projectDraft(
+      base,
+      stage([routeChange({ useCase: 'chat', thinkMode: 'always' })])
+    );
+    expect(reset.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
+    expect(reset.changes[0]).not.toHaveProperty('confirmUnknownUseCases');
     // A fork onto a selector nobody is on leaves the source role, and
     // summarize with it, as it was: nothing to ask, chat alone to gate.
     const forked = projectDraft(
@@ -2966,5 +2973,191 @@ describe('reach of a route edit, not its gate (#307)', () => {
       group: { sameModel: ['planning'] },
       peersChange: true,
     });
+  });
+});
+
+describe('narrowing (#350)', () => {
+  const ALL: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+  const fast = modelRow({
+    role: 'fast-role',
+    modelName: 'fast',
+    effectiveCapabilities: ALL,
+    capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: ALL,
+    capabilityOverride: ALL,
+    thinkMode: 'toggle',
+    routedUseCases: ['completion', 'summarize'],
+  });
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'completion', role: 'fast-role' },
+      { useCase: 'summarize', role: 'fast-role' },
+    ],
+    models: [fast, modelRow({ role: 'other-role', modelName: 'other', routedUseCases: [] })],
+  };
+  const override = (over: Partial<RouteChange>): RouteChange =>
+    routeChange({
+      useCase: 'completion',
+      modelFacts: { provider: 'hosted', model: 'fast', type: 'dense' },
+      capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ALL,
+      thinkMode: 'toggle',
+      ...over,
+    });
+  const draft = cleanDraft(REVISION_A);
+
+  it('asks nothing for a change that only widens what a route receives', () => {
+    const widen = override({ exposedCaps: ['chat', 'generate', 'stream', 'tool_call'] });
+    expect(touchedUseCasesOf(base, [widen])).toEqual(new Set(['completion', 'summarize']));
+    expect(narrowingOf(base, [widen])).toEqual(new Map());
+    expect(affectedUseCases(base, draft, widen)).toEqual([]);
+  });
+
+  it('names what a narrowing change takes from every route it reaches', () => {
+    const narrow = override({ exposedCaps: ['chat', 'stream'] });
+    expect(narrowingOf(base, [narrow])).toEqual(
+      new Map([
+        ['completion', { loses: ['tool_call'], thinkCleared: false }],
+        ['summarize', { loses: ['tool_call'], thinkCleared: false }],
+      ])
+    );
+    expect(affectedUseCases(base, draft, narrow)).toEqual(['completion', 'summarize']);
+  });
+
+  it('counts a cleared Think as narrowing, and a set one as not', () => {
+    expect(narrowingOf(base, [override({ thinkMode: '' })]).get('completion')).toEqual({
+      loses: [],
+      thinkCleared: true,
+    });
+    expect(narrowingOf(base, [override({ thinkMode: 'always' })])).toEqual(new Map());
+  });
+
+  it('names the model a route moves to', () => {
+    const move = routeChange({
+      useCase: 'summarize',
+      modelFacts: { provider: 'hosted', model: 'other', type: 'dense' },
+    });
+    expect(narrowingOf(base, [move])).toEqual(
+      new Map([['summarize', { movesTo: 'other', loses: [], thinkCleared: false }]])
+    );
+  });
+});
+
+describe('the group that narrows asks (#350, Codex round 1)', () => {
+  const ALL: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+  const listed = (over: Partial<ModelProjection>): ModelProjection =>
+    modelRow({
+      effectiveCapabilities: ALL,
+      capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: ALL,
+      capabilityOverride: ALL,
+      ...over,
+    });
+  // completion runs on comp-role and falls back to chat-role, chat's own.
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'completion', role: 'comp-role' },
+      { useCase: 'chat', role: 'chat-role' },
+    ],
+    models: [
+      listed({
+        role: 'comp-role',
+        modelName: 'comp',
+        routedUseCases: ['completion'],
+        fallbacks: ['chat-role'],
+      }),
+      listed({ role: 'chat-role', modelName: 'chat', routedUseCases: ['chat', 'completion'] }),
+    ],
+  };
+  const widen = routeChange({
+    useCase: 'completion',
+    modelFacts: { provider: 'hosted', model: 'comp', type: 'dense' },
+    capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCaps: ['chat', 'generate', 'stream', 'tool_call'],
+  });
+  const narrow = routeChange({
+    useCase: 'chat',
+    modelFacts: { provider: 'hosted', model: 'chat', type: 'dense' },
+    capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCaps: ['chat', 'stream'],
+  });
+
+  it("asks in chat's editor, and leaves completion's widening unasked", () => {
+    const widened = stage([widen]);
+    expect(affectedUseCases(base, cleanDraft(REVISION_A), widen)).toEqual([]);
+    expect(affectedUseCases(base, widened, narrow)).toEqual(['completion']);
+    const projected = projectDraft(base, stage([widen, { ...narrow, confirmUnknown: true }]));
+    const sent = new Map(
+      projected.changes.flatMap((change) =>
+        change.kind === 'route' ? [[change.useCase, change]] : []
+      )
+    );
+    expect(sent.get('completion')).not.toHaveProperty('confirmUnknownUseCases');
+    expect(sent.get('chat')?.confirmUnknownUseCases).toEqual(['completion']);
+  });
+});
+
+describe('a departure asks in the retarget, and a grown set needs a new acknowledgement (#350, Codex round 2)', () => {
+  const DERIVED: CapabilityName[] = ['chat', 'generate', 'stream'];
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'completion', role: 'comp-role' },
+    ],
+    models: [
+      modelRow({
+        role: 'chat-role',
+        modelName: 'mixed',
+        effectiveCapabilities: DERIVED,
+        capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: DERIVED,
+        capabilityOverride: DERIVED,
+        routedUseCases: ['chat'],
+      }),
+      modelRow({
+        role: 'comp-role',
+        modelName: 'mixed',
+        type: 'embedding',
+        effectiveCapabilities: ['embed'],
+        capabilityFacts: { caps: ['embed'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: DERIVED,
+        routedUseCases: ['completion'],
+      }),
+    ],
+  };
+  const join = routeChange({
+    useCase: 'summarize',
+    modelFacts: { provider: 'hosted', model: 'mixed', type: 'dense' },
+    capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCaps: DERIVED,
+    confirmUnknown: true,
+    confirmUnknownUseCases: ['summarize'],
+  });
+  const leave = routeChange({
+    useCase: 'chat',
+    modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+  });
+  const sentOf = (draft: Draft) =>
+    new Map(
+      projectDraft(base, draft).changes.flatMap((change) =>
+        change.kind === 'route' ? [[change.useCase, change]] : []
+      )
+    );
+
+  it("asks about completion in chat's editor, not in summarize's join, which writes no list", () => {
+    expect(affectedUseCases(base, stage([join]), leave)).toEqual(['completion']);
+    const sent = sentOf(stage([join, { ...leave, confirmUnknown: true }]));
+    expect(sent.get('summarize')?.confirmUnknownUseCases).toEqual(['summarize']);
+    expect(sent.get('chat')?.confirmUnknownUseCases).toEqual(['completion']);
+  });
+
+  it('keeps an acknowledgement only while it covers what its group asks', () => {
+    expect(sentOf(stage([join])).get('summarize')?.confirmUnknown).toBe(true);
+    const stale = { ...join, confirmUnknownUseCases: ['vision'] };
+    expect(sentOf(stage([stale])).get('summarize')?.confirmUnknown).toBe(false);
+    // A change staged without a record of what it acknowledged keeps its flag.
+    const unrecorded: RouteChange = { ...join };
+    delete unrecorded.confirmUnknownUseCases;
+    expect(sentOf(stage([unrecorded])).get('summarize')?.confirmUnknown).toBe(true);
   });
 });
