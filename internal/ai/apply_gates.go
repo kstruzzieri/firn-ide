@@ -239,23 +239,27 @@ func touchedUseCases(before, after *config.Config) map[string]bool {
 }
 
 // confirmationSets attributes each floorless use case in asked — the touched
-// use cases the Apply narrows (#350) — to the selector groups whose changes
-// touch it. A staged use case belongs to its own group.
-// Any other touched use case keeps its chain and changes through a role on it
-// whose exposure or Think moved: such a role sits on a selector a group
-// routes onto (an override or an asserted list), or on one a retarget left
-// (taking the selector's only list with it), so it is asked in that group.
-// The set is per selector because the acknowledgement is selector-scoped
-// (§3.3): every staged route onto one model carries the same value.
+// use cases the Apply narrows (#350) — to the selector group whose change
+// narrows it, so the editor staging that change is the one that asks. A use
+// case whose own staged route moves it belongs to its own group. Any other
+// keeps its chain and is narrowed by a role on it that loses a capability or
+// its Think: that role's selector group when one is staged there (an
+// override or an asserted list writes it), else every retarget that left the
+// selector taking its only list. A widening a group made earlier never
+// attracts a later group's narrowing. The set is per selector because the
+// acknowledgement is selector-scoped (§3.3): every staged route onto one
+// model carries the same value.
 func confirmationSets(before, after *config.Config, plans []routePlan, asked map[string]bool) map[modelSelector][]string {
 	sets := map[modelSelector]map[string]bool{}
-	staged := map[string]modelSelector{}
+	moved := map[string]modelSelector{}
 	sources := map[modelSelector][]modelSelector{}
 	for _, plan := range plans {
 		if sets[plan.selector] == nil {
 			sets[plan.selector] = map[string]bool{}
 		}
-		staged[plan.change.UseCase] = plan.selector
+		if plan.action != routeOverride {
+			moved[plan.change.UseCase] = plan.selector
+		}
 		if plan.action == routeRetarget {
 			m := before.Models[plan.role]
 			source := modelSelector{provider: m.Provider, model: m.Name}
@@ -268,7 +272,7 @@ func confirmationSets(before, after *config.Config, plans []routePlan, asked map
 		if _, floored := firnUseCaseFloors[useCase]; floored {
 			continue
 		}
-		if group, ok := staged[useCase]; ok {
+		if group, ok := moved[useCase]; ok {
 			sets[group][useCase] = true
 			continue
 		}
@@ -276,12 +280,13 @@ func confirmationSets(before, after *config.Config, plans []routePlan, asked map
 			was, ok := before.Models[role]
 			now, still := after.Models[role]
 			if !ok || !still || !slices.Contains(users, useCase) ||
-				roleStateOf(was, beforeOverrides) == roleStateOf(now, afterOverrides) {
+				!narrows([]roleState{roleStateOf(was, beforeOverrides)}, []roleState{roleStateOf(now, afterOverrides)}) {
 				continue
 			}
 			selector := modelSelector{provider: was.Provider, model: was.Name}
 			if sets[selector] != nil {
 				sets[selector][useCase] = true
+				continue
 			}
 			for _, group := range sources[selector] {
 				sets[group][useCase] = true

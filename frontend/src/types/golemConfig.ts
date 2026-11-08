@@ -2073,10 +2073,13 @@ export function narrowingOf(
 /**
  * [#493] The backend's `confirmationSets`: each floorless use case in `asked`
  * — [#350] the touched ones the draft can narrow (`narrowingOf`) — attributed
- * to the selector groups whose changes touch it. A staged use case
- * belongs to its own group; any other keeps its chain and changes through a
- * role whose values move (`changedRoles`), so it is asked in the group routed
- * onto that role's selector, and in every group whose retarget leaves it.
+ * to the selector group whose change narrows it, so the editor staging that
+ * change is the one that asks. A use case its own staged route moves belongs
+ * to its own group; any other keeps its chain and is narrowed by a role on it
+ * that loses a capability or its Think (`changedRoles`): that role's selector
+ * group when one is staged there, else every retarget that left the selector
+ * taking its only list. A widening a group made earlier never attracts a
+ * later group's narrowing.
  */
 function confirmationSetsOf(
   base: DraftBaseProjection,
@@ -2086,15 +2089,16 @@ function confirmationSetsOf(
   const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
   const modelOf = new Map(base.models.map((model) => [model.role, model]));
   const sets = new Map<string, Set<string>>();
-  const staged = new Map<string, string>();
+  const moved = new Map<string, string>();
   const sources = new Map<string, string[]>();
   for (const change of changes) {
     if (change.kind !== 'route') continue;
     const key = selectorKey(change.modelFacts.provider, change.modelFacts.model);
     if (!sets.has(key)) sets.set(key, new Set());
-    staged.set(change.useCase, key);
     const role = roleOf.get(change.useCase);
     const current = role === undefined ? undefined : modelOf.get(role);
+    if (current === undefined || !sameModelFacts(current, change.modelFacts))
+      moved.set(change.useCase, key);
     // A retarget, as planRouteChanges classifies it: a real model change on a
     // role nothing else reaches.
     if (
@@ -2110,16 +2114,22 @@ function confirmationSetsOf(
   const changed = changedRoles(base, changes);
   for (const useCase of asked) {
     if (USE_CASE_FLOORS.has(useCase)) continue;
-    const own = staged.get(useCase);
+    const own = moved.get(useCase);
     if (own !== undefined) {
       sets.get(own)?.add(useCase);
       continue;
     }
     for (const model of base.models) {
-      if (!changed.has(model.role) || !model.routedUseCases.includes(useCase)) continue;
+      const after = changed.get(model.role);
+      if (after === undefined || !model.routedUseCases.includes(useCase)) continue;
+      const narrows =
+        model.exposedCapabilities.some((cap) => !after.exposed.includes(cap)) ||
+        (model.thinkMode !== '' && after.think === '');
+      if (!narrows) continue;
       const key = selectorKey(model.provider, model.modelName);
-      sets.get(key)?.add(useCase);
-      for (const group of sources.get(key) ?? []) sets.get(group)?.add(useCase);
+      const group = sets.get(key);
+      if (group !== undefined) group.add(useCase);
+      else for (const source of sources.get(key) ?? []) sets.get(source)?.add(useCase);
     }
   }
   return sets;

@@ -613,3 +613,33 @@ func TestNarrowedUseCases(t *testing.T) {
 		})
 	}
 }
+
+// Codex #350 round 1: completion's own change only widens it, and chat's
+// change narrows completion through the fallback completion reaches chat's
+// model by. The acknowledgement belongs to chat's change, which narrows it,
+// not to completion's, staged without one.
+func TestApplyAsksForANarrowingInTheGroupThatNarrows(t *testing.T) {
+	const target = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "comp-m": {"name": "comp-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"], "fallbacks": ["chat-m"]},
+    "chat-m": {"name": "chat-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]}
+  },
+  "defaults": {"agent": "agent-m", "completion": "comp-m", "chat": "chat-m"}
+}`
+	h := newApplyHarness(t, target)
+	widen := routeChange("completion", "ollama", "comp-model", "chat", "generate", "stream", "tool_call")
+	narrow := routeChange("chat", "ollama", "chat-model", "chat", "stream")
+	if _, _, res := applyOutcome(t, h, widen, narrow); res.Status != "diagnostics" ||
+		len(res.Diagnostics) != 1 || res.Diagnostics[0].Code != codeEligibilityUnknown ||
+		res.Diagnostics[0].SubjectName != "chat" {
+		t.Fatalf("unacknowledged narrowing = %+v, want one %s diagnostic on chat", res, codeEligibilityUnknown)
+	}
+	if accepted, refused, res := applyOutcome(t, h, widen, confirmUnknown(narrow, "completion")); !accepted {
+		t.Fatalf("narrowing acknowledged by the group that narrows was refused (%v): %+v", refused, res)
+	}
+}

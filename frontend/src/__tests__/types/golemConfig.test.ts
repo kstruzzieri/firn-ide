@@ -3042,3 +3042,57 @@ describe('narrowing (#350)', () => {
     );
   });
 });
+
+describe('the group that narrows asks (#350, Codex round 1)', () => {
+  const ALL: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+  const listed = (over: Partial<ModelProjection>): ModelProjection =>
+    modelRow({
+      effectiveCapabilities: ALL,
+      capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: ALL,
+      capabilityOverride: ALL,
+      ...over,
+    });
+  // completion runs on comp-role and falls back to chat-role, chat's own.
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'completion', role: 'comp-role' },
+      { useCase: 'chat', role: 'chat-role' },
+    ],
+    models: [
+      listed({
+        role: 'comp-role',
+        modelName: 'comp',
+        routedUseCases: ['completion'],
+        fallbacks: ['chat-role'],
+      }),
+      listed({ role: 'chat-role', modelName: 'chat', routedUseCases: ['chat', 'completion'] }),
+    ],
+  };
+  const widen = routeChange({
+    useCase: 'completion',
+    modelFacts: { provider: 'hosted', model: 'comp', type: 'dense' },
+    capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCaps: ['chat', 'generate', 'stream', 'tool_call'],
+  });
+  const narrow = routeChange({
+    useCase: 'chat',
+    modelFacts: { provider: 'hosted', model: 'chat', type: 'dense' },
+    capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCaps: ['chat', 'stream'],
+  });
+
+  it("asks in chat's editor, and leaves completion's widening unasked", () => {
+    const widened = stage([widen]);
+    expect(affectedUseCases(base, cleanDraft(REVISION_A), widen)).toEqual([]);
+    expect(affectedUseCases(base, widened, narrow)).toEqual(['completion']);
+    const projected = projectDraft(base, stage([widen, { ...narrow, confirmUnknown: true }]));
+    const sent = new Map(
+      projected.changes.flatMap((change) =>
+        change.kind === 'route' ? [[change.useCase, change]] : []
+      )
+    );
+    expect(sent.get('completion')).not.toHaveProperty('confirmUnknownUseCases');
+    expect(sent.get('chat')?.confirmUnknownUseCases).toEqual(['completion']);
+  });
+});
