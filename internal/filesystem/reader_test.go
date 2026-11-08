@@ -862,3 +862,156 @@ func entryPaths(t *testing.T, root string, entries []FileEntry) map[string]bool 
 	walk(entries)
 	return paths
 }
+
+// trackedIgnoredFixture is a workspace whose .gitignore matches files git
+// tracks (#536): CLAUDE.md was committed before "**/CLAUDE.md" was added, and
+// data/kaggle/a.csv was committed before "data/" was. Untracked files beside
+// them, and the untracked-only cache/ folder, stay hidden.
+func trackedIgnoredFixture(t *testing.T) (*DirectoryReader, string) {
+	t.Helper()
+	root := t.TempDir()
+	writeDirectoryFixture(t, root, map[string]string{
+		".gitignore":          "**/CLAUDE.md\ndata/\ncache/\n*.log\n",
+		"CLAUDE.md":           "tracked",
+		"keep.txt":            "",
+		"untracked.log":       "",
+		"data/top.csv":        "",
+		"data/kaggle/a.csv":   "tracked",
+		"data/kaggle/u.csv":   "",
+		"data/kaggle/.hidden": "",
+		"data/raw/u.csv":      "",
+		"cache/u.bin":         "",
+	})
+	reader := NewDirectoryReader(&OS{})
+	reader.SetTrackedIgnored(root, []string{"CLAUDE.md", "data/kaggle/a.csv"})
+	return reader, root
+}
+
+func TestReadDirectory_ListsTrackedFilesIgnoreRulesMatch(t *testing.T) {
+	reader, root := trackedIgnoredFixture(t)
+
+	entries, err := reader.ReadDirectory(root)
+	if err != nil {
+		t.Fatalf("ReadDirectory() error = %v", err)
+	}
+	paths := entryPaths(t, root, entries)
+	want := map[string]bool{
+		".gitignore":        true,
+		"CLAUDE.md":         true,
+		"keep.txt":          true,
+		"data":              true,
+		"data/kaggle":       true,
+		"data/kaggle/a.csv": true,
+	}
+	for path := range want {
+		if !paths[path] {
+			t.Errorf("expected %q to be visible", path)
+		}
+	}
+	for path := range paths {
+		if !want[path] {
+			t.Errorf("expected %q to stay hidden", path)
+		}
+	}
+}
+
+func TestReadDirectoryShallow_ListsTrackedFilesIgnoreRulesMatch(t *testing.T) {
+	reader, root := trackedIgnoredFixture(t)
+
+	tests := []struct {
+		path string
+		want []string
+	}{
+		{root, []string{"data", ".gitignore", "CLAUDE.md", "keep.txt"}},
+		// Inside an ignored folder only the tracked files and the folders
+		// leading to them are listed, though no rule matches them on their own.
+		{filepath.Join(root, "data"), []string{"kaggle"}},
+		{filepath.Join(root, "data", "kaggle"), []string{"a.csv"}},
+		{filepath.Join(root, "data", "raw"), nil},
+		{filepath.Join(root, "cache"), nil},
+	}
+	for _, test := range tests {
+		entries, err := reader.ReadDirectoryShallow(test.path, root)
+		if err != nil {
+			t.Fatalf("ReadDirectoryShallow(%q) error = %v", test.path, err)
+		}
+		var got []string
+		for _, entry := range entries {
+			got = append(got, entry.Name)
+		}
+		if strings.Join(got, ",") != strings.Join(test.want, ",") {
+			t.Errorf("ReadDirectoryShallow(%q) = %v, want %v", test.path, got, test.want)
+		}
+	}
+}
+
+func TestReadDirectory_TrackedIgnoredSetIsPerRoot(t *testing.T) {
+	reader, root := trackedIgnoredFixture(t)
+	reader.SetTrackedIgnored(filepath.Join(root, "elsewhere"), nil)
+
+	entries, err := reader.ReadDirectoryShallow(root, root)
+	if err != nil {
+		t.Fatalf("ReadDirectoryShallow() error = %v", err)
+	}
+	if !entryPaths(t, root, entries)["CLAUDE.md"] {
+		t.Fatalf("another root's set must not replace this root's: %+v", entries)
+	}
+}
+
+func TestSetTrackedIgnored_ReportsFoldersWhoseListingsChange(t *testing.T) {
+	root := filepath.FromSlash("/ws")
+	reader := NewDirectoryReader(&Mock{})
+	abs := func(rels ...string) []string {
+		out := make([]string, 0, len(rels))
+		for _, rel := range rels {
+			out = append(out, filepath.Join(root, filepath.FromSlash(rel)))
+		}
+		return out
+	}
+
+	steps := []struct {
+		paths []string
+		want  []string
+	}{
+		// An unknown root counts as an empty set.
+		{nil, nil},
+		{[]string{"data/kaggle/a.csv"}, abs(".", "data", "data/kaggle")},
+		{[]string{"data/kaggle/a.csv"}, nil},
+		{[]string{"data/kaggle/a.csv", "CLAUDE.md"}, abs(".")},
+		{nil, abs(".", "data", "data/kaggle")},
+	}
+	for i, step := range steps {
+		got := reader.SetTrackedIgnored(root, step.paths)
+		if strings.Join(got, "|") != strings.Join(step.want, "|") {
+			t.Errorf("step %d: SetTrackedIgnored(%v) = %v, want %v", i, step.paths, got, step.want)
+		}
+	}
+}
+
+func TestTrackedIgnoredFiles_ListsExistingFilesOutsideDotFolders(t *testing.T) {
+	reader, root := trackedIgnoredFixture(t)
+	writeDirectoryFixture(t, root, map[string]string{".github/ci.yml": "", ".env": ""})
+	reader.SetTrackedIgnored(root, []string{
+		"CLAUDE.md",
+		"data/kaggle/a.csv",
+		".env",
+		// #450 decides how search treats dot-folders.
+		".github/ci.yml",
+		// Deleted from the working tree but still in the index: ripgrep fails
+		// the whole search on a missing path.
+		"gone.txt",
+	})
+
+	got := reader.TrackedIgnoredFiles(root)
+	want := []string{
+		filepath.Join(root, ".env"),
+		filepath.Join(root, "CLAUDE.md"),
+		filepath.Join(root, "data", "kaggle", "a.csv"),
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("TrackedIgnoredFiles() = %v, want %v", got, want)
+	}
+	if other := reader.TrackedIgnoredFiles(filepath.Join(root, "data")); len(other) != 0 {
+		t.Fatalf("a root with no set has no files, got %v", other)
+	}
+}

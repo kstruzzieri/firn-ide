@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"firn/internal/git"
+	"log"
 	"time"
 )
 
@@ -31,7 +32,35 @@ func (a *App) gitCtx(timeout time.Duration) (context.Context, context.CancelFunc
 func (a *App) GitStatus(root string) (git.RepoStatus, error) {
 	ctx, cancel := a.gitCtx(gitLocalTimeout)
 	defer cancel()
-	return a.gitService.Status(ctx, root)
+	status, err := a.gitService.Status(ctx, root)
+	if err != nil {
+		return status, err
+	}
+	a.refreshTrackedIgnored(ctx, root, status.IsRepo)
+	return status, nil
+}
+
+// refreshTrackedIgnored re-reads the files git tracks under root that
+// .gitignore rules match, which the file tree and search list anyway (#536).
+// A commit, `git rm --cached` or a branch switch changes that set without
+// touching a watched file, so it rides on every git status refresh. When the
+// set moves, filetree:stale names the tree folders to re-read.
+func (a *App) refreshTrackedIgnored(ctx context.Context, root string, isRepo bool) {
+	var paths []string
+	if isRepo {
+		var err error
+		paths, err = a.gitService.TrackedIgnored(ctx, root)
+		if err != nil {
+			// A failed listing says nothing about what git tracks. Keep the
+			// last set: clearing it would hide the files #536 brought back
+			// until the next refresh succeeds.
+			log.Printf("firn: listing tracked files .gitignore matches under %s: %v", root, err)
+			return
+		}
+	}
+	if dirs := a.dirReader.SetTrackedIgnored(root, paths); len(dirs) > 0 {
+		a.emit("filetree:stale", dirs)
+	}
 }
 
 // GitStage adds repo-root-relative paths to the index.

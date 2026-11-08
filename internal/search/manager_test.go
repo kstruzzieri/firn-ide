@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -239,6 +240,62 @@ func TestManager_RespectsGitignoreOutsideGitRepo(t *testing.T) {
 	}
 	if !strings.HasSuffix(resp.Files[0].RelativePath, "included.txt") {
 		t.Errorf("matched relative path = %q, want included.txt", resp.Files[0].RelativePath)
+	}
+}
+
+// TestManager_SearchesIncludedIgnoredFiles: the tracked files a .gitignore
+// rule matches are passed as extra paths (#536), and ripgrep searches a path
+// named on its command line whatever the ignore rules say. Untracked files
+// the same rules match stay out.
+func TestManager_SearchesIncludedIgnoredFiles(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{
+		".gitignore":        "**/CLAUDE.md\ndata/\n",
+		"CLAUDE.md":         "needle\n",
+		"data/kaggle/a.csv": "needle\n",
+		"data/kaggle/u.csv": "needle\n",
+		"keep.txt":          "needle\n",
+	})
+
+	resp := NewManager().Search(context.Background(), SearchRequest{
+		RequestID: "tracked-ignored",
+		Root:      root,
+		Query:     "needle",
+	}, filepath.Join(root, "CLAUDE.md"), filepath.Join(root, "data", "kaggle", "a.csv"))
+	if resp.Status != StatusSuccess {
+		t.Fatalf("status = %s msg=%s", resp.Status, resp.Message)
+	}
+	var got []string
+	for _, file := range resp.Files {
+		got = append(got, file.RelativePath)
+	}
+	slices.Sort(got)
+	want := []string{"CLAUDE.md", "data/kaggle/a.csv", "keep.txt"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("files = %v, want %v", got, want)
+	}
+}
+
+// TestManager_IncludedFileTheWalkAlsoFindsIsReportedOnce: git and ripgrep
+// can disagree about whether a file is ignored (git honours core.ignorecase,
+// ripgrep matches case-sensitively), and ripgrep searches a file twice when
+// both the walk and an extra path reach it. Each line is reported once.
+func TestManager_IncludedFileTheWalkAlsoFindsIsReportedOnce(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{
+		"CLAUDE.md": "needle one\nplain\nneedle two\n",
+	})
+
+	resp := NewManager().Search(context.Background(), SearchRequest{
+		RequestID: "dup",
+		Root:      root,
+		Query:     "needle",
+	}, filepath.Join(root, "CLAUDE.md"))
+	if resp.Status != StatusSuccess {
+		t.Fatalf("status = %s msg=%s", resp.Status, resp.Message)
+	}
+	if resp.TotalFiles != 1 || resp.TotalLines != 2 || len(resp.Files[0].Matches) != 2 {
+		t.Fatalf("want 1 file with 2 lines, got totalFiles=%d totalLines=%d files=%+v", resp.TotalFiles, resp.TotalLines, resp.Files)
 	}
 }
 

@@ -22,6 +22,7 @@ import { resetLSPDocumentSyncState } from '../utils/lspDocumentSync';
 import { ReadDirectoryShallow } from '../wails/bindings';
 import { __resetEnsurePathLoaded } from '../hooks/useEnsurePathLoaded';
 import type { FileEvent } from '../types/watcher';
+import { EventsOn } from '../wails/runtime';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 // Plain-object helpers avoid FileEntry.convertValues edge cases in tests.
@@ -285,6 +286,37 @@ describe('App — surgical watcher reconcile', () => {
     const [a, backslash] = useIDEStore.getState().directoryTree;
     expect(a.children?.[0].children).toEqual([keep]);
     expect(backslash.children).toEqual([added]);
+  });
+
+  // #536: a git status refresh that moves the set of tracked files .gitignore
+  // matches changes no watched file, so the backend names the folders whose
+  // listings changed and they go through the same reconcile as watcher events.
+  it('re-reads the folders a filetree:stale event names', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [loadedDir('/r/data'), unloadedDir('/r/other')],
+        expandedPaths: new Set(['/r/data']),
+        isRootExpanded: true,
+      });
+    });
+    (ReadDirectoryShallow as jest.Mock).mockClear();
+
+    const call = (EventsOn as jest.Mock).mock.calls.find(([name]) => name === 'filetree:stale');
+    expect(call).toBeDefined();
+    const onStale = call![1] as (dirs: string[]) => void;
+    act(() => {
+      onStale(['/r/data', '/r/other']);
+      jest.advanceTimersByTime(100);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(ReadDirectoryShallow).toHaveBeenCalledTimes(1);
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/data', '/r');
   });
 
   // ── (b) loaded but collapsed dir → markDirty, no fetch ────────────────────

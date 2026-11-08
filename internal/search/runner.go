@@ -73,9 +73,12 @@ func isMissingTool(err error) bool {
 //  3. --json, --line-number, --column, --color=never: stable parsing contract.
 //  4. Mode flags: --fixed-strings, --case-sensitive/--ignore-case, --word-regexp.
 //  5. --regexp <query>: query is its own argv element; leading "-" is safe.
-//  6. -- <root>: end-of-options sentinel so paths starting with "-" are safe.
-func buildArgs(req SearchRequest) []string {
-	args := make([]string, 0, 15)
+//  6. -- <root> <include...>: end-of-options sentinel so paths starting with
+//     "-" are safe. include names files ripgrep must search although an
+//     ignore rule matches them, the tracked files of #536: ripgrep always
+//     searches a path named on its command line.
+func buildArgs(req SearchRequest, include ...string) []string {
+	args := make([]string, 0, 15+len(include))
 	args = append(args,
 		// Ignore any user-level ripgrep config file so our explicit flags
 		// are authoritative. Without this, a stray RIPGREP_CONFIG_PATH or
@@ -106,6 +109,7 @@ func buildArgs(req SearchRequest) []string {
 
 	args = append(args, "--regexp", req.Query)
 	args = append(args, "--", req.Root)
+	args = append(args, include...)
 	return args
 }
 
@@ -123,7 +127,7 @@ type runOutcome struct {
 // before rg finishes, runRipgrep returns errCanceled. Process group
 // cleanup is delegated to exec.CommandContext + Wait; exec.CommandContext
 // already kills the child process on context expiry on all supported OSes.
-func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatch func(filePath string, m LineMatch) bool) runOutcome {
+func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, include []string, onMatch func(filePath string, m LineMatch) bool) runOutcome {
 	bin, err := rgLookup(rgBinaryName)
 	if err != nil {
 		return runOutcome{Err: fmt.Errorf("ripgrep not found on PATH: %w", err)}
@@ -132,7 +136,7 @@ func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatc
 	runCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, bin, buildArgs(req)...)
+	cmd := exec.CommandContext(runCtx, bin, buildArgs(req, include...)...)
 	// Intentionally do not set cmd.Dir: we always pass an absolute search
 	// root as a positional argument, and ripgrep emits absolute paths in
 	// that mode. Setting Dir would couple ripgrep's CWD to the search root

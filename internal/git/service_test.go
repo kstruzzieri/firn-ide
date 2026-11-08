@@ -927,3 +927,34 @@ func TestService_StagedChanges_RejectsRawPathspecSpellingAsCopySource(t *testing
 		t.Fatalf("StagedChanges() = %+v, %v, want no changes and ErrUnexpectedCopySource", changes, err)
 	}
 }
+
+// TestTrackedIgnored_ListsTrackedFilesIgnoreRulesMatch: git applies .gitignore
+// only to untracked files, so a file committed before a pattern matched it,
+// or inside a folder ignored after the fact, stays tracked (#536). The list
+// is relative to the directory asked about, so a workspace inside a repo
+// gets its own paths.
+func TestTrackedIgnored_ListsTrackedFilesIgnoreRulesMatch(t *testing.T) {
+	dir := initRepo(t)
+	writeFile(t, dir, "ws/CLAUDE.md", "tracked\n")
+	writeFile(t, dir, "ws/data/kaggle/a.csv", "tracked\n")
+	writeFile(t, dir, "ws/keep.txt", "tracked\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "track")
+	writeFile(t, dir, "ws/.gitignore", "**/CLAUDE.md\ndata/\n")
+	writeFile(t, dir, "ws/data/kaggle/u.csv", "untracked\n")
+
+	got, err := NewService().TrackedIgnored(context.Background(), filepath.Join(dir, "ws"))
+	if err != nil {
+		t.Fatalf("TrackedIgnored: %v", err)
+	}
+	want := []string{"CLAUDE.md", "data/kaggle/a.csv"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("TrackedIgnored = %q, want %q", got, want)
+	}
+}
+
+func TestTrackedIgnored_OutsideRepoErrors(t *testing.T) {
+	if _, err := NewService().TrackedIgnored(context.Background(), t.TempDir()); err == nil {
+		t.Fatal("TrackedIgnored outside a repository must error; callers check IsRepo first")
+	}
+}

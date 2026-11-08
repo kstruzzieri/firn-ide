@@ -557,3 +557,23 @@ func (s *Service) runAtRoot(ctx context.Context, dir string, args ...string) (st
 	}
 	return s.run(ctx, root, args...)
 }
+
+// TrackedIgnored lists the files git tracks under dir that .gitignore rules
+// match, relative to dir and "/"-separated. Git applies .gitignore only to
+// untracked files, so these stay tracked and the file tree lists them (#536).
+// Only per-directory .gitignore files count, as in the tree's own matching:
+// --exclude-per-directory leaves out .git/info/exclude and core.excludesFile,
+// which --exclude-standard would add. Outside a repository it errors.
+func (s *Service) TrackedIgnored(ctx context.Context, dir string) ([]string, error) {
+	out, err := s.run(ctx, dir, "ls-files", "-z", "--cached", "--ignored", "--exclude-per-directory=.gitignore")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, path := range strings.Split(out, "\x00") {
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths, nil
+}

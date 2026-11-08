@@ -18,9 +18,10 @@ import (
 // the query is its own argv element rather than being string-templated.
 func TestBuildArgs(t *testing.T) {
 	cases := []struct {
-		name string
-		req  SearchRequest
-		want []string
+		name    string
+		req     SearchRequest
+		include []string
+		want    []string
 	}{
 		{
 			name: "literal-case-insensitive",
@@ -77,11 +78,25 @@ func TestBuildArgs(t *testing.T) {
 				"--", "/r",
 			},
 		},
+		{
+			// #536: ripgrep searches a path named on its command line even
+			// when an ignore rule matches it, so tracked, ignored files ride
+			// after the root.
+			name:    "included-paths-follow-the-root",
+			req:     SearchRequest{Root: "/r", Query: "needle"},
+			include: []string{"/r/CLAUDE.md", "/r/-data/a.csv"},
+			want: []string{
+				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
+				"--fixed-strings", "--ignore-case",
+				"--regexp", "needle",
+				"--", "/r", "/r/CLAUDE.md", "/r/-data/a.csv",
+			},
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildArgs(tc.req)
+			got := buildArgs(tc.req, tc.include...)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("buildArgs:\n got %#v\nwant %#v", got, tc.want)
 			}
@@ -214,6 +229,7 @@ func TestRunRipgrepCancelsProcessAtMatchCap(t *testing.T) {
 		context.Background(),
 		runnerConfig{MatchCap: matchCap, Timeout: time.Minute},
 		SearchRequest{RequestID: "cap", Root: "/tmp", Query: "needle"},
+		nil,
 		func(string, LineMatch) bool { delivered++; return true },
 	)
 

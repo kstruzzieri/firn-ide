@@ -62,7 +62,7 @@ func defaultStatRoot(p string) (bool, error) {
 // completes (or is canceled, or fails). The supplied ctx is composed with
 // the manager's per-request cancel function so CancelSearch(req.RequestID)
 // will abort an in-flight call.
-func (m *Manager) Search(ctx context.Context, req SearchRequest) SearchResponse {
+func (m *Manager) Search(ctx context.Context, req SearchRequest, include ...string) SearchResponse {
 	start := time.Now()
 	resp := SearchResponse{
 		RequestID: req.RequestID,
@@ -100,12 +100,19 @@ func (m *Manager) Search(ctx context.Context, req SearchRequest) SearchResponse 
 			buckets[filePath] = bucket
 			order = append(order, bucket)
 		}
+		// ripgrep reports a file's lines in ascending order, once per pass,
+		// and makes a second pass when the walk and an included path both
+		// reach the file (git and ripgrep can disagree about an ignore rule).
+		// A line at or before the last one kept is that second pass.
+		if n := len(bucket.matches); n > 0 && m.Line <= bucket.matches[n-1].Line {
+			return true
+		}
 		bucket.matches = append(bucket.matches, m)
 		totalLines++
 		return true
 	}
 
-	outcome := runRipgrep(runCtx, m.cfg, req, collector)
+	outcome := runRipgrep(runCtx, m.cfg, req, include, collector)
 
 	switch {
 	case errors.Is(outcome.Err, errCanceled):

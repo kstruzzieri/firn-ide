@@ -25,6 +25,7 @@ import { useGolemWindow } from './hooks/useGolemWindow';
 import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
+import { useFileTreeStale } from './hooks/useFileTreeStale';
 import { useGitSync } from './hooks/useGitSync';
 import { useWorkspaceSearch } from './hooks/useWorkspaceSearch';
 import { useWorkspaceDetection } from './hooks/useWorkspaceDetection';
@@ -195,6 +196,7 @@ function App() {
   );
 
   useFileWatcher(workspace?.path ?? null, handleFileChange);
+  useFileTreeStale(reconcileDir);
 
   useEffect(() => {
     const timers = reconcileTimersRef.current;

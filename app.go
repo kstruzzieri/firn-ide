@@ -1767,7 +1767,9 @@ func (a *App) SearchWorkspace(request search.SearchRequest) search.SearchRespons
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return a.searchManager.Search(ctx, request)
+	// Tracked files a .gitignore rule matches: the tree lists them (#536), and
+	// ripgrep searches them only when named.
+	return a.searchManager.Search(ctx, request, a.dirReader.TrackedIgnoredFiles(request.Root)...)
 }
 
 // CancelSearch aborts an in-flight search by RequestID. It is a no-op when
