@@ -1093,6 +1093,7 @@ export const USE_CASE_FLOORS: ReadonlyMap<string, readonly CapabilityName[]> = n
   readonly CapabilityName[]
 >([
   ['agent', ['chat', 'stream', 'tool_call']],
+  ['analysis', ['chat', 'stream']],
   ['chat', ['chat', 'stream']],
   ['embedding', ['embed']],
   ['planning', ['chat', 'stream', 'tool_call']],
@@ -1444,22 +1445,31 @@ export interface ProjectedDraft {
   /** Keyed by provider name. */
   providerRows: Map<string, RowMarkers>;
   /**
-   * Staged use case → the use cases the backend asks the user to CONFIRM
-   * (`gateRolesFor`): the ones its current role serves, plus the ones the
-   * target selector's roles serve when the change overrides or asserts
-   * exposure. Sorted. Wider than what changes — a fork leaves the source
-   * role's other use cases as they are — so this feeds the
-   * unknown-requirements acknowledgement and the values a routing row paints,
-   * never a floor (`governedUseCases`) or a row marker (the reach groups).
+   * Staged use case → the use cases its selector group can reach: the ones
+   * its current role serves, plus the ones the target selector's roles serve
+   * when the change overrides or asserts exposure. Sorted. Wider than what
+   * changes — a fork leaves the source role's other use cases as they are —
+   * so a routing row reads it only to find the staged change whose values it
+   * paints; never a floor (`governedUseCases`), a row marker (the reach
+   * groups) or the acknowledgement (`confirmUseCases`).
    */
   selectorUseCases: Map<string, string[]>;
+  /**
+   * [#493] Staged use case → the floorless use cases its selector group must
+   * acknowledge: the ones the draft TOUCHES (`touchedUseCasesOf`) that the
+   * group's changes reach. Sorted. The backend's `confirmationSets`
+   * attributes them the same way, and Apply requires exactly this set.
+   */
+  confirmUseCases: Map<string, string[]>;
   /**
    * Staged use case → the use cases the change actually GOVERNS (go-llm's
    * `gateRoleEligibility`): the changed one, plus the ones the roles already
    * on the target selector serve under the same override-or-asserted-exposure
    * condition. Sorted. The current role counts only when it sits on that
    * selector. This is the eligibility set: what the picker's floors must
-   * read. What a route edit alters is its reach (`editReachFor`).
+   * read. What a route edit alters is its reach (`editReachFor`). [#493] For
+   * an applied source, only agent and the use cases the draft touches: a
+   * route the change leaves alone is not this change's to refuse.
    */
   governedUseCases: Map<string, string[]>;
 }
@@ -1600,17 +1610,20 @@ interface SelectorGroup {
 
 /**
  * Groups staged route changes by provider+model and collects, per group, two
- * sets. `affected` mirrors the backend's gateRolesFor — what the user is asked
- * to confirm: the role each use case resolves to today, plus every role
- * already sharing the selector when the change is an override or asserts
- * capabilities explicitly. `governed` mirrors go-llm's gateRoleEligibility —
- * what the change actually gates: the changed use cases plus the selector's
- * roles under that same condition, never the current role's other use cases
- * unless that role sits on the selector (a fork leaves it as it is).
+ * sets. `affected` is every use case the group can reach: the role each use
+ * case resolves to today, plus every role already sharing the selector when
+ * the change is an override or asserts capabilities explicitly — the set a
+ * row reads to find the change whose values it paints. `governed` mirrors
+ * go-llm's gateRoleEligibility — what the change actually gates: the changed
+ * use cases plus the selector's roles under that same condition, never the
+ * current role's other use cases unless that role sits on the selector (a
+ * fork leaves it as it is) — narrowed to `scope` when given (#493: agent plus
+ * what the draft touches).
  */
 function selectorGroups(
   base: DraftBaseProjection,
-  changes: readonly Change[]
+  changes: readonly Change[],
+  scope?: ReadonlySet<string>
 ): Map<string, SelectorGroup> {
   const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
   const modelOf = new Map(base.models.map((model) => [model.role, model]));
@@ -1674,10 +1687,10 @@ function selectorGroups(
       })
       .map(changeStableID);
     const gates = overrides || gatingJoins.length > 0;
-    // The CONFIRMATION set stays the wide one the backend's gateRolesFor asks
-    // for: every change the editor stages carries a non-empty exposure [W5-1],
-    // so the roles already on the selector feed it for every real change; the
-    // guard stays for hand-built changes (probes, tests).
+    // The reach set stays wide: every change the editor stages carries a
+    // non-empty exposure [W5-1], so the roles already on the selector feed it
+    // for every real change; the guard stays for hand-built changes (probes,
+    // tests).
     if (!overrides && authority.exposedCaps.length === 0) continue;
     for (const model of base.models) {
       if (selectorKey(model.provider, model.modelName) !== key) continue;
@@ -1695,6 +1708,10 @@ function selectorGroups(
       }
     }
   }
+  // [#493] Decision 12: the gates read agent plus what the draft touches.
+  if (scope !== undefined)
+    for (const group of groups.values())
+      for (const useCase of group.governed) if (!scope.has(useCase)) group.governed.delete(useCase);
   return groups;
 }
 
@@ -1904,6 +1921,154 @@ const appliedValues = (role: ModelProjection): RoleValues => ({
   exposed: role.exposedCapabilities,
   think: role.thinkMode,
 });
+
+/**
+ * [#493] The current role of each staged route that is a real model change
+ * (not an override), and the selectors whose roles the draft can change: every
+ * staged destination, and every selector a staged route leaves.
+ */
+const stagedSelectors = (
+  base: DraftBaseProjection,
+  changes: readonly Change[]
+): Map<string, { provider: string; model: string }> => {
+  const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
+  const modelOf = new Map(base.models.map((model) => [model.role, model]));
+  const out = new Map<string, { provider: string; model: string }>();
+  for (const change of changes) {
+    if (change.kind !== 'route') continue;
+    const { provider, model } = change.modelFacts;
+    out.set(selectorKey(provider, model), { provider, model });
+    const role = roleOf.get(change.useCase);
+    const current = role === undefined ? undefined : modelOf.get(role);
+    if (current !== undefined)
+      out.set(selectorKey(current.provider, current.modelName), {
+        provider: current.provider,
+        model: current.modelName,
+      });
+  }
+  return out;
+};
+
+/**
+ * [#493] The applied roles whose exposure or Think the draft changes while
+ * they stay where they are: on a selector a group writes (an override, an
+ * asserted list) or one a retarget leaves without its only list
+ * (`selectorValuesOf`, the same values the reach groups paint).
+ */
+const changedRoles = (base: DraftBaseProjection, changes: readonly Change[]): Set<string> => {
+  const out = new Set<string>();
+  for (const [key, selector] of stagedSelectors(base, changes)) {
+    const valuesOf = selectorValuesOf(base, changes, selector);
+    for (const model of base.models) {
+      if (selectorKey(model.provider, model.modelName) !== key) continue;
+      const after = valuesOf(model);
+      if (!sameCaps(after.exposed, model.exposedCapabilities) || after.think !== model.thinkMode)
+        out.add(model.role);
+    }
+  }
+  return out;
+};
+
+/**
+ * [#493] Design decision 12: every use case the draft TOUCHES — one still
+ * routed once it applies whose model, chain or exposure changes. A staged
+ * route that is a real model change (a retarget, fork or new route; an
+ * override keeps the model) touches its own use case; a role whose exposure
+ * or Think changes touches every use case reaching it, fallbacks included
+ * (`routedUseCases`). An unassigned route has nothing left to check. Apply
+ * compares the documents before and after (internal/ai `touchedUseCases`);
+ * this predicts the same set from the projection, and the shared fixture in
+ * internal/ai/testdata/apply_gates pins the two to each other.
+ */
+export function touchedUseCasesOf(
+  base: DraftBaseProjection,
+  changes: readonly Change[]
+): Set<string> {
+  const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
+  const modelOf = new Map(base.models.map((model) => [model.role, model]));
+  const touched = new Set<string>();
+  for (const change of changes) {
+    if (change.kind !== 'route') continue;
+    const role = roleOf.get(change.useCase);
+    const current = role === undefined ? undefined : modelOf.get(role);
+    if (current === undefined || !sameModelFacts(current, change.modelFacts))
+      touched.add(change.useCase);
+  }
+  const changed = changedRoles(base, changes);
+  for (const model of base.models)
+    if (changed.has(model.role)) for (const useCase of model.routedUseCases) touched.add(useCase);
+  for (const change of changes)
+    if (change.kind === 'route-unassign') touched.delete(change.useCase);
+  return touched;
+}
+
+/**
+ * [#493] What a draft's gates read: agent plus the touched set. A source that
+ * replaces the document (blank, profile) makes every route the Apply's, so
+ * nothing narrows: undefined.
+ */
+const gateScopeOf = (
+  base: DraftBaseProjection,
+  draft: Pick<Draft, 'source'>,
+  changes: readonly Change[]
+): Set<string> | undefined =>
+  draft.source.kind === 'applied'
+    ? new Set(['agent', ...touchedUseCasesOf(base, changes)])
+    : undefined;
+
+/**
+ * [#493] The backend's `confirmationSets`: each floorless touched use case,
+ * attributed to the selector groups whose changes touch it. A staged use case
+ * belongs to its own group; any other keeps its chain and changes through a
+ * role whose values move (`changedRoles`), so it is asked in the group routed
+ * onto that role's selector, and in every group whose retarget leaves it.
+ */
+function confirmationSetsOf(
+  base: DraftBaseProjection,
+  changes: readonly Change[],
+  touched: ReadonlySet<string>
+): Map<string, Set<string>> {
+  const roleOf = new Map(base.routes.map((route) => [route.useCase, route.role]));
+  const modelOf = new Map(base.models.map((model) => [model.role, model]));
+  const sets = new Map<string, Set<string>>();
+  const staged = new Map<string, string>();
+  const sources = new Map<string, string[]>();
+  for (const change of changes) {
+    if (change.kind !== 'route') continue;
+    const key = selectorKey(change.modelFacts.provider, change.modelFacts.model);
+    if (!sets.has(key)) sets.set(key, new Set());
+    staged.set(change.useCase, key);
+    const role = roleOf.get(change.useCase);
+    const current = role === undefined ? undefined : modelOf.get(role);
+    // A retarget, as planRouteChanges classifies it: a real model change on a
+    // role nothing else reaches.
+    if (
+      current !== undefined &&
+      !sameModelFacts(current, change.modelFacts) &&
+      current.routedUseCases.length <= 1 &&
+      !isFallbackTarget(base, current.role)
+    ) {
+      const source = selectorKey(current.provider, current.modelName);
+      sources.set(source, [...(sources.get(source) ?? []), key]);
+    }
+  }
+  const changed = changedRoles(base, changes);
+  for (const useCase of touched) {
+    if (USE_CASE_FLOORS.has(useCase)) continue;
+    const own = staged.get(useCase);
+    if (own !== undefined) {
+      sets.get(own)?.add(useCase);
+      continue;
+    }
+    for (const model of base.models) {
+      if (!changed.has(model.role) || !model.routedUseCases.includes(useCase)) continue;
+      const key = selectorKey(model.provider, model.modelName);
+      sets.get(key)?.add(useCase);
+      for (const group of sources.get(key) ?? []) sets.get(group)?.add(useCase);
+    }
+  }
+  return sets;
+}
 
 /**
  * One staged change rebuilt from its selector's authority. Written out member
@@ -2128,18 +2293,26 @@ export function projectDraft(base: DraftBaseProjection, draft: Draft): Projected
   const providerRows = new Map<string, RowMarkers>();
   const selectorUseCases = new Map<string, string[]>();
   const governedUseCases = new Map<string, string[]>();
+  const confirmUseCases = new Map<string, string[]>();
   const normalized = new Map<string, RouteChange>();
-  const groups = selectorGroups(base, draft.changes);
+  const touched = touchedUseCasesOf(base, draft.changes);
+  const groups = selectorGroups(
+    base,
+    draft.changes,
+    draft.source.kind === 'applied' ? new Set(['agent', ...touched]) : undefined
+  );
+  const confirmations = confirmationSetsOf(base, draft.changes, touched);
 
-  for (const group of groups.values()) {
+  for (const [key, group] of groups) {
     const affected = [...group.affected].sort(compareString);
     const governed = [...group.governed].sort(compareString);
-    const unknownUseCases = affected.filter((useCase) => !USE_CASE_FLOORS.has(useCase));
+    const unknownUseCases = [...(confirmations.get(key) ?? [])].sort(compareString);
     const authority = group.changes[group.changes.length - 1];
     for (const change of group.changes) {
       normalized.set(change.useCase, coalesceRouteChange(change, authority, unknownUseCases));
       selectorUseCases.set(change.useCase, affected);
       governedUseCases.set(change.useCase, governed);
+      confirmUseCases.set(change.useCase, unknownUseCases);
     }
   }
 
@@ -2207,6 +2380,7 @@ export function projectDraft(base: DraftBaseProjection, draft: Draft): Projected
     providerRows,
     selectorUseCases,
     governedUseCases,
+    confirmUseCases,
     reachGroups,
     routeReach,
   };
@@ -2323,19 +2497,19 @@ const changedFirst = (useCase: string, set: readonly string[] | undefined): stri
 
 /**
  * Every use case the backend would ask the user to CONFIRM for `change`, the
- * changed one first: `projectDraft`'s `selectorUseCases` for its selector
- * group. Wider than what the change governs — the editor reads it for the
- * unknown-requirements acknowledgement only; floors read `governedUseCasesOf`.
+ * changed one first when it is asked: `projectDraft`'s `confirmUseCases` for
+ * its selector group — [#493] the floorless use cases the draft touches that
+ * the group reaches, never a route the change leaves alone. The editor reads
+ * it for the unknown-requirements acknowledgement only; floors read
+ * `governedUseCasesOf`.
  */
 export function affectedUseCases(
   base: DraftBaseProjection,
   draft: Draft,
   change: RouteChange
 ): string[] {
-  return changedFirst(
-    change.useCase,
-    probeProjection(base, draft, change).selectorUseCases.get(change.useCase)
-  );
+  const asked = probeProjection(base, draft, change).confirmUseCases.get(change.useCase) ?? [];
+  return asked.includes(change.useCase) ? changedFirst(change.useCase, asked) : [...asked];
 }
 
 /**
@@ -2391,7 +2565,7 @@ export function editReachFor(
   const others = draft.changes.filter((staged) => changeStableID(staged) !== id);
   const probe = stageChange(draft, change, new KeyVault(new Map())).changes;
   const key = selectorKey(selector.provider, selector.model);
-  const selectorGroup = selectorGroups(base, probe).get(key);
+  const selectorGroup = selectorGroups(base, probe, gateScopeOf(base, draft, probe)).get(key);
   if (selectorGroup === undefined) return undefined;
   const [group] = reachGroupsOf(
     base,

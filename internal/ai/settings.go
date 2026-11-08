@@ -129,15 +129,21 @@ var settingsDiagnosticCodes = []string{
 }
 
 // firnUseCaseFloors is THE Firn capability floor table: the minimum a model
-// must support for a use case Firn itself drives. It is the one Go source of
-// truth (testdata/settings_use_case_floors.json is the same table, shared with
-// the TypeScript mirror), and the agent row is the run path's own value so
-// a write can never accept a model the runtime would then refuse. A use case
-// absent from this table has no Firn requirement — upstream's eligibility gate
-// evaluates it as unknown, and the request must confirm it explicitly
+// must support for a use case. It is the one Go source of truth
+// (testdata/settings_use_case_floors.json is the same table, shared with the
+// TypeScript mirror), and the agent row is the run path's own value so a
+// write can never accept a model the runtime would then refuse. It is
+// Golem's table for the same models.json less `completion` (#493: `insert`
+// is never derived from a type, so every dense or moe card without an
+// explicit list would fall short), pinned by
+// TestFirnFloorsMatchGolemExceptCompletion. Apply checks a floor only for
+// agent and the use cases it touches (decision 12). A use case absent from
+// this table has no Firn requirement — upstream's eligibility gate evaluates
+// it as unknown, and a request that touches it must confirm it explicitly
 // (§3.3 confirmUnknownUseCases).
 var firnUseCaseFloors = map[string]provider.Capability{
 	useCaseAgent:           requiredAgentCaps,
+	"analysis":             agent.ModelCallCapabilities(false),
 	"chat":                 agent.ModelCallCapabilities(false),
 	"embedding":            provider.CapEmbed,
 	config.UseCasePlanning: agent.ModelCallCapabilities(true),

@@ -346,13 +346,16 @@ describe('Use model', () => {
       optionNamed(within(fold).getByRole('listbox', { name: 'Can run Golem' }), 'zai-org/GLM-5.2')
     );
     (ApplyGolemSettings as jest.Mock).mockResolvedValue(consentRequired());
-    await tickApplyAnywayIfAsked(fold);
+    // #493: the pick forks fast for agent; completion, which also reaches
+    // fast, keeps its chain, so nothing is asked.
+    expect(within(fold).queryByRole('checkbox', { name: 'Apply anyway' })).not.toBeInTheDocument();
     await userEvent.click(within(fold).getByRole('button', { name: 'Use model' }));
 
     await waitFor(() => expect(ApplyGolemSettings).toHaveBeenCalledTimes(1));
     const request = lastApply();
     // Only the picker's change, exactly what the route editor and Apply send.
     expect(request.changes).toEqual(pinnedRequest().changes);
+    expect(request.changes[0]).not.toHaveProperty('confirmUnknownUseCases');
     expect(request.targetRevision).toBe(reload.projection.revision);
 
     // The challenge shows in the picker; nothing is written until it passes.

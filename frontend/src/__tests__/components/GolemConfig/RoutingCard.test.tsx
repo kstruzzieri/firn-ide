@@ -1027,7 +1027,7 @@ describe('Defined models — Assign (wave 4d)', () => {
     expect(assign()).toHaveAttribute('aria-expanded', 'true');
     expect(assign()).toHaveAttribute('aria-controls', list().id);
     expect(list()).toHaveFocus();
-    expect(within(list()).getAllByRole('option')).toHaveLength(4);
+    expect(within(list()).getAllByRole('option')).toHaveLength(5);
     // spare-m declares chat + stream: agent and planning need tool_call, embedding
     // needs embed — the same clause the picker's blocked card carries.
     expect(optionNamed('agent')).toHaveAttribute('aria-disabled', 'true');
@@ -1037,6 +1037,8 @@ describe('Defined models — Assign (wave 4d)', () => {
       within(optionNamed('planning')).getByText('planning needs tool_call')
     ).toBeInTheDocument();
     expect(optionNamed('chat')).not.toHaveAttribute('aria-disabled');
+    // #493: analysis has chat's floor, which spare-m meets.
+    expect(optionNamed('analysis')).not.toHaveAttribute('aria-disabled');
     // The open row and its list are one outlined group, keyed apart from the bare row (C6).
     expect(screen.getByTestId('defined-model-row-spare').parentElement).toHaveAttribute(
       'role',
@@ -1111,7 +1113,7 @@ describe('Defined models — Assign (wave 4d)', () => {
     render(<RoutingCard {...props()} />);
     await user.click(assign());
     const options = within(list()).getAllByRole('option');
-    // The first ENABLED use case (chat) is active on open; agent is index 0 and disabled.
+    // The first ENABLED use case (analysis) is active on open; agent is index 0 and disabled.
     expect(list()).toHaveAttribute('aria-activedescendant', options[1].id);
     await user.keyboard('{ArrowDown}');
     expect(list()).toHaveAttribute('aria-activedescendant', options[2].id);
@@ -1119,7 +1121,7 @@ describe('Defined models — Assign (wave 4d)', () => {
     expect(reveal).toHaveBeenCalledTimes(2);
     expect(reveal).toHaveBeenLastCalledWith({ block: 'nearest' });
     await user.keyboard('{End}');
-    expect(list()).toHaveAttribute('aria-activedescendant', options[3].id);
+    expect(list()).toHaveAttribute('aria-activedescendant', options[4].id);
     await user.keyboard('{Home}');
     expect(list()).toHaveAttribute('aria-activedescendant', options[0].id);
     // Enter on a disabled use case is a no-op: the list stays.
@@ -1134,8 +1136,8 @@ describe('Defined models — Assign (wave 4d)', () => {
     const user = userEvent.setup();
     render(<RoutingCard {...props()} />);
     await user.click(assign());
-    await user.keyboard('{Enter}'); // chat is active on open
-    expect(screen.getByRole('group', { name: 'Route chat' })).toBeInTheDocument();
+    await user.keyboard('{Enter}'); // analysis is active on open
+    expect(screen.getByRole('group', { name: 'Route analysis' })).toBeInTheDocument();
     expect(screen.getByTestId('model-detail')).toHaveTextContent('spare-m');
   });
 

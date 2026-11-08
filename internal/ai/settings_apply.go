@@ -1187,10 +1187,14 @@ func prepareSettingsApply(ctx context.Context, req SettingsApplyRequest, mode ap
 	if result != nil {
 		return nil, result
 	}
-	if result := applyStagedChanges(doc, req, consumed); result != nil {
+	gates, result := deriveApplyGates(ctx, req, active, doc, consumed)
+	if result != nil {
 		return nil, result
 	}
-	if result := checkPreparedDocument(doc, req); result != nil {
+	if result := applyStagedChanges(doc, req, consumed, gates); result != nil {
+		return nil, result
+	}
+	if result := checkPreparedDocument(doc, req, gates); result != nil {
 		return nil, result
 	}
 	return &preparedSettingsApply{doc: doc, target: target, prior: prior}, nil
@@ -1393,8 +1397,9 @@ type routePlan struct {
 // planRouteChanges classifies every route change against the pre-mutation
 // document, derives the generated role names, and runs the two non-writing
 // handshakes — exact drop confirmation and exact unknown-use-case
-// confirmation — before anything mutates.
-func planRouteChanges(base *config.Config, changes []Change, consumed map[string]bool) ([]routePlan, *SettingsApplyResult) {
+// confirmation — before anything mutates. The dry run (nil gates) skips the
+// second: it is what derives the set the second checks.
+func planRouteChanges(base *config.Config, changes []Change, consumed map[string]bool, gates *applyGates) ([]routePlan, *SettingsApplyResult) {
 	routes := stagedChanges(changes, consumed, changeKindRoute)
 	routed, _ := roleUsage(base)
 	fallbacks := fallbackReferencedRoles(base)
@@ -1452,55 +1457,34 @@ func planRouteChanges(base *config.Config, changes []Change, consumed map[string
 	if len(drops) > 0 {
 		return nil, &SettingsApplyResult{Status: "drop_confirmation_required", Drops: drops}
 	}
-	if result := verifyRouteConfirmations(base, routed, plans); result != nil {
-		return nil, result
-	}
+	// Selector groups first, in the dry run and the gated run alike: the dry
+	// run cannot check confirmations, and two runs must refuse in one order.
 	if result := verifySelectorGroups(plans); result != nil {
 		return nil, result
+	}
+	if gates != nil {
+		if result := verifyRouteConfirmations(gates, plans); result != nil {
+			return nil, result
+		}
 	}
 	return plans, nil
 }
 
 // verifyRouteConfirmations checks the request's unknown-use-case
-// acknowledgement against the set Firn derives itself: every default the
-// mutation affects that has no Firn capability floor. The frontend cannot be
-// trusted to compute it, and a mismatch means the user was shown a different
-// set than the one about to change.
+// acknowledgement against the set Firn derives itself (decision 12): the
+// floorless use cases the Apply touches, per selector group
+// (confirmationSets). A route the change leaves alone is never asked about.
+// The frontend cannot be trusted to compute it, and a mismatch means the user
+// was shown a different set than the one about to change.
 //
-// The required set is derived PER SELECTOR, not per use case (§3.3: the field
-// is selector-scoped and must be byte-identical across every staged route on
-// one provider+model). Deriving it per use case would make a legitimate
-// request unsatisfiable — two floorless use cases staged onto one model would
-// each require their own value while the selector check requires one shared
-// value.
-func verifyRouteConfirmations(base *config.Config, routed map[string][]string, plans []routePlan) *SettingsApplyResult {
-	affected := map[modelSelector]map[string]bool{}
+// The required set is PER SELECTOR, not per use case (§3.3: the field is
+// selector-scoped and must be byte-identical across every staged route on one
+// provider+model). Deriving it per use case would make a legitimate request
+// unsatisfiable — two floorless use cases staged onto one model would each
+// require their own value while the selector check requires one shared value.
+func verifyRouteConfirmations(gates *applyGates, plans []routePlan) *SettingsApplyResult {
 	for _, plan := range plans {
-		group, ok := affected[plan.selector]
-		if !ok {
-			group = map[string]bool{}
-			affected[plan.selector] = group
-		}
-		group[plan.change.UseCase] = true
-		for role := range gateRolesFor(base, plan) {
-			for _, useCase := range routed[role] {
-				group[useCase] = true
-			}
-		}
-	}
-	unknown := map[modelSelector][]string{}
-	for selector, group := range affected {
-		names := make([]string, 0, len(group))
-		for useCase := range group {
-			if _, ok := firnUseCaseFloors[useCase]; !ok {
-				names = append(names, useCase)
-			}
-		}
-		slices.Sort(names)
-		unknown[selector] = names
-	}
-	for _, plan := range plans {
-		required := unknown[plan.selector]
+		required := gates.confirm[plan.selector]
 		if !slices.Equal(required, plan.change.ConfirmUnknownUseCases) ||
 			(len(required) > 0 && !plan.change.ConfirmUnknown) {
 			return blockingDiagnostics(Diagnostic{
@@ -1509,26 +1493,6 @@ func verifyRouteConfirmations(base *config.Config, routed map[string][]string, p
 		}
 	}
 	return nil
-}
-
-// gateRolesFor is the CONFIRMATION set for one plan: the role being changed,
-// plus every role already sharing the target selector — deliberately the
-// widest set the plan can touch, whether or not its exposure becomes an
-// explicit override (assertedCapabilities), so the user acknowledges every
-// floorless use case the request could reach and the frontend's `affected`
-// can mirror it from the projection alone. The ELIGIBILITY gate is narrower
-// and exact: refuseIneligible.
-func gateRolesFor(base *config.Config, plan routePlan) map[string]bool {
-	roles := map[string]bool{}
-	if plan.role != "" {
-		roles[plan.role] = true
-	}
-	for role, m := range base.Models {
-		if (modelSelector{provider: m.Provider, model: m.Name}) == plan.selector {
-			roles[role] = true
-		}
-	}
-	return roles
 }
 
 // verifySelectorGroups enforces §3.3 backend-side: every staged route pointing
@@ -1565,9 +1529,9 @@ func sameSelectorFields(a, b Change) bool {
 // unbind and guarded role removal -> provider removal.
 // ---------------------------------------------------------------------------
 
-func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed map[string]bool) *SettingsApplyResult {
+func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed map[string]bool, gates *applyGates) *SettingsApplyResult {
 	base := doc.Config() // pre-mutation view: classification only
-	plans, result := planRouteChanges(base, req.Changes, consumed)
+	plans, result := planRouteChanges(base, req.Changes, consumed, gates)
 	if result != nil {
 		return result
 	}
@@ -1608,7 +1572,7 @@ func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed
 			return actionDiagnostics(err)
 		}
 	}
-	if result := applyRoutePlans(doc, plans); result != nil {
+	if result := applyRoutePlans(doc, plans, gates); result != nil {
 		return result
 	}
 	for _, change := range stagedChanges(req.Changes, consumed, changeKindRouteUnassign) {
@@ -1629,7 +1593,7 @@ func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed
 	// identity, so a use case cannot be both rebound and unbound in one
 	// request, and nothing else can orphan a role born in this batch.
 	for _, change := range stagedChanges(req.Changes, consumed, changeKindRoleRemove) {
-		if result := dropRedundantListBeforeRemoval(doc, change.Role); result != nil {
+		if result := dropRedundantListBeforeRemoval(doc, change.Role, gates); result != nil {
 			return result
 		}
 		if err := doc.RemoveRole(change.Role); err != nil {
@@ -1656,7 +1620,7 @@ func applyStagedChanges(doc *config.Document, req SettingsApplyRequest, consumed
 // resolve differently without is left alone, and so is a role whose slots
 // value no sibling holds (the rewrite clears slots, and the removal guard
 // would otherwise lose that one too): go-llm's refusal stands for both.
-func dropRedundantListBeforeRemoval(doc *config.Document, role string) *SettingsApplyResult {
+func dropRedundantListBeforeRemoval(doc *config.Document, role string, gates *applyGates) *SettingsApplyResult {
 	cfg := doc.Config()
 	m, ok := cfg.Models[role]
 	if !ok || len(m.Capabilities) == 0 {
@@ -1698,7 +1662,7 @@ func dropRedundantListBeforeRemoval(doc *config.Document, role string) *Settings
 		ContextWindow: m.ContextWindow,
 		Dimensions:    m.Dimensions,
 	}, config.SetRoleModelOpts{
-		Requirements:   floorRequirements(),
+		Requirements:   gates.floors(),
 		Caps:           caps,
 		KnownMask:      provider.CanonicalCaps(),
 		ConfirmUnknown: true,
@@ -1718,20 +1682,20 @@ func dropRedundantListBeforeRemoval(doc *config.Document, role string) *Settings
 // whose floor fails (#338, #311). The overrides run after every bind: a use
 // case this Apply moves off an overridden selector has left it by then, and
 // is gated on its new role instead (#474).
-func applyRoutePlans(doc *config.Document, plans []routePlan) *SettingsApplyResult {
+func applyRoutePlans(doc *config.Document, plans []routePlan, gates *applyGates) *SettingsApplyResult {
 	overrides := make([]routePlan, 0, len(plans))
 	overridden := map[modelSelector]bool{}
 	for _, plan := range plans {
 		facts := roleFacts(plan.change)
 		cfg := doc.Config()
-		opts, err := roleOptions(cfg, plan)
+		opts, err := roleOptions(cfg, plan, gates)
 		if err != nil {
 			// Unreachable: request validation already requires canonical
 			// capability names from the closed vocabulary.
 			return blockingDiagnostics(Diagnostic{Code: codeInvalidArgument})
 		}
 		if plan.action != routeOverride {
-			if result := refuseIneligible(cfg, plan, opts.Capabilities, opts.Caps, opts.KnownMask); result != nil {
+			if result := refuseIneligible(cfg, plan, opts.Capabilities, opts.Caps, opts.KnownMask, gates); result != nil {
 				return result
 			}
 		}
@@ -1774,7 +1738,7 @@ func applyRoutePlans(doc *config.Document, plans []routePlan) *SettingsApplyResu
 		// equal to the derived set owns nothing (assertedCapabilities), so it
 		// widens no later join.
 		explicit := overrideCapabilities(plan.change.ExposedCaps)
-		if result := refuseIneligible(doc.Config(), plan, explicit, caps, known); result != nil {
+		if result := refuseIneligible(doc.Config(), plan, explicit, caps, known, gates); result != nil {
 			return result
 		}
 		if err := doc.SetRoleOverrides(
@@ -1784,8 +1748,9 @@ func applyRoutePlans(doc *config.Document, plans []routePlan) *SettingsApplyResu
 				ThinkMode:    plan.change.ThinkMode,
 			},
 			config.SetRoleOverridesOpts{
-				Requirements: floorRequirements(), Caps: caps, KnownMask: known,
-				ConfirmUnknown: plan.change.ConfirmUnknown,
+				// Firn's gate above settled every unknown verdict.
+				Requirements: gates.floors(), Caps: caps, KnownMask: known,
+				ConfirmUnknown: true,
 			}); err != nil {
 			return actionDiagnostics(err)
 		}
@@ -1795,9 +1760,12 @@ func applyRoutePlans(doc *config.Document, plans []routePlan) *SettingsApplyResu
 
 // checkPreparedDocument is the last non-writing gate. NewDocument and
 // BindUseCase guarantee go-llm validity only, so the FINISHED document must
-// still resolve Firn's agent and satisfy every configured Firn floor; and a
-// result Firn could not project is a result Firn must not write blind.
-func checkPreparedDocument(doc *config.Document, req SettingsApplyRequest) *SettingsApplyResult {
+// still resolve Firn's agent and satisfy the Firn floor of agent and of every
+// use case the Apply touches (decision 12; a route it leaves alone may already
+// fall short, and is not this edit's to refuse) — on its primary, and on every
+// role along its chain the Apply changed; and a result Firn could not project
+// is a result Firn must not write blind.
+func checkPreparedDocument(doc *config.Document, req SettingsApplyRequest, gates *applyGates) *SettingsApplyResult {
 	cfg := doc.Config()
 	// Keep the request-local verdict for an explicitly routed use case. The
 	// completed-document checks below cover changes whose effects are indirect.
@@ -1806,7 +1774,7 @@ func checkPreparedDocument(doc *config.Document, req SettingsApplyRequest) *Sett
 			continue
 		}
 		floor, ok := firnUseCaseFloors[change.UseCase]
-		if !ok {
+		if !ok || !gates.inScope(change.UseCase) {
 			continue
 		}
 		if !routeMeetsFloor(cfg, change.UseCase, floor) {
@@ -1826,7 +1794,8 @@ func checkPreparedDocument(doc *config.Document, req SettingsApplyRequest) *Sett
 	}
 	for _, useCase := range slices.Sorted(maps.Keys(cfg.Defaults)) {
 		floor, ok := firnUseCaseFloors[useCase]
-		if ok && !routeMeetsFloor(cfg, useCase, floor) {
+		if ok && gates.inScope(useCase) &&
+			(!routeMeetsFloor(cfg, useCase, floor) || !changedChainMeetsFloor(cfg, useCase, floor, gates.changedSet())) {
 			return blockingDiagnostics(Diagnostic{
 				Code: codeEligibilityIneligible, SubjectKind: "use_case", SubjectName: useCase,
 			})
@@ -1892,7 +1861,7 @@ func roleFacts(change Change) config.ModelFacts {
 // type-derived one, fully known — not the card's declaration: a card that
 // declares less than its type derives would otherwise be refused for a
 // capability the persisted role has.
-func roleOptions(cfg *config.Config, plan routePlan) (config.SetRoleModelOpts, error) {
+func roleOptions(cfg *config.Config, plan routePlan, gates *applyGates) (config.SetRoleModelOpts, error) {
 	caps, known, err := changeCapabilities(plan.change)
 	if err != nil {
 		return config.SetRoleModelOpts{}, err
@@ -1906,16 +1875,16 @@ func roleOptions(cfg *config.Config, plan routePlan) (config.SetRoleModelOpts, e
 		known = provider.CanonicalCaps()
 	}
 	return config.SetRoleModelOpts{
-		Requirements: floorRequirements(),
+		Requirements: gates.floors(),
 		Caps:         caps,
 		KnownMask:    known,
-		// A role that does not exist yet is routed by nothing, so upstream's
-		// gate can only ever return unknown/no_requirements for it. The
-		// eligibility question for the route being created is answered instead
-		// by the exact unknown-use-case confirmation above and by Firn's floor
-		// check on the finished document; an INELIGIBLE verdict — an override
-		// that would break a live sibling route — is still refused here.
-		ConfirmUnknown: plan.change.ConfirmUnknown || plan.newRole != "",
+		// Upstream reports every affected use case it has no requirement for
+		// as unknown, and its one flag cannot tell an out-of-scope use case
+		// from a touched one. Firn's own gate (refuseIneligible) settles both
+		// before the call runs — a touched floorless use case through the
+		// exact confirmation above, a floored one by its verdict — so the call
+		// confirms; an INELIGIBLE verdict on an in-scope floor still refuses.
+		ConfirmUnknown: true,
 		Capabilities:   asserted,
 		ThinkMode:      plan.change.ThinkMode,
 	}, nil
@@ -1971,12 +1940,17 @@ func soleListHolder(cfg *config.Config, role string, selector modelSelector) boo
 }
 
 // refuseIneligible mirrors upstream's eligibility gate for one plan against
-// cfg, the document as it stands when the plan's mutation runs, and refuses
-// an INELIGIBLE verdict naming the use cases whose Firn floors fail — the
-// subject a routing row can carry (#338). Upstream's own gate runs behind it
-// with the same roles, requirements and capabilities, so for a Firn floor it
-// never fires first; when it does fire — an unknown verdict without its
-// confirmation, a parse error — its role-subject diagnostic maps as before.
+// cfg, the document as it stands when the plan's mutation runs, over the use
+// cases in the gates' scope (decision 12: agent plus the touched set). It
+// refuses an INELIGIBLE verdict naming the use cases whose Firn floors fail —
+// the subject a routing row can carry (#338) — and an unknown verdict the
+// request has not confirmed: a touched floorless use case no group
+// acknowledges, or a floored one whose capability facts leave the verdict
+// open. Upstream's own gate runs behind it with the same roles and
+// capabilities, only the in-scope floors and the confirmation this gate has
+// settled, so for a Firn floor it never fires first; when it does fire — a
+// parse error — its role-subject diagnostic maps as before. The dry run
+// (nil gates) checks nothing.
 //
 // Roles (gateRoleEligibility, SetRoleOverrides): an override gates every role
 // on the selector; a retarget gates its own role, plus the selector's roles
@@ -1987,7 +1961,10 @@ func soleListHolder(cfg *config.Config, role string, selector modelSelector) boo
 // change's own capability facts under their known mask. Use cases: every
 // default whose chain contains a gated role (roleUsage), as aggregateVerdict
 // walks them.
-func refuseIneligible(cfg *config.Config, plan routePlan, asserted []string, caps, known provider.Capability) *SettingsApplyResult {
+func refuseIneligible(cfg *config.Config, plan routePlan, asserted []string, caps, known provider.Capability, gates *applyGates) *SettingsApplyResult {
+	if gates == nil {
+		return nil
+	}
 	roles := map[string]bool{}
 	var owned []string
 	for role, m := range cfg.Models {
@@ -2020,25 +1997,43 @@ func refuseIneligible(cfg *config.Config, plan routePlan, asserted []string, cap
 		evalCaps, evalKnown = parsed, provider.CanonicalCaps()
 	}
 	routed, _ := roleUsage(cfg)
-	failing := map[string]bool{}
+	failing, unknown := map[string]bool{}, map[string]bool{}
 	for role := range roles {
 		for _, useCase := range routed[role] {
-			floor, ok := firnUseCaseFloors[useCase]
-			if !ok {
+			if !gates.inScope(useCase) {
 				continue
 			}
-			if verdict, _ := provider.EvaluateCaps(floor, evalCaps, evalKnown); verdict == provider.CapIneligible {
+			floor, ok := firnUseCaseFloors[useCase]
+			if !ok {
+				// Floorless: asked about only when touched, so a profile
+				// source's full scope never demands an acknowledgement the
+				// confirmation set excludes.
+				if gates.touched[useCase] && !gates.confirmed[useCase] {
+					unknown[useCase] = true
+				}
+				continue
+			}
+			switch verdict, _ := provider.EvaluateCaps(floor, evalCaps, evalKnown); verdict {
+			case provider.CapIneligible:
 				failing[useCase] = true
+			case provider.CapUnknown:
+				if !plan.change.ConfirmUnknown && plan.newRole == "" {
+					unknown[useCase] = true
+				}
 			}
 		}
 	}
+	code, named := codeEligibilityIneligible, failing
 	if len(failing) == 0 {
+		code, named = codeEligibilityUnknown, unknown
+	}
+	if len(named) == 0 {
 		return nil
 	}
-	diagnostics := make([]Diagnostic, 0, len(failing))
-	for _, useCase := range slices.Sorted(maps.Keys(failing)) {
+	diagnostics := make([]Diagnostic, 0, len(named))
+	for _, useCase := range slices.Sorted(maps.Keys(named)) {
 		diagnostics = append(diagnostics, Diagnostic{
-			Code: codeEligibilityIneligible, SubjectKind: "use_case", SubjectName: useCase,
+			Code: code, SubjectKind: "use_case", SubjectName: useCase,
 		})
 	}
 	return blockingDiagnostics(diagnostics...)
@@ -2050,13 +2045,6 @@ func changeCapabilities(change Change) (caps, known provider.Capability, err err
 	}
 	known, err = provider.ParseCapsStrict(change.CapabilityFacts.KnownCaps)
 	return caps, known, err
-}
-
-// floorRequirements is the per-call copy of the floor table handed to
-// upstream's eligibility gate. The gate reads only the affected use cases, and
-// a use case Firn has no floor for evaluates as unknown by design.
-func floorRequirements() map[string]provider.Capability {
-	return maps.Clone(firnUseCaseFloors)
 }
 
 // overrideCapabilities maps the exposed-capability contract onto upstream's

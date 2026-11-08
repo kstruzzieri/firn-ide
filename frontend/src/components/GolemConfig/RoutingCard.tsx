@@ -40,6 +40,7 @@ import {
   shortfallLine,
   withReach,
   stagedRoutes,
+  USE_CASE_FLOORS,
   type Change,
   type Draft,
   type RouteChange,
@@ -85,7 +86,22 @@ function routeStatus(
 ): { label: string; tone: StatusTone; detail?: string } {
   // §3.3: No model and Incompatible take precedence over Modified.
   if (view === null) return { label: 'No model', tone: 'dim' };
-  if (!meetsUseCaseFloor(useCase, view.caps)) return { label: 'Incompatible', tone: 'bad' };
+  if (!meetsUseCaseFloor(useCase, view.caps)) {
+    // #493: what is missing, as visible text. A row the draft changes is one
+    // Apply refuses; one it leaves alone already falls short, and Apply no
+    // longer refuses an unrelated edit for it, so it only warns.
+    const missing = (USE_CASE_FLOORS.get(useCase) ?? []).filter((cap) => !view.caps.includes(cap));
+    const changes =
+      sourceReplaced ||
+      markers?.modified === true ||
+      markers?.affected === true ||
+      reach !== undefined;
+    return {
+      label: 'Incompatible',
+      tone: changes ? 'bad' : 'warn',
+      detail: `needs ${missing.join(', ')}`,
+    };
+  }
   const detail = reach === undefined ? undefined : REACH_DETAIL[reach];
   // Review outranks the reach labels, but the row still says how it is reached.
   if (markers?.needsReview === true) return { label: 'Needs review', tone: 'warn', detail };
