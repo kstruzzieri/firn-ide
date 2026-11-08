@@ -3096,3 +3096,68 @@ describe('the group that narrows asks (#350, Codex round 1)', () => {
     expect(sent.get('chat')?.confirmUnknownUseCases).toEqual(['completion']);
   });
 });
+
+describe('a departure asks in the retarget, and a grown set needs a new acknowledgement (#350, Codex round 2)', () => {
+  const DERIVED: CapabilityName[] = ['chat', 'generate', 'stream'];
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'chat', role: 'chat-role' },
+      { useCase: 'completion', role: 'comp-role' },
+    ],
+    models: [
+      modelRow({
+        role: 'chat-role',
+        modelName: 'mixed',
+        effectiveCapabilities: DERIVED,
+        capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: DERIVED,
+        capabilityOverride: DERIVED,
+        routedUseCases: ['chat'],
+      }),
+      modelRow({
+        role: 'comp-role',
+        modelName: 'mixed',
+        type: 'embedding',
+        effectiveCapabilities: ['embed'],
+        capabilityFacts: { caps: ['embed'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: DERIVED,
+        routedUseCases: ['completion'],
+      }),
+    ],
+  };
+  const join = routeChange({
+    useCase: 'summarize',
+    modelFacts: { provider: 'hosted', model: 'mixed', type: 'dense' },
+    capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCaps: DERIVED,
+    confirmUnknown: true,
+    confirmUnknownUseCases: ['summarize'],
+  });
+  const leave = routeChange({
+    useCase: 'chat',
+    modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+  });
+  const sentOf = (draft: Draft) =>
+    new Map(
+      projectDraft(base, draft).changes.flatMap((change) =>
+        change.kind === 'route' ? [[change.useCase, change]] : []
+      )
+    );
+
+  it("asks about completion in chat's editor, not in summarize's join, which writes no list", () => {
+    expect(affectedUseCases(base, stage([join]), leave)).toEqual(['completion']);
+    const sent = sentOf(stage([join, { ...leave, confirmUnknown: true }]));
+    expect(sent.get('summarize')?.confirmUnknownUseCases).toEqual(['summarize']);
+    expect(sent.get('chat')?.confirmUnknownUseCases).toEqual(['completion']);
+  });
+
+  it('keeps an acknowledgement only while it covers what its group asks', () => {
+    expect(sentOf(stage([join])).get('summarize')?.confirmUnknown).toBe(true);
+    const stale = { ...join, confirmUnknownUseCases: ['vision'] };
+    expect(sentOf(stage([stale])).get('summarize')?.confirmUnknown).toBe(false);
+    // A change staged without a record of what it acknowledged keeps its flag.
+    const unrecorded: RouteChange = { ...join };
+    delete unrecorded.confirmUnknownUseCases;
+    expect(sentOf(stage([unrecorded])).get('summarize')?.confirmUnknown).toBe(true);
+  });
+});

@@ -484,6 +484,14 @@ export function RouteEditor({
   const [exposed, setExposed] = useState<CapabilityName[]>(seed.exposed);
   const [think, setThink] = useState<ThinkMode>(seed.think);
   const [ackUnknown, setAckUnknown] = useState(seed.ackUnknown);
+  /**
+   * [#350] What the acknowledgement was given for: the question on screen
+   * when it was ticked, or the record the staged change carries. It covers
+   * nothing a later staging adds to the question; a staged change with no
+   * record covers whatever is asked.
+   */
+  const stagedAckFor = staged?.kind === 'route' ? staged.confirmUnknownUseCases : undefined;
+  const [ackedFor, setAckedFor] = useState<readonly string[] | undefined>(stagedAckFor);
   const [ackDrops, setAckDrops] = useState(seed.ackDrops);
   // A fresh request for every Done press, including an identical refusal.
   // Keep the visible message and keyboard focus stable while the alert clears.
@@ -1028,14 +1036,18 @@ export function RouteEditor({
   // staged `confirmUnknown` outlives its question when the unknown use case
   // has since been staged elsewhere (coalescing copies the flag), so an
   // untouched editor must not read it as an edit withdrawn.
-  const asked = (seed: Seed): Seed => ({
+  // [#350] And only for the use cases it was given for.
+  const asked = (seed: Seed, ackFor: readonly string[] | undefined): Seed => ({
     ...seed,
-    ackUnknown: seed.ackUnknown && unknownUseCases.length > 0,
+    ackUnknown:
+      seed.ackUnknown &&
+      unknownUseCases.length > 0 &&
+      (ackFor === undefined || unknownUseCases.every((other) => ackFor.includes(other))),
     ackDrops: seed.ackDrops && drops.length > 0,
   });
-  const now = asked({ provider, defined, manual, exposed, think, ackUnknown, ackDrops });
+  const now = asked({ provider, defined, manual, exposed, think, ackUnknown, ackDrops }, ackedFor);
   // The picker cannot edit exposure or Think; adopting them never holds Apply.
-  const was = asked(golem === undefined ? baseline : { ...baseline, exposed, think });
+  const was = asked(golem === undefined ? baseline : { ...baseline, exposed, think }, stagedAckFor);
   /**
    * What Done would stage that the row does not hold, in words, for the
    * footer — and the one fact the Done/Cancel offer reads (routeEdit.ts), so
@@ -1108,7 +1120,7 @@ export function RouteEditor({
       setRefusal(thinkConflicts.map(thinkConflictLine).join(' '));
       return;
     }
-    if (unknownUseCases.length > 0 && !ackUnknown) {
+    if (unknownUseCases.length > 0 && !now.ackUnknown) {
       setRefusal(
         `The requirements are unknown for ${unknownUseCases.join(', ')}. Confirm the change before staging it.`
       );
@@ -1137,8 +1149,13 @@ export function RouteEditor({
         {
           ...candidate,
           // The reducer derives the exact `confirmUnknownUseCases` set from the
-          // selector group; this is the acknowledgement that set requires.
+          // selector group; this is the acknowledgement that set requires,
+          // with a record of what it was given for [#350]: a later staging
+          // that grows the set does not inherit it.
           confirmUnknown: unknownUseCases.length > 0,
+          ...(unknownUseCases.length > 0
+            ? { confirmUnknownUseCases: [...unknownUseCases].sort(compareString) }
+            : {}),
           ...(drops.length > 0 ? { confirmDrops: drops } : {}),
         },
       ],
@@ -1427,9 +1444,10 @@ export function RouteEditor({
             <input
               className={styles.checkboxInput}
               type="checkbox"
-              checked={ackUnknown}
+              checked={now.ackUnknown}
               onChange={(event) => {
                 setAckUnknown(event.target.checked);
+                setAckedFor([...unknownUseCases]);
                 clearRefusal();
               }}
             />

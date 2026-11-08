@@ -2397,8 +2397,9 @@ describe('RouteEditor', () => {
     await stage();
     const staged = onStage.mock.calls[0][0][0];
     expect(staged.confirmUnknown).toBe(true);
-    // The reducer owns the exact set; the editor supplies the acknowledgement.
-    expect(staged.confirmUnknownUseCases).toBeUndefined();
+    // The reducer owns the exact set; the editor supplies the acknowledgement
+    // and [#350] a record of what it was given for.
+    expect(staged.confirmUnknownUseCases).toEqual(['summarize']);
   });
 
   // #350: the question is asked only when the change can narrow what a
@@ -2435,6 +2436,43 @@ describe('RouteEditor', () => {
       'Firn has no requirements on record for completion and summarize, so it cannot tell whether they still have what they need. Mark Apply anyway to accept that.'
     );
     expect(screen.getByLabelText('Apply anyway')).toBeInTheDocument();
+  });
+
+  // #350: an acknowledgement covers the question it was given for, not one a
+  // later edit grows.
+  it('unticks Apply anyway once the question names a route it was not given for', async () => {
+    const ALL: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    renderRouting({
+      routes: [
+        { useCase: 'completion', role: 'comp-role' },
+        { useCase: 'summarize', role: 'sum-role' },
+      ],
+      models: [
+        model({ role: 'comp-role', modelName: 'comp', routedUseCases: ['completion'] }),
+        model({
+          role: 'sum-role',
+          modelName: 'shared',
+          effectiveCapabilities: ALL,
+          capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: ALL,
+          capabilityOverride: ALL,
+          routedUseCases: ['summarize'],
+        }),
+      ],
+    });
+    await openRoute('completion');
+    await pickModel('shared');
+    expect(screen.getByText(/^This change/)).toHaveTextContent(
+      'This change moves completion to shared.'
+    );
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    expect(screen.getByLabelText('Apply anyway')).toBeChecked();
+
+    await userEvent.click(screen.getByLabelText(/^tool_call/));
+    expect(screen.getByText(/Firn has/)).toHaveTextContent(
+      'no requirements on record for completion and summarize'
+    );
+    expect(screen.getByLabelText('Apply anyway')).not.toBeChecked();
   });
 
   // Done is what refuses, so the refusal answers beside it: after the Pending

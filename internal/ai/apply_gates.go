@@ -20,9 +20,16 @@ import (
 // from the projection (`touchedUseCasesOf`), and the shared fixture under
 // testdata/apply_gates pins the two to each other.
 
-// applyGates is what one Apply's gates read. A nil *applyGates is the dry
-// run that derives it: every mutation runs ungated.
+// applyGates is what one Apply's gates read. The dry run that derives it
+// runs with a dry *applyGates (nil in tests that need no record): every
+// mutation runs ungated, and it records which selectors the staged changes
+// write.
 type applyGates struct {
+	// dry marks the deriving run; wrote is its record of every selector an
+	// override or an asserted capability list wrote.
+	dry   bool
+	wrote map[modelSelector]bool
+
 	// scope holds the use cases whose Firn floors are checked: agent plus the
 	// touched set. nil checks every default — a whole-document source (blank
 	// or profile) replaces the file, so every route in it is the Apply's.
@@ -49,6 +56,16 @@ func (g *applyGates) changedSet() map[string]bool {
 	return g.changed
 }
 
+// isDry reports whether gates belong to the deriving run, which checks nothing.
+func (g *applyGates) isDry() bool { return g == nil || g.dry }
+
+// recordWrite notes, in the deriving run, that a staged change wrote selector.
+func (g *applyGates) recordWrite(selector modelSelector) {
+	if g != nil && g.wrote != nil {
+		g.wrote[selector] = true
+	}
+}
+
 func (g *applyGates) inScope(useCase string) bool {
 	return g == nil || g.scope == nil || g.scope[useCase]
 }
@@ -59,7 +76,7 @@ func (g *applyGates) inScope(useCase string) bool {
 // already settled by the time the call runs. The dry run hands none.
 func (g *applyGates) floors() map[string]provider.Capability {
 	out := map[string]provider.Capability{}
-	if g == nil {
+	if g.isDry() {
 		return out
 	}
 	for useCase, floor := range firnUseCaseFloors {
@@ -79,7 +96,8 @@ func deriveApplyGates(ctx context.Context, req SettingsApplyRequest, active, doc
 	if result != nil {
 		return nil, result
 	}
-	if result := applyStagedChanges(scratch, req, consumed, nil); result != nil {
+	dry := &applyGates{dry: true, wrote: map[modelSelector]bool{}}
+	if result := applyStagedChanges(scratch, req, consumed, dry); result != nil {
 		return nil, result
 	}
 	before, after := doc.Config(), scratch.Config()
@@ -90,7 +108,7 @@ func deriveApplyGates(ctx context.Context, req SettingsApplyRequest, active, doc
 	}
 	narrowed := narrowedUseCases(before, after, touched)
 	gates := &applyGates{
-		confirm:   confirmationSets(before, after, plans, narrowed),
+		confirm:   confirmationSets(before, after, plans, narrowed, dry.wrote),
 		confirmed: map[string]bool{},
 		touched:   touched,
 		narrowed:  narrowed,
@@ -243,13 +261,14 @@ func touchedUseCases(before, after *config.Config) map[string]bool {
 // narrows it, so the editor staging that change is the one that asks. A use
 // case whose own staged route moves it belongs to its own group. Any other
 // keeps its chain and is narrowed by a role on it that loses a capability or
-// its Think: that role's selector group when one is staged there (an
-// override or an asserted list writes it), else every retarget that left the
-// selector taking its only list. A widening a group made earlier never
-// attracts a later group's narrowing. The set is per selector because the
+// its Think: that role's selector group when it WRITES the selector (an
+// override or an asserted list, as wrote records them), else every retarget
+// that left the selector taking its only list, else the selector's group. A
+// group that changes nothing on a selector never attracts a narrowing a later
+// group causes there. The set is per selector because the
 // acknowledgement is selector-scoped (§3.3): every staged route onto one
 // model carries the same value.
-func confirmationSets(before, after *config.Config, plans []routePlan, asked map[string]bool) map[modelSelector][]string {
+func confirmationSets(before, after *config.Config, plans []routePlan, asked map[string]bool, wrote map[modelSelector]bool) map[modelSelector][]string {
 	sets := map[modelSelector]map[string]bool{}
 	moved := map[string]modelSelector{}
 	sources := map[modelSelector][]modelSelector{}
@@ -284,12 +303,15 @@ func confirmationSets(before, after *config.Config, plans []routePlan, asked map
 				continue
 			}
 			selector := modelSelector{provider: was.Provider, model: was.Name}
-			if sets[selector] != nil {
+			switch {
+			case sets[selector] != nil && wrote[selector]:
 				sets[selector][useCase] = true
-				continue
-			}
-			for _, group := range sources[selector] {
-				sets[group][useCase] = true
+			case len(sources[selector]) > 0:
+				for _, group := range sources[selector] {
+					sets[group][useCase] = true
+				}
+			case sets[selector] != nil:
+				sets[selector][useCase] = true
 			}
 		}
 	}

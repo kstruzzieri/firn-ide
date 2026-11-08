@@ -643,3 +643,33 @@ func TestApplyAsksForANarrowingInTheGroupThatNarrows(t *testing.T) {
 		t.Fatalf("narrowing acknowledged by the group that narrows was refused (%v): %+v", refused, res)
 	}
 }
+
+// Codex #350 round 2: summarize joins mixed-model writing no list, and chat's
+// retarget then takes the selector's only list away, narrowing completion,
+// which shares the model on an embedding-typed role. Summarize's group exists
+// on that selector but changes nothing there: the acknowledgement belongs to
+// chat's retarget.
+func TestApplyAsksForADepartureNarrowingInTheRetargetsGroup(t *testing.T) {
+	const target = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "chat-m": {"name": "mixed-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "generate", "stream"]},
+    "comp-m": {"name": "mixed-model", "provider": "ollama", "type": "embedding"}
+  },
+  "defaults": {"agent": "agent-m", "chat": "chat-m", "completion": "comp-m"}
+}`
+	h := newApplyHarness(t, target)
+	join := confirmUnknown(routeChange("summarize", "ollama", "mixed-model", "chat", "generate", "stream"), "summarize")
+	leave := routeChange("chat", "ollama", "other-model", "chat", "stream")
+	if _, _, res := applyOutcome(t, h, join, leave); res.Status != "diagnostics" ||
+		len(res.Diagnostics) != 1 || res.Diagnostics[0].Code != codeEligibilityUnknown ||
+		res.Diagnostics[0].SubjectName != "chat" {
+		t.Fatalf("unacknowledged departure = %+v, want one %s diagnostic on chat", res, codeEligibilityUnknown)
+	}
+	if accepted, refused, res := applyOutcome(t, h, join, confirmUnknown(leave, "completion")); !accepted {
+		t.Fatalf("departure acknowledged by the retarget was refused (%v): %+v", refused, res)
+	}
+}

@@ -2077,9 +2077,10 @@ export function narrowingOf(
  * change is the one that asks. A use case its own staged route moves belongs
  * to its own group; any other keeps its chain and is narrowed by a role on it
  * that loses a capability or its Think (`changedRoles`): that role's selector
- * group when one is staged there, else every retarget that left the selector
- * taking its only list. A widening a group made earlier never attracts a
- * later group's narrowing.
+ * group when it WRITES the selector (`writesSelectorCaps`: an override or an
+ * asserted list), else every retarget that left the selector taking its only
+ * list, else the selector's group. A group that changes nothing on a selector
+ * never attracts a narrowing a later group causes there.
  */
 function confirmationSetsOf(
   base: DraftBaseProjection,
@@ -2128,12 +2129,31 @@ function confirmationSetsOf(
       if (!narrows) continue;
       const key = selectorKey(model.provider, model.modelName);
       const group = sets.get(key);
-      if (group !== undefined) group.add(useCase);
-      else for (const source of sources.get(key) ?? []) sets.get(source)?.add(useCase);
+      const leftBy = sources.get(key) ?? [];
+      if (
+        group !== undefined &&
+        writesSelectorCaps(base, changes, { provider: model.provider, model: model.modelName })
+      )
+        group.add(useCase);
+      else if (leftBy.length > 0) for (const source of leftBy) sets.get(source)?.add(useCase);
+      else group?.add(useCase);
     }
   }
   return sets;
 }
+
+/**
+ * [#350] Whether the group's acknowledgement still stands. The route editor
+ * records the use cases it asked about (`confirmUnknownUseCases` on the raw
+ * staged change); once a later staging grows the set the group must
+ * acknowledge past that record, the acknowledgement no longer covers it and
+ * the request goes out unacknowledged, so Apply refuses until the route is
+ * reviewed and acknowledged again. A change carrying no record keeps its flag.
+ */
+const acknowledges = (authority: RouteChange, unknownUseCases: readonly string[]): boolean =>
+  authority.confirmUnknown &&
+  (authority.confirmUnknownUseCases === undefined ||
+    unknownUseCases.every((useCase) => authority.confirmUnknownUseCases?.includes(useCase)));
 
 /**
  * One staged change rebuilt from its selector's authority. Written out member
@@ -2152,7 +2172,7 @@ const coalesceRouteChange = (
   capabilityFacts: authority.capabilityFacts,
   exposedCaps: authority.exposedCaps,
   thinkMode: authority.thinkMode,
-  confirmUnknown: authority.confirmUnknown,
+  confirmUnknown: acknowledges(authority, unknownUseCases),
   ...(unknownUseCases.length > 0 ? { confirmUnknownUseCases: [...unknownUseCases] } : {}),
   // Per change: the drop set belongs to the role being retargeted.
   ...(change.confirmDrops === undefined ? {} : { confirmDrops: change.confirmDrops }),
