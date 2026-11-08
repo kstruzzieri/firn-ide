@@ -945,16 +945,27 @@ func TestReadDirectoryShallow_ListsTrackedFilesIgnoreRulesMatch(t *testing.T) {
 	}
 }
 
-func TestReadDirectory_TrackedIgnoredSetIsPerRoot(t *testing.T) {
-	reader, root := trackedIgnoredFixture(t)
-	reader.SetTrackedIgnored(filepath.Join(root, "elsewhere"), nil)
+// TestReadDirectory_ReopenedRootIsListedAgain: one workspace is open at a
+// time, and a root's set goes stale while another is open (its .gitignore can
+// change meanwhile). Opening another root forgets the first, so reopening it
+// lists it afresh rather than restoring the tree against the old set.
+func TestReadDirectory_ReopenedRootIsListedAgain(t *testing.T) {
+	_, root := trackedIgnoredFixture(t)
+	reader := NewDirectoryReader(&OS{})
+	listed := map[string]int{}
+	reader.SetTrackedLister(func(root string) []string {
+		listed[root]++
+		return []string{"CLAUDE.md"}
+	})
+	other := filepath.Join(root, "data")
 
-	entries, err := reader.ReadDirectoryShallow(root, root)
-	if err != nil {
-		t.Fatalf("ReadDirectoryShallow() error = %v", err)
+	for _, read := range []string{root, other, root} {
+		if _, err := reader.ReadDirectoryShallow(read, read); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if !entryPaths(t, root, entries)["CLAUDE.md"] {
-		t.Fatalf("another root's set must not replace this root's: %+v", entries)
+	if listed[root] != 2 || listed[other] != 1 {
+		t.Fatalf("lister calls = %v, want %s twice and %s once", listed, root, other)
 	}
 }
 

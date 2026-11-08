@@ -26,10 +26,13 @@ type DirectoryReader struct {
 	fs FileSystem
 
 	trackedMu sync.RWMutex
-	// tracked holds, per workspace root, the files git tracks that .gitignore
-	// rules match (#536). Git applies .gitignore only to untracked files, so
-	// the tree lists these anyway. An entry, even an empty one, means the root
-	// has been listed; a workspace outside any git repository lists as empty.
+	// tracked holds, for the open workspace's root, the files git tracks that
+	// .gitignore rules match (#536). Git applies .gitignore only to untracked
+	// files, so the tree lists these anyway. An entry, even an empty one, means
+	// the root has been listed; a workspace outside any git repository lists
+	// as empty. It holds one root: one workspace is open at a time, and a set
+	// kept for a closed one goes stale (its .gitignore can change meanwhile),
+	// so storing a root forgets the others and reopening one lists it again.
 	tracked map[string]trackedIgnored
 	// listTracked lists a root no SetTrackedIgnored call has covered yet, so
 	// a workspace's first read (startup, restore) already has its exceptions.
@@ -139,10 +142,7 @@ func (d *DirectoryReader) SetTrackedIgnored(root string, paths []string) []strin
 
 	d.trackedMu.Lock()
 	prev := d.tracked[root]
-	if d.tracked == nil {
-		d.tracked = make(map[string]trackedIgnored)
-	}
-	d.tracked[root] = next
+	d.tracked = map[string]trackedIgnored{root: next}
 	d.trackedMu.Unlock()
 
 	changed := map[string]bool{}
@@ -227,10 +227,7 @@ func (d *DirectoryReader) scopeFor(root string) listScope {
 		if current, ok := d.tracked[root]; ok {
 			tracked = current
 		} else {
-			if d.tracked == nil {
-				d.tracked = make(map[string]trackedIgnored)
-			}
-			d.tracked[root] = listed
+			d.tracked = map[string]trackedIgnored{root: listed}
 			tracked = listed
 		}
 		d.trackedMu.Unlock()
