@@ -953,8 +953,45 @@ func TestTrackedIgnored_ListsTrackedFilesIgnoreRulesMatch(t *testing.T) {
 	}
 }
 
-func TestTrackedIgnored_OutsideRepoErrors(t *testing.T) {
-	if _, err := NewService().TrackedIgnored(context.Background(), t.TempDir()); err == nil {
-		t.Fatal("TrackedIgnored outside a repository must error; callers check IsRepo first")
+func TestTrackedIgnored_OutsideRepoIsEmpty(t *testing.T) {
+	requireGit(t)
+	if paths, err := NewService().TrackedIgnored(context.Background(), t.TempDir()); err != nil || len(paths) != 0 {
+		t.Fatalf("TrackedIgnored outside a repository = %v, %v; want empty success", paths, err)
 	}
+}
+
+func TestTrackedIgnored_DiscoveryFailuresRemainErrors(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewService().TrackedIgnored(ctx, root); err == nil {
+		t.Fatal("TrackedIgnored with a cancelled context must fail")
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: missing-git-dir\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewService().TrackedIgnored(context.Background(), root); err == nil {
+		t.Fatal("TrackedIgnored with a broken .git pointer must fail")
+	}
+	repo := initRepo(t)
+	if err := os.Rename(filepath.Join(repo, ".git", "HEAD"), filepath.Join(repo, ".git", "HEAD.saved")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewService().TrackedIgnored(context.Background(), repo); err == nil {
+		t.Fatal("TrackedIgnored with a missing HEAD must fail, not report a non-repository")
+	}
+	t.Run("symlinked subdirectory", func(t *testing.T) {
+		subdir := filepath.Join(repo, "subdir")
+		if err := os.Mkdir(subdir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		alias := filepath.Join(t.TempDir(), "alias")
+		if err := os.Symlink(subdir, alias); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if _, err := NewService().TrackedIgnored(context.Background(), alias); err == nil {
+			t.Fatal("TrackedIgnored through a symlink must retain the damaged parent-repository error")
+		}
+	})
 }

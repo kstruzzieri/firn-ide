@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,7 +49,7 @@ func withWorkspace(t *testing.T, files map[string]string) string {
 // names tracked, ignored files (#536).
 func includingManager(paths ...string) *Manager {
 	mgr := NewManager()
-	mgr.SetIncludes(func(string) []string { return paths })
+	mgr.SetIncludes(func(string) ([]string, error) { return paths, nil })
 	return mgr
 }
 
@@ -369,10 +370,10 @@ func TestManager_CancelWhileListingIncludesSkipsTheSearch(t *testing.T) {
 	root := withWorkspace(t, map[string]string{"a.txt": "needle\n"})
 	mgr := NewManager()
 	entered, release := make(chan struct{}), make(chan struct{})
-	mgr.SetIncludes(func(string) []string {
+	mgr.SetIncludes(func(string) ([]string, error) {
 		close(entered)
 		<-release
-		return nil
+		return nil, nil
 	})
 
 	done := make(chan SearchResponse, 1)
@@ -385,6 +386,30 @@ func TestManager_CancelWhileListingIncludesSkipsTheSearch(t *testing.T) {
 
 	if resp := <-done; resp.Status != StatusCanceled || len(resp.Files) != 0 {
 		t.Fatalf("status = %s files=%+v, want a cancelled search with no results", resp.Status, resp.Files)
+	}
+}
+
+func TestManager_IncludeListingFailure(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
+			mgr := NewManager()
+			root := t.TempDir()
+			failure := errors.New("include listing failed")
+			mgr.SetIncludes(func(string) ([]string, error) {
+				if canceled {
+					mgr.Cancel("listing-failure")
+				}
+				return nil, failure
+			})
+			response := mgr.Search(context.Background(), SearchRequest{RequestID: "listing-failure", Root: root, Query: "needle"})
+			wantStatus, wantMessage := StatusFailed, failure.Error()
+			if canceled {
+				wantStatus, wantMessage = StatusCanceled, "search canceled"
+			}
+			if response.Status != wantStatus || response.Message != wantMessage || len(response.Files) != 0 {
+				t.Fatalf("search with failed include listing = %+v, want %s: %s and no results", response, wantStatus, wantMessage)
+			}
+		})
 	}
 }
 

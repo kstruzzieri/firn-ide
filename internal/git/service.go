@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -563,10 +564,40 @@ func (s *Service) runAtRoot(ctx context.Context, dir string, args ...string) (st
 // untracked files, so these stay tracked and the file tree lists them (#536).
 // Only per-directory .gitignore files count, as in the tree's own matching:
 // --exclude-per-directory leaves out .git/info/exclude and core.excludesFile,
-// which --exclude-standard would add. Outside a repository it errors.
+// which --exclude-standard would add. Without Git or outside a repository it
+// returns no paths; a damaged repository still returns an error.
 func (s *Service) TrackedIgnored(ctx context.Context, dir string) ([]string, error) {
-	out, err := s.run(ctx, dir, "ls-files", "-z", "--cached", "--ignored", "--exclude-per-directory=.gitignore")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if _, err := exec.LookPath("git"); errors.Is(err, exec.ErrNotFound) {
+		return nil, nil // Git is optional; plain folder browsing/search still work.
+	}
+	out, stderr, err := s.runEnv(ctx, dir, nil, "ls-files", "-z", "--cached", "--ignored", "--exclude-per-directory=.gitignore")
 	if err != nil {
+		// runEnv pins LC_ALL=C. Only Git's explicit discovery failure means
+		// empty; cancellation, permissions and a broken index remain errors.
+		diagnostic := strings.TrimSpace(stderr)
+		notRepo := diagnostic == "fatal: not a git repository (or any of the parent directories): .git" ||
+			strings.HasPrefix(diagnostic, "fatal: not a git repository (or any parent up to mount point ")
+		if ctx.Err() == nil && notRepo {
+			// A damaged .git (e.g. missing HEAD) has the same diagnostic.
+			physical, resolveErr := filepath.Abs(dir)
+			if resolveErr == nil {
+				physical, resolveErr = filepath.EvalSymlinks(physical)
+			}
+			if resolveErr != nil {
+				return nil, err
+			}
+			for current := physical; ; current = filepath.Dir(current) {
+				if _, markerErr := os.Lstat(filepath.Join(current, ".git")); !errors.Is(markerErr, os.ErrNotExist) {
+					return nil, err
+				}
+				if filepath.Dir(current) == current {
+					return nil, nil
+				}
+			}
+		}
 		return nil, err
 	}
 	var paths []string

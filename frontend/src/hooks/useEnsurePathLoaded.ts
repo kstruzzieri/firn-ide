@@ -9,6 +9,7 @@ import { isWindowsPathSyntax, treeLoadLevels, treePathKey } from '../utils/works
 interface InFlightLoad {
   workspace: WorkspaceInfo;
   promise: Promise<void>;
+  existedBefore: boolean;
   /** The re-read forced calls during this load share; see ensurePathLoaded. */
   followUp?: Promise<void>;
 }
@@ -109,11 +110,18 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
     // flight may have read before that. Read again once it settles; every
     // forced call meanwhile shares that one follow-up. A workspace switched
     // meanwhile has its own tree; the path means nothing there.
-    existing.followUp ??= existing.promise.then(() =>
-      useIDEStore.getState().workspace === workspace
-        ? ensurePathLoaded(path, { force: true })
-        : undefined
-    );
+    existing.followUp ??= existing.promise.then(() => {
+      const after = useIDEStore.getState();
+      if (after.workspace !== workspace) return;
+      // A fresh ancestor listing may have removed or replaced this directory.
+      if (
+        !isRoot &&
+        existing.existedBefore &&
+        findEntryByPath(after.directoryTree, path)?.isDir !== true
+      )
+        return;
+      return ensurePathLoaded(path, { force: true });
+    });
     return existing.followUp;
   }
 
@@ -137,7 +145,7 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
       const after = useIDEStore.getState();
       if (after.workspace !== workspace) return;
       const node = isRoot ? null : findEntryByPath(after.directoryTree, path);
-      if (!isRoot && existedBefore && !node) return; // removed mid-flight — nothing to annotate
+      if (!isRoot && existedBefore && node?.isDir !== true) return; // removed/replaced mid-flight
       if (node) after.markUnreadable(path);
       const alreadyDirty = after.dirtyPaths.has(path);
       after.markDirty(path);
@@ -151,7 +159,7 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
       inFlight.delete(path);
     });
 
-  inFlight.set(path, { workspace, promise });
+  inFlight.set(path, { workspace, promise, existedBefore });
   return promise;
 }
 

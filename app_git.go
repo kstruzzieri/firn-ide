@@ -36,7 +36,7 @@ func (a *App) GitStatus(root string) (git.RepoStatus, error) {
 	if err != nil {
 		return status, err
 	}
-	a.refreshTrackedIgnored(ctx, root, status.IsRepo)
+	a.refreshTrackedIgnored(ctx, root)
 	return status, nil
 }
 
@@ -45,27 +45,20 @@ func (a *App) GitStatus(root string) (git.RepoStatus, error) {
 // A commit, `git rm --cached` or a branch switch changes that set without
 // touching a watched file, so it rides on every git status refresh. When the
 // set moves, filetree:stale names the tree folders to re-read.
-func (a *App) refreshTrackedIgnored(ctx context.Context, root string, isRepo bool) {
+func (a *App) refreshTrackedIgnored(ctx context.Context, root string) {
 	// Status reports IsRepo=false whenever its probes fail; a cancelled or
 	// expired context is no evidence the repository went away.
 	if ctx.Err() != nil {
 		return
 	}
-	a.trackedIgnoredMu.Lock()
-	defer a.trackedIgnoredMu.Unlock()
-	var paths []string
-	if isRepo {
-		var err error
-		paths, err = a.trackedIgnoredLister()(ctx, root)
-		if err != nil {
-			// A failed listing says nothing about what git tracks. Keep the
-			// last set: clearing it would hide the files #536 brought back
-			// until the next refresh succeeds.
-			log.Printf("firn: listing tracked files .gitignore matches under %s: %v", root, err)
-			return
-		}
+	dirs, _, err := a.dirReader.RefreshTrackedIgnored(root, func() ([]string, error) {
+		return a.trackedIgnoredLister()(ctx, root)
+	})
+	if err != nil {
+		log.Printf("firn: listing tracked files .gitignore matches under %s: %v", root, err)
+		return
 	}
-	if dirs := a.dirReader.SetTrackedIgnored(root, paths); len(dirs) > 0 {
+	if len(dirs) > 0 {
 		a.emit("filetree:stale", dirs)
 	}
 }
@@ -74,17 +67,12 @@ func (a *App) refreshTrackedIgnored(ctx context.Context, root string, isRepo boo
 // first read of a root, which comes before any git status (startup, restore),
 // and for its first read after another workspace was open.
 // Without it that read would miss the tracked files, and the restore would
-// prune a saved expanded folder that holds them. A folder outside git, or a
-// failed listing, lists as empty: the git status that follows fills the set
-// in and names the folders to re-read (and logs a failure it hits too).
-func (a *App) firstTrackedIgnored(root string) []string {
+// prune a saved expanded folder that holds them. Outside git lists empty;
+// errors keep a prior set, or fail the read when there is no baseline.
+func (a *App) firstTrackedIgnored(root string) ([]string, error) {
 	ctx, cancel := a.gitCtx(gitLocalTimeout)
 	defer cancel()
-	paths, err := a.trackedIgnoredLister()(ctx, root)
-	if err != nil {
-		return nil
-	}
-	return paths
+	return a.trackedIgnoredLister()(ctx, root)
 }
 
 // trackedIgnoredLister is git's tracked-ignored listing, or the test seam.

@@ -108,7 +108,8 @@ function App() {
 
   const reconcileDir = useCallback((dir: string) => {
     const s = useIDEStore.getState();
-    const root = s.workspace?.path;
+    const workspace = s.workspace;
+    const root = workspace?.path;
     if (!root) return;
     // A read in flight may predate this change, and its completion clears any
     // dirty mark set now: re-read once it settles, loaded or not, shown or not.
@@ -147,6 +148,9 @@ function App() {
       dir,
       setTimeout(() => {
         timers.delete(dir);
+        const after = useIDEStore.getState();
+        if (after.workspace !== workspace) return;
+        if (!isRoot && findEntryByPath(after.directoryTree, dir)?.isDir !== true) return;
         void ensurePathLoaded(dir, { force: true });
       }, 75)
     );

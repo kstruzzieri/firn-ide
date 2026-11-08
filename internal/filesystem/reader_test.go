@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -953,9 +954,9 @@ func TestReadDirectory_ReopenedRootIsListedAgain(t *testing.T) {
 	_, root := trackedIgnoredFixture(t)
 	reader := NewDirectoryReader(&OS{})
 	listed := map[string]int{}
-	reader.SetTrackedLister(func(root string) []string {
+	reader.SetTrackedLister(func(root string) ([]string, error) {
 		listed[root]++
-		return []string{"CLAUDE.md"}
+		return []string{"CLAUDE.md"}, nil
 	}, nil)
 	other := filepath.Join(root, "data")
 
@@ -1013,7 +1014,10 @@ func TestTrackedIgnoredFiles_ListsExistingFilesOutsideDotFolders(t *testing.T) {
 		"gone.txt",
 	})
 
-	got := reader.TrackedIgnoredFiles(root)
+	got, err := reader.TrackedIgnoredFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []string{
 		filepath.Join(root, ".env"),
 		filepath.Join(root, "CLAUDE.md"),
@@ -1022,8 +1026,37 @@ func TestTrackedIgnoredFiles_ListsExistingFilesOutsideDotFolders(t *testing.T) {
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("TrackedIgnoredFiles() = %v, want %v", got, want)
 	}
-	if other := reader.TrackedIgnoredFiles(filepath.Join(root, "data")); len(other) != 0 {
-		t.Fatalf("a root with no set has no files, got %v", other)
+	if other, err := reader.TrackedIgnoredFiles(filepath.Join(root, "data")); err != nil || len(other) != 0 {
+		t.Fatalf("a root with no set has no files, got %v, %v", other, err)
+	}
+}
+
+func TestTrackedIgnoredFiles_SkipsSymlinksAndTheirDescendants(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "a.txt"), []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "a.txt"), filepath.Join(root, "link.txt")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "dir")); err != nil {
+		t.Fatal(err)
+	}
+	reader := NewDirectoryReader(&OS{})
+	reader.SetTrackedIgnored(root, []string{"link.txt", "dir/a.txt"})
+	if files, err := reader.TrackedIgnoredFiles(root); err != nil || len(files) != 0 {
+		t.Fatalf("tracked symlinks and descendants = %v, %v; want no explicit search paths", files, err)
+	}
+}
+
+func TestTrackedIgnoredFiles_ReportsMetadataErrors(t *testing.T) {
+	root := filepath.FromSlash("/ws")
+	reader := NewDirectoryReader(&Mock{StatFunc: func(string) (fs.FileInfo, error) {
+		return nil, fs.ErrPermission
+	}})
+	reader.SetTrackedIgnored(root, []string{"data/a.txt"})
+	if files, err := reader.TrackedIgnoredFiles(root); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("tracked files with inaccessible metadata = %v, %v; want permission error", files, err)
 	}
 }
 
@@ -1031,9 +1064,9 @@ func TestSetTrackedLister_ListsAnUnknownRootOnce(t *testing.T) {
 	_, root := trackedIgnoredFixture(t)
 	reader := NewDirectoryReader(&OS{})
 	var listed []string
-	reader.SetTrackedLister(func(root string) []string {
+	reader.SetTrackedLister(func(root string) ([]string, error) {
 		listed = append(listed, root)
-		return []string{"CLAUDE.md"}
+		return []string{"CLAUDE.md"}, nil
 	}, nil)
 
 	for range 2 {
@@ -1049,14 +1082,14 @@ func TestSetTrackedLister_ListsAnUnknownRootOnce(t *testing.T) {
 		t.Fatalf("lister calls = %v, want one for %s", listed, root)
 	}
 
-	// A root git status already covered, even with an empty set, is known.
+	// Switching read roots relists even when a late status already covered it.
 	other := filepath.Join(root, "data")
 	reader.SetTrackedIgnored(other, nil)
 	if _, err := reader.ReadDirectoryShallow(other, other); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 {
-		t.Fatalf("lister ran for a root SetTrackedIgnored covered: %v", listed)
+	if len(listed) != 2 || listed[1] != other {
+		t.Fatalf("lister calls after switching roots = %v, want %s then %s", listed, root, other)
 	}
 }
 
@@ -1082,17 +1115,17 @@ func TestSetTrackedLister_StatusDuringARelistWins(t *testing.T) {
 	root, other := filepath.FromSlash("/ws/a"), filepath.FromSlash("/ws/b")
 	reader := NewDirectoryReader(&Mock{})
 	started, release := make(chan struct{}), make(chan struct{})
-	reader.SetTrackedLister(func(string) []string {
+	reader.SetTrackedLister(func(string) ([]string, error) {
 		close(started)
 		<-release
-		return []string{"old.md"}
+		return []string{"old.md"}, nil
 	}, nil)
 	reader.SetTrackedIgnored(other, nil)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		reader.TrackedIgnoredFiles(root)
+		_, _ = reader.TrackedIgnoredFiles(root) // Only publication ordering matters here.
 	}()
 	<-started
 	reader.SetTrackedIgnored(root, []string{"new.md"})
@@ -1113,21 +1146,152 @@ func TestSetTrackedLister_RelistReportsFoldersWhoseListingsChange(t *testing.T) 
 	root, other := filepath.FromSlash("/ws/a"), filepath.FromSlash("/ws/b")
 	reader := NewDirectoryReader(&Mock{})
 	var reported [][]string
-	reader.SetTrackedLister(func(string) []string {
-		return []string{"data/a.csv"}
+	reader.SetTrackedLister(func(string) ([]string, error) {
+		return []string{"data/a.csv"}, nil
 	}, func(dirs []string) {
 		reported = append(reported, dirs)
 	})
 
-	reader.TrackedIgnoredFiles(root)
+	if _, err := reader.TrackedIgnoredFiles(root); err != nil {
+		t.Fatal(err)
+	}
 	if len(reported) != 0 {
 		t.Fatalf("a first listing reported %v, want nothing", reported)
 	}
 	reader.SetTrackedIgnored(root, []string{"CLAUDE.md"})
 	reader.SetTrackedIgnored(other, nil)
-	reader.TrackedIgnoredFiles(root)
+	if _, err := reader.TrackedIgnoredFiles(root); err != nil {
+		t.Fatal(err)
+	}
 	want := []string{root, filepath.Join(root, "data")}
 	if len(reported) != 1 || strings.Join(reported[0], "|") != strings.Join(want, "|") {
 		t.Fatalf("relisting reported %v, want one report naming %v", reported, want)
+	}
+}
+
+func TestSetTrackedLister_OverlappingFirstReadsReportReplacement(t *testing.T) {
+	root := t.TempDir()
+	for name, content := range map[string]string{"old.md": "", "new.md": "", ".gitignore": "*.md\n"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader := NewDirectoryReader(&OS{})
+	firstStarted, secondStarted := make(chan struct{}), make(chan struct{})
+	firstRelease, secondRelease := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	var reported [][]string
+	reader.SetTrackedLister(func(string) ([]string, error) {
+		if calls.Add(1) == 1 {
+			close(firstStarted)
+			<-firstRelease
+			return []string{"old.md"}, nil
+		}
+		close(secondStarted)
+		<-secondRelease
+		return []string{"new.md"}, nil
+	}, func(dirs []string) { reported = append(reported, dirs) })
+	firstDone, secondDone := make(chan error, 1), make(chan error, 1)
+	go func() { _, err := reader.ReadDirectoryShallow(root, root); firstDone <- err }()
+	<-firstStarted
+	go func() { _, err := reader.ReadDirectoryShallow(root, root); secondDone <- err }()
+	<-secondStarted
+	close(firstRelease)
+	firstErr := <-firstDone
+	close(secondRelease)
+	secondErr := <-secondDone
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("overlapping first reads = %v, %v; want success", firstErr, secondErr)
+	}
+	if len(reported) != 1 || strings.Join(reported[0], "|") != root {
+		t.Fatalf("overlapping first-read events = %v, want one replacement naming %s", reported, root)
+	}
+	if dirs := reader.SetTrackedIgnored(root, []string{"new.md"}); len(dirs) != 0 {
+		t.Fatalf("newer first read did not publish: changed dirs = %v", dirs)
+	}
+}
+
+func TestSetTrackedLister_ReadSwitchAlwaysRelistsReopenedRoot(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		otherFails bool
+	}{{"late status for previous root", false}, {"failed read of other root", true}} {
+		t.Run(test.name, func(t *testing.T) {
+			root, other := t.TempDir(), t.TempDir()
+			for _, name := range []string{"old.md", "new.md"} {
+				if err := os.WriteFile(filepath.Join(root, name), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reader := NewDirectoryReader(&OS{})
+			listed := "old.md"
+			reader.SetTrackedLister(func(path string) ([]string, error) {
+				if path == root {
+					return []string{listed}, nil
+				}
+				if test.otherFails {
+					return nil, errors.New("temporary failure")
+				}
+				return nil, nil
+			}, nil)
+			if _, err := reader.TrackedIgnoredFiles(root); err != nil {
+				t.Fatal(err)
+			}
+			_, otherErr := reader.TrackedIgnoredFiles(other)
+			if (otherErr != nil) != test.otherFails {
+				t.Fatalf("other root error = %v, want failure=%t", otherErr, test.otherFails)
+			}
+			if !test.otherFails {
+				reader.SetTrackedIgnored(root, []string{"old.md"}) // A late status while other is open.
+			}
+			listed = "new.md"
+			files, err := reader.TrackedIgnoredFiles(root)
+			if err != nil || strings.Join(files, "|") != filepath.Join(root, "new.md") {
+				t.Fatalf("reopened root = %v, %v; want fresh new.md", files, err)
+			}
+		})
+	}
+}
+
+func TestSetTrackedLister_FailedReopenRemainsRetryable(t *testing.T) {
+	root, other := filepath.FromSlash("/ws/a"), filepath.FromSlash("/ws/b")
+	reader := NewDirectoryReader(&Mock{})
+	calls := 0
+	reader.SetTrackedLister(func(path string) ([]string, error) {
+		if path == other {
+			return nil, errors.New("other root unavailable")
+		}
+		calls++
+		if calls == 2 {
+			return nil, errors.New("reopen unavailable")
+		}
+		return []string{"a.md"}, nil
+	}, nil)
+	for _, path := range []string{root, other, root, root} {
+		if _, err := reader.TrackedIgnoredFiles(path); (err != nil) != (path == other) {
+			t.Fatalf("TrackedIgnoredFiles(%s) error = %v; want only the uncached other root to fail", path, err)
+		}
+	}
+	if calls != 3 {
+		t.Fatalf("root listing calls = %d, want initial, failed reopen, successful retry", calls)
+	}
+}
+
+func TestRefreshTrackedIgnored_FailedNewerListingDoesNotSupersedeSuccess(t *testing.T) {
+	reader := NewDirectoryReader(&Mock{})
+	root := filepath.FromSlash("/ws")
+	failure := errors.New("temporary failure")
+	dirs, replaced, err := reader.RefreshTrackedIgnored(root, func() ([]string, error) {
+		_, _, newerErr := reader.RefreshTrackedIgnored(root, func() ([]string, error) { return nil, failure })
+		if !errors.Is(newerErr, failure) {
+			t.Fatalf("newer listing error = %v, want %v", newerErr, failure)
+		}
+		return []string{"a.md"}, nil
+	})
+	if err != nil || replaced || strings.Join(dirs, "|") != root {
+		t.Fatalf("older successful listing = %v, %v, %v; want first publication at %s", dirs, replaced, err, root)
+	}
+	if dirs := reader.SetTrackedIgnored(root, []string{"a.md"}); len(dirs) != 0 {
+		t.Fatalf("failed newer listing suppressed success: changed dirs = %v", dirs)
 	}
 }

@@ -40,11 +40,6 @@ type App struct {
 	profileManager       *runprofile.ProjectRunProfileManager
 	profileWorkspaceRoot string
 	loadRunProfilesFn    func(*runprofile.ProjectRunProfileManager) error
-	// trackedIgnoredMu serializes refreshTrackedIgnored: each published set
-	// comes from a listing taken after the previous one was published, so an
-	// older listing from an overlapping git status never lands last (#536).
-	// ponytail: one lock for every root; only the open workspace refreshes.
-	trackedIgnoredMu sync.Mutex
 	// listTrackedIgnored lets tests hold a tracked-ignored listing open (#536).
 	// nil in production → gitService.TrackedIgnored.
 	listTrackedIgnored func(ctx context.Context, root string) ([]string, error)

@@ -34,13 +34,13 @@ type Manager struct {
 
 	// includes, when set, names files a search of root must cover although
 	// an ignore rule matches them: the tracked, ignored files of #536.
-	includes func(root string) []string
+	includes func(root string) ([]string, error)
 }
 
 // SetIncludes installs the function that names, for a search root, the files
 // ripgrep must search although an ignore rule matches them. Call it before
 // the first Search.
-func (m *Manager) SetIncludes(includes func(root string) []string) {
+func (m *Manager) SetIncludes(includes func(root string) ([]string, error)) {
 	m.includes = includes
 }
 
@@ -97,7 +97,18 @@ func (m *Manager) Search(ctx context.Context, req SearchRequest) SearchResponse 
 	// checks the cancellation before starting ripgrep.
 	var include []string
 	if m.includes != nil {
-		include = m.includes(req.Root)
+		var err error
+		include, err = m.includes(req.Root)
+		if err != nil {
+			resp.Status = StatusFailed
+			resp.Message = err.Error()
+			if runCtx.Err() != nil {
+				resp.Status = StatusCanceled
+				resp.Message = "search canceled"
+			}
+			resp.DurationMs = time.Since(start).Milliseconds()
+			return resp
+		}
 	}
 
 	// Group matches by file path as we receive them. We preserve ripgrep's
