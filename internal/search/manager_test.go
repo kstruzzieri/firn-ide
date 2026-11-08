@@ -321,6 +321,37 @@ func TestManager_SecondPassDoesNotSpendTheMatchCap(t *testing.T) {
 	}
 }
 
+// TestManager_ManyIncludedPathsStillSearch: a repository that committed a
+// vendored folder and then ignored it can have thousands of tracked, ignored
+// files. Named on one command line they overflow the platform's limit (about
+// 32 KB on Windows, 1 MB on macOS, 2 MB on Linux) and ripgrep never starts,
+// so no search works at all. ~3 MB of paths here overflows all three.
+func TestManager_ManyIncludedPathsStillSearch(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{
+		".gitignore":  "vendor/\n",
+		"keep.txt":    "needle\n",
+		"vendor/a.go": "needle\n",
+	})
+	vendored := filepath.Join(root, "vendor", "a.go")
+	include := make([]string, 3<<20/len(vendored))
+	for i := range include {
+		include[i] = vendored
+	}
+
+	resp := NewManager().Search(context.Background(), SearchRequest{
+		RequestID: "many",
+		Root:      root,
+		Query:     "needle",
+	}, include...)
+	if resp.Status != StatusSuccess {
+		t.Fatalf("status = %s msg=%s", resp.Status, resp.Message)
+	}
+	if resp.TotalFiles != 2 || resp.TotalLines != 2 {
+		t.Fatalf("want keep.txt and vendor/a.go once each, got files=%+v", resp.Files)
+	}
+}
+
 func TestManager_InvalidRegex(t *testing.T) {
 	requireRipgrep(t)
 	root := withWorkspace(t, map[string]string{

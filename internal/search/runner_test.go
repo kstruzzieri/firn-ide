@@ -20,7 +20,7 @@ func TestBuildArgs(t *testing.T) {
 	cases := []struct {
 		name    string
 		req     SearchRequest
-		include []string
+		include []string // the paths after --; empty means the root
 		want    []string
 	}{
 		{
@@ -80,11 +80,11 @@ func TestBuildArgs(t *testing.T) {
 		},
 		{
 			// #536: ripgrep searches a path named on its command line even
-			// when an ignore rule matches it, so tracked, ignored files ride
-			// after the root.
-			name:    "included-paths-follow-the-root",
+			// when an ignore rule matches it, so runRipgrep names tracked,
+			// ignored files after the root (and alone in later passes).
+			name:    "named-paths-replace-the-root",
 			req:     SearchRequest{Root: "/r", Query: "needle"},
-			include: []string{"/r/CLAUDE.md", "/r/-data/a.csv"},
+			include: []string{"/r", "/r/CLAUDE.md", "/r/-data/a.csv"},
 			want: []string{
 				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
 				"--fixed-strings", "--ignore-case",
@@ -101,6 +101,36 @@ func TestBuildArgs(t *testing.T) {
 				t.Errorf("buildArgs:\n got %#v\nwant %#v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestIncludeBatches keeps each batch's paths within includeBatchBytes and
+// loses none of them.
+func TestIncludeBatches(t *testing.T) {
+	path := strings.Repeat("p", 99) // 100 bytes with its separator
+	include := make([]string, 400)
+	for i := range include {
+		include[i] = path
+	}
+	include = append(include, strings.Repeat("x", includeBatchBytes+10))
+
+	batches := includeBatches(include)
+	total := 0
+	for i, batch := range batches {
+		size := 0
+		for _, p := range batch {
+			size += len(p) + 1
+		}
+		if size > includeBatchBytes && len(batch) > 1 {
+			t.Errorf("batch %d holds %d bytes over %d paths, past the %d budget", i, size, len(batch), includeBatchBytes)
+		}
+		total += len(batch)
+	}
+	if total != len(include) || len(batches) != 4 {
+		t.Fatalf("got %d paths in %d batches, want %d in 4 (163+163+74, then the long one alone)", total, len(batches), len(include))
+	}
+	if includeBatches(nil) != nil {
+		t.Fatal("no include paths must mean no batches")
 	}
 }
 
