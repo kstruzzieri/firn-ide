@@ -116,28 +116,47 @@ func buildArgs(req SearchRequest, paths ...string) []string {
 	return args
 }
 
-// includeBatchBytes bounds the include paths one ripgrep command line names.
-// A repository that committed a vendored folder and then ignored it can have
-// thousands of tracked, ignored files, and Windows caps a whole command line
-// at 32,767 characters (macOS at 1 MB of arguments and environment).
+// commandLineBudget bounds one ripgrep command line, in bytes. Windows caps a
+// whole command line at 32,767 UTF-16 units, and a string's UTF-8 length is
+// never below its UTF-16 length, so counting bytes is safe; the rest is the
+// margin argsSize does not cover. A repository that committed a vendored
+// folder and then ignored it can have thousands of tracked, ignored files.
 // ponytail: one budget for every platform, sized for Windows; a few extra
-// ripgrep starts on the other platforms when the list is that long.
-const includeBatchBytes = 16 << 10
+// ripgrep starts elsewhere (macOS allows 1 MB) when the list is that long.
+const commandLineBudget = 30 << 10
 
-// includeBatches splits include into groups whose paths, plus a separator
-// each, stay within includeBatchBytes. A single longer path gets a group of
-// its own.
-func includeBatches(include []string) [][]string {
+// argsSize is the command-line length args take, with an allowance of 3 per
+// argument for the separating space and the quotes Windows may add.
+func argsSize(args []string) int {
+	size := 0
+	for _, arg := range args {
+		size += len(arg) + 3
+	}
+	return size
+}
+
+// includeBudget is the room one pass has for include paths: the command-line
+// budget less the binary and everything else buildArgs puts on the line,
+// root and query included. It can be negative for a query too long to search
+// at all; includeBatches then gives each path a pass of its own.
+func includeBudget(bin string, req SearchRequest) int {
+	return commandLineBudget - argsSize([]string{bin}) - argsSize(buildArgs(req))
+}
+
+// includeBatches splits include into groups whose argsSize stays within
+// budget. A path that does not fit even alone gets a group of its own.
+func includeBatches(include []string, budget int) [][]string {
 	var batches [][]string
 	var batch []string
 	size := 0
 	for _, path := range include {
-		if len(batch) > 0 && size+len(path)+1 > includeBatchBytes {
+		cost := len(path) + 3
+		if len(batch) > 0 && size+cost > budget {
 			batches = append(batches, batch)
 			batch, size = nil, 0
 		}
 		batch = append(batch, path)
-		size += len(path) + 1
+		size += cost
 	}
 	if len(batch) > 0 {
 		batches = append(batches, batch)
@@ -156,8 +175,8 @@ type runOutcome struct {
 // optional typed error. Exit code 1 is mapped to a successful empty run.
 //
 // include names files to search although an ignore rule matches them. They
-// ride in batches (includeBatches): the first pass searches the root and the
-// first batch, each later pass one batch. The passes share one timeout, one
+// ride in batches sized to the command-line budget (includeBatches): the
+// first pass searches the root and the first batch, each later pass one batch. The passes share one timeout, one
 // MatchCap and one duplicate-line guard, and the first failure ends the run.
 //
 // The context owned by the caller controls cancelation. When ctx is canceled
@@ -182,12 +201,17 @@ func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, includ
 		onMatch:  onMatch,
 		lastLine: make(map[string]int),
 	}
-	batches := includeBatches(include)
+	batches := includeBatches(include, includeBudget(bin, req))
 	paths := []string{req.Root}
 	if len(batches) > 0 {
 		paths = append(paths, batches[0]...)
 	}
 	for i := 0; ; i++ {
+		// Cancelled before this pass starts (while the include paths were
+		// listed, or between passes): exec would report a failed start.
+		if ctx.Err() != nil {
+			return runOutcome{Truncated: run.truncated, Err: errCanceled}
+		}
 		outcome := run.pass(buildArgs(req, paths...))
 		if outcome.Err != nil || run.canceledAfterCap || i+1 >= len(batches) {
 			return outcome

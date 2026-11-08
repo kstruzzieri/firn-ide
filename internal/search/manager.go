@@ -31,6 +31,17 @@ type Manager struct {
 	// older registrations from newer ones with the same RequestID without
 	// relying on undefined func equality.
 	nextToken atomic.Uint64
+
+	// includes, when set, names files a search of root must cover although
+	// an ignore rule matches them: the tracked, ignored files of #536.
+	includes func(root string) []string
+}
+
+// SetIncludes installs the function that names, for a search root, the files
+// ripgrep must search although an ignore rule matches them. Call it before
+// the first Search.
+func (m *Manager) SetIncludes(includes func(root string) []string) {
+	m.includes = includes
 }
 
 // activeRun is the bookkeeping entry for a single in-flight rg invocation.
@@ -62,7 +73,7 @@ func defaultStatRoot(p string) (bool, error) {
 // completes (or is canceled, or fails). The supplied ctx is composed with
 // the manager's per-request cancel function so CancelSearch(req.RequestID)
 // will abort an in-flight call.
-func (m *Manager) Search(ctx context.Context, req SearchRequest, include ...string) SearchResponse {
+func (m *Manager) Search(ctx context.Context, req SearchRequest) SearchResponse {
 	start := time.Now()
 	resp := SearchResponse{
 		RequestID: req.RequestID,
@@ -80,6 +91,14 @@ func (m *Manager) Search(ctx context.Context, req SearchRequest, include ...stri
 	runCtx, cancel := context.WithCancel(ctx)
 	token := m.register(req.RequestID, cancel)
 	defer m.unregister(req.RequestID, token)
+
+	// Listed after registering: a workspace's first listing can wait on git,
+	// and a request superseded meanwhile must be cancellable. runRipgrep
+	// checks the cancellation before starting ripgrep.
+	var include []string
+	if m.includes != nil {
+		include = m.includes(req.Root)
+	}
 
 	// Group matches by file path as we receive them. We preserve ripgrep's
 	// emission order for both files and lines so the UI shows results in the

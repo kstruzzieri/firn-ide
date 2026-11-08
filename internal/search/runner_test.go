@@ -104,33 +104,43 @@ func TestBuildArgs(t *testing.T) {
 	}
 }
 
-// TestIncludeBatches keeps each batch's paths within includeBatchBytes and
-// loses none of them.
+// TestIncludeBatches keeps each batch's paths within the budget and loses
+// none of them.
 func TestIncludeBatches(t *testing.T) {
-	path := strings.Repeat("p", 99) // 100 bytes with its separator
-	include := make([]string, 400)
+	const budget = 1000
+	path := strings.Repeat("p", 97) // 100 bytes with its quoting allowance
+	include := make([]string, 25)
 	for i := range include {
 		include[i] = path
 	}
-	include = append(include, strings.Repeat("x", includeBatchBytes+10))
+	include = append(include, strings.Repeat("x", budget+10))
 
-	batches := includeBatches(include)
+	batches := includeBatches(include, budget)
 	total := 0
 	for i, batch := range batches {
-		size := 0
-		for _, p := range batch {
-			size += len(p) + 1
-		}
-		if size > includeBatchBytes && len(batch) > 1 {
-			t.Errorf("batch %d holds %d bytes over %d paths, past the %d budget", i, size, len(batch), includeBatchBytes)
+		if size := argsSize(batch); size > budget && len(batch) > 1 {
+			t.Errorf("batch %d holds %d bytes over %d paths, past the %d budget", i, size, len(batch), budget)
 		}
 		total += len(batch)
 	}
 	if total != len(include) || len(batches) != 4 {
-		t.Fatalf("got %d paths in %d batches, want %d in 4 (163+163+74, then the long one alone)", total, len(batches), len(include))
+		t.Fatalf("got %d paths in %d batches, want %d in 4 (10+10+5, then the long one alone)", total, len(batches), len(include))
 	}
-	if includeBatches(nil) != nil {
+	if includeBatches(nil, budget) != nil {
 		t.Fatal("no include paths must mean no batches")
+	}
+}
+
+// TestIncludeBudget: the include paths share a command line with the binary,
+// the flags, the root and the query, and Windows caps the whole line, so a
+// long query leaves less room for them.
+func TestIncludeBudget(t *testing.T) {
+	req := SearchRequest{Root: "/r", Query: "needle"}
+	short := includeBudget("/bin/rg", req)
+	req.Query = strings.Repeat("q", 20000)
+	long := includeBudget("/bin/rg", req)
+	if short <= 0 || short > commandLineBudget || short-long != 20000-len("needle") {
+		t.Fatalf("includeBudget = %d for a short query, %d for a 20,000-byte one; want the difference to be the query growth", short, long)
 	}
 }
 

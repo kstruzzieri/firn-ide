@@ -177,6 +177,9 @@ func NewApp() *App {
 		gitMsgGen:       git.NewMessageGenerator(),
 	}
 	app.dirReader.SetTrackedLister(app.firstTrackedIgnored)
+	// Tracked files a .gitignore rule matches: the tree lists them (#536), and
+	// ripgrep searches them only when named.
+	app.searchManager.SetIncludes(app.dirReader.TrackedIgnoredFiles)
 	return app
 }
 
@@ -1777,9 +1780,7 @@ func (a *App) SearchWorkspace(request search.SearchRequest) search.SearchRespons
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// Tracked files a .gitignore rule matches: the tree lists them (#536), and
-	// ripgrep searches them only when named.
-	return a.searchManager.Search(ctx, request, a.dirReader.TrackedIgnoredFiles(request.Root)...)
+	return a.searchManager.Search(ctx, request)
 }
 
 // CancelSearch aborts an in-flight search by RequestID. It is a no-op when

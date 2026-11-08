@@ -44,6 +44,14 @@ func withWorkspace(t *testing.T, files map[string]string) string {
 	return root
 }
 
+// includingManager is a Manager whose searches also name paths, as the app
+// names tracked, ignored files (#536).
+func includingManager(paths ...string) *Manager {
+	mgr := NewManager()
+	mgr.SetIncludes(func(string) []string { return paths })
+	return mgr
+}
+
 func TestManager_NoMatchesEmptyResponse(t *testing.T) {
 	requireRipgrep(t)
 	root := withWorkspace(t, map[string]string{
@@ -257,11 +265,11 @@ func TestManager_SearchesIncludedIgnoredFiles(t *testing.T) {
 		"keep.txt":          "needle\n",
 	})
 
-	resp := NewManager().Search(context.Background(), SearchRequest{
+	resp := includingManager(filepath.Join(root, "CLAUDE.md"), filepath.Join(root, "data", "kaggle", "a.csv")).Search(context.Background(), SearchRequest{
 		RequestID: "tracked-ignored",
 		Root:      root,
 		Query:     "needle",
-	}, filepath.Join(root, "CLAUDE.md"), filepath.Join(root, "data", "kaggle", "a.csv"))
+	})
 	if resp.Status != StatusSuccess {
 		t.Fatalf("status = %s msg=%s", resp.Status, resp.Message)
 	}
@@ -286,11 +294,11 @@ func TestManager_IncludedFileTheWalkAlsoFindsIsReportedOnce(t *testing.T) {
 		"CLAUDE.md": "needle one\nplain\nneedle two\n",
 	})
 
-	resp := NewManager().Search(context.Background(), SearchRequest{
+	resp := includingManager(filepath.Join(root, "CLAUDE.md")).Search(context.Background(), SearchRequest{
 		RequestID: "dup",
 		Root:      root,
 		Query:     "needle",
-	}, filepath.Join(root, "CLAUDE.md"))
+	})
 	if resp.Status != StatusSuccess {
 		t.Fatalf("status = %s msg=%s", resp.Status, resp.Message)
 	}
@@ -308,14 +316,14 @@ func TestManager_SecondPassDoesNotSpendTheMatchCap(t *testing.T) {
 		"CLAUDE.md": "needle 1\nneedle 2\nneedle 3\n",
 		"other.txt": "needle 4\n",
 	})
-	mgr := NewManager()
+	mgr := includingManager(filepath.Join(root, "CLAUDE.md"))
 	mgr.cfg.MatchCap = 4
 
 	resp := mgr.Search(context.Background(), SearchRequest{
 		RequestID: "dup-cap",
 		Root:      root,
 		Query:     "needle",
-	}, filepath.Join(root, "CLAUDE.md"))
+	})
 	if resp.Status != StatusSuccess || resp.Truncated || resp.TotalLines != 4 {
 		t.Fatalf("want 4 lines untruncated, got status=%s truncated=%v totalLines=%d files=%+v", resp.Status, resp.Truncated, resp.TotalLines, resp.Files)
 	}
@@ -339,16 +347,44 @@ func TestManager_ManyIncludedPathsStillSearch(t *testing.T) {
 		include[i] = vendored
 	}
 
-	resp := NewManager().Search(context.Background(), SearchRequest{
+	resp := includingManager(include...).Search(context.Background(), SearchRequest{
 		RequestID: "many",
 		Root:      root,
 		Query:     "needle",
-	}, include...)
+	})
 	if resp.Status != StatusSuccess {
 		t.Fatalf("status = %s msg=%s", resp.Status, resp.Message)
 	}
 	if resp.TotalFiles != 2 || resp.TotalLines != 2 {
 		t.Fatalf("want keep.txt and vendor/a.go once each, got files=%+v", resp.Files)
+	}
+}
+
+// TestManager_CancelWhileListingIncludesSkipsTheSearch: listing the include
+// paths can wait on git (a workspace's first listing), and the search box
+// works meanwhile, so a request superseded during that wait must already be
+// cancellable and must not start ripgrep once the listing returns.
+func TestManager_CancelWhileListingIncludesSkipsTheSearch(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{"a.txt": "needle\n"})
+	mgr := NewManager()
+	entered, release := make(chan struct{}), make(chan struct{})
+	mgr.SetIncludes(func(string) []string {
+		close(entered)
+		<-release
+		return nil
+	})
+
+	done := make(chan SearchResponse, 1)
+	go func() {
+		done <- mgr.Search(context.Background(), SearchRequest{RequestID: "slow", Root: root, Query: "needle"})
+	}()
+	<-entered
+	mgr.Cancel("slow")
+	close(release)
+
+	if resp := <-done; resp.Status != StatusCanceled || len(resp.Files) != 0 {
+		t.Fatalf("status = %s files=%+v, want a cancelled search with no results", resp.Status, resp.Files)
 	}
 }
 
