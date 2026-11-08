@@ -1712,6 +1712,30 @@ func TestPrepareSettingsApply(t *testing.T) {
 			wantCodes:  []string{codeSelectorConflict},
 		},
 		{
+			// #493: a profile source checks every floor, yet asks only about
+			// the floorless routes the edit touches. Agent joins completion's
+			// model with the list completion already shows: completion is
+			// untouched, so nothing is acknowledged, and nothing refuses it.
+			name: "profile source edit leaves an untouched floorless route alone",
+			profile: `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "agent-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "comp-m": {"name": "comp-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]}
+  },
+  "defaults": {"agent": "agent-m", "completion": "comp-m"}
+}`,
+			source:  &ApplySource{Kind: applySourceProfile, ProfileID: "user/staged"},
+			changes: []Change{routeChange("agent", "ollama", "comp-model", "chat", "stream", "tool_call")},
+			check: func(t *testing.T, cfg *config.Config) {
+				if cfg.Models[cfg.Defaults["agent"]].Name != "comp-model" || cfg.Defaults["completion"] != "comp-m" {
+					t.Fatalf("defaults = %v, models = %v", cfg.Defaults, cfg.Models)
+				}
+			},
+		},
+		{
 			// The prepared document is the PROFILE's, scrubbed of every key
 			// form — the active target supplies only the write identity.
 			name:    "profile source replaces the document credential-free",

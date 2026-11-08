@@ -80,6 +80,26 @@
       },
       "defaults": { "agent": "agent-m", "chat": "chat-m", "completion": "fast-m" }
     },
+    "departure-fallback": {
+      "providers": { "ollama": { "base_url": "http://localhost:11434" } },
+      "models": {
+        "agent-m": {
+          "name": "shared-model",
+          "provider": "ollama",
+          "type": "dense",
+          "capabilities": ["chat", "stream", "tool_call"]
+        },
+        "plan-m": {
+          "name": "plan-model",
+          "provider": "ollama",
+          "type": "dense",
+          "capabilities": ["chat", "stream", "tool_call"],
+          "fallbacks": ["fb-m"]
+        },
+        "fb-m": { "name": "shared-model", "provider": "ollama", "type": "dense" }
+      },
+      "defaults": { "agent": "agent-m", "planning": "plan-m" }
+    },
     "departure": {
       "providers": { "ollama": { "base_url": "http://localhost:11434" } },
       "models": {
@@ -216,6 +236,22 @@
       "refused": ["planning"],
       "picker": [],
       "refusedForEveryCard": "Any model agent moves to takes shared-model's only list away; planning, left deriving, falls short whatever the card."
+    },
+    {
+      "name": "agent leaves with its selector's only list, and a fallback planning reaches changes",
+      "base": "departure-fallback",
+      "useCase": "agent",
+      "card": {
+        "provider": "ollama",
+        "model": "agent-model",
+        "type": "dense",
+        "exposedCaps": ["chat", "stream", "tool_call"]
+      },
+      "touched": ["agent", "planning"],
+      "asks": [],
+      "refused": ["planning"],
+      "picker": [],
+      "refusedForEveryCard": "Any model agent moves to takes shared-model's only list away; fb-m, which planning falls back to, then lacks tool_call whatever the card."
     }
   ]
 }

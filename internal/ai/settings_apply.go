@@ -1762,8 +1762,9 @@ func applyRoutePlans(doc *config.Document, plans []routePlan, gates *applyGates)
 // BindUseCase guarantee go-llm validity only, so the FINISHED document must
 // still resolve Firn's agent and satisfy the Firn floor of agent and of every
 // use case the Apply touches (decision 12; a route it leaves alone may already
-// fall short, and is not this edit's to refuse); and a result Firn could not
-// project is a result Firn must not write blind.
+// fall short, and is not this edit's to refuse) — on its primary, and on every
+// role along its chain the Apply changed; and a result Firn could not project
+// is a result Firn must not write blind.
 func checkPreparedDocument(doc *config.Document, req SettingsApplyRequest, gates *applyGates) *SettingsApplyResult {
 	cfg := doc.Config()
 	// Keep the request-local verdict for an explicitly routed use case. The
@@ -1793,7 +1794,8 @@ func checkPreparedDocument(doc *config.Document, req SettingsApplyRequest, gates
 	}
 	for _, useCase := range slices.Sorted(maps.Keys(cfg.Defaults)) {
 		floor, ok := firnUseCaseFloors[useCase]
-		if ok && gates.inScope(useCase) && !routeMeetsFloor(cfg, useCase, floor) {
+		if ok && gates.inScope(useCase) &&
+			(!routeMeetsFloor(cfg, useCase, floor) || !changedChainMeetsFloor(cfg, useCase, floor, gates.changedSet())) {
 			return blockingDiagnostics(Diagnostic{
 				Code: codeEligibilityIneligible, SubjectKind: "use_case", SubjectName: useCase,
 			})
@@ -2003,7 +2005,10 @@ func refuseIneligible(cfg *config.Config, plan routePlan, asserted []string, cap
 			}
 			floor, ok := firnUseCaseFloors[useCase]
 			if !ok {
-				if !gates.confirmed[useCase] {
+				// Floorless: asked about only when touched, so a profile
+				// source's full scope never demands an acknowledgement the
+				// confirmation set excludes.
+				if gates.touched[useCase] && !gates.confirmed[useCase] {
 					unknown[useCase] = true
 				}
 				continue

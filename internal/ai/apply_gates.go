@@ -34,6 +34,16 @@ type applyGates struct {
 	confirmed map[string]bool
 	// touched is the touched set itself.
 	touched map[string]bool
+	// changed holds the roles whose state the Apply changes (or creates): on
+	// a touched use case's chain, each is a new answer to its floor.
+	changed map[string]bool
+}
+
+func (g *applyGates) changedSet() map[string]bool {
+	if g == nil {
+		return nil
+	}
+	return g.changed
 }
 
 func (g *applyGates) inScope(useCase string) bool {
@@ -79,6 +89,7 @@ func deriveApplyGates(ctx context.Context, req SettingsApplyRequest, active, doc
 		confirm:   confirmationSets(before, after, plans, touched),
 		confirmed: map[string]bool{},
 		touched:   touched,
+		changed:   changedRoles(before, after),
 	}
 	for _, useCases := range gates.confirm {
 		for _, useCase := range useCases {
@@ -155,6 +166,57 @@ func chainStates(cfg *config.Config, overrides map[modelSelector][]string, useCa
 	}
 	walk(role)
 	return out
+}
+
+// changedRoles is every role after the Apply whose state differs from
+// before it, a role the Apply creates included.
+func changedRoles(before, after *config.Config) map[string]bool {
+	beforeOverrides, afterOverrides := selectorCapabilityOverrides(before), selectorCapabilityOverrides(after)
+	changed := map[string]bool{}
+	for role, m := range after.Models {
+		was, ok := before.Models[role]
+		if !ok || roleStateOf(was, beforeOverrides) != roleStateOf(m, afterOverrides) {
+			changed[role] = true
+		}
+	}
+	return changed
+}
+
+// changedChainMeetsFloor reports whether every role on useCase's chain that
+// the Apply changed exposes floor — the shortfall a change can write into a
+// chain it does not route through its primary (a role left behind when the
+// selector's only list moves away, say). Roles it did not change are not this
+// Apply's to judge.
+func changedChainMeetsFloor(cfg *config.Config, useCase string, floor provider.Capability, changed map[string]bool) bool {
+	overrides := selectorCapabilityOverrides(cfg)
+	seen := map[string]bool{}
+	var walk func(string) bool
+	walk = func(role string) bool {
+		if seen[role] {
+			return true
+		}
+		seen[role] = true
+		m, ok := cfg.Models[role]
+		if !ok {
+			return true
+		}
+		if changed[role] {
+			exposed, owned := overrides[modelSelector{provider: m.Provider, model: m.Name}]
+			if !owned {
+				exposed = m.ResolvedCapabilities()
+			}
+			if caps, err := provider.ParseCapsStrict(exposed); err != nil || !caps.Has(floor) {
+				return false
+			}
+		}
+		for _, fallback := range m.Fallbacks {
+			if !walk(fallback) {
+				return false
+			}
+		}
+		return true
+	}
+	return walk(cfg.Defaults[useCase])
 }
 
 // touchedUseCases is the touched set: every use case bound after the Apply

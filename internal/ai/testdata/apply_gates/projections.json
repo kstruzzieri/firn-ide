@@ -409,6 +409,165 @@
     "sourceOrigin": "env",
     "state": "ready"
   },
+  "departure-fallback": {
+    "diagnostics": [],
+    "editable": true,
+    "models": [
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "capabilityOverride": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "effectiveCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "shared-model",
+        "provider": "ollama",
+        "removable": false,
+        "role": "agent-m",
+        "routedUseCases": [
+          "agent"
+        ],
+        "thinkMode": "",
+        "type": "dense"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "shared-model",
+        "provider": "ollama",
+        "removable": false,
+        "role": "fb-m",
+        "routedUseCases": [
+          "planning"
+        ],
+        "thinkMode": "",
+        "type": "dense"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "capabilityOverride": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "effectiveCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "fallbacks": [
+          "fb-m"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "plan-model",
+        "provider": "ollama",
+        "removable": false,
+        "role": "plan-m",
+        "routedUseCases": [
+          "planning"
+        ],
+        "thinkMode": "",
+        "type": "dense"
+      }
+    ],
+    "providers": [
+      {
+        "apiFormat": "ollama",
+        "classification": "local",
+        "credentialState": "none",
+        "endpoint": "http://localhost:11434",
+        "name": "ollama"
+      }
+    ],
+    "readOnly": false,
+    "revision": "03356dac988936b444bbe824195d231b60b8e7dd4fb4c109be3ec7011ef2ee2a",
+    "routes": [
+      {
+        "role": "agent-m",
+        "useCase": "agent"
+      },
+      {
+        "role": "plan-m",
+        "useCase": "planning"
+      }
+    ],
+    "sourceOrigin": "env",
+    "state": "ready"
+  },
   "fallback": {
     "diagnostics": [],
     "editable": true,

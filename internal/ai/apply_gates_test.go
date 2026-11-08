@@ -484,3 +484,27 @@ func TestApplyGatesFixture(t *testing.T) {
 		})
 	}
 }
+
+// Taking a selector's only list away changes what a role on it shows, and
+// planning reaches that role only as a fallback: planning is touched, its
+// primary still meets the floor, and the fallback that now lacks tool_call is
+// a new shortfall Apply refuses, naming planning.
+func TestApplyRetargetTakingTheOnlyListAwayChecksATouchedFallback(t *testing.T) {
+	const target = `{
+  "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+  "models": {
+    "agent-m": {"name": "shared-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"]},
+    "plan-m": {"name": "plan-model", "provider": "ollama", "type": "dense",
+      "capabilities": ["chat", "stream", "tool_call"], "fallbacks": ["fb-m"]},
+    "fb-m": {"name": "shared-model", "provider": "ollama", "type": "dense"}
+  },
+  "defaults": {"agent": "agent-m", "planning": "plan-m"}
+}`
+	h := newApplyHarness(t, target)
+	_, refused, res := applyOutcome(t, h,
+		routeChange("agent", "ollama", "agent-model", "chat", "stream", "tool_call"))
+	if !slices.Equal(refused, []string{"planning"}) {
+		t.Fatalf("departure refused %v (%+v), want planning", refused, res)
+	}
+}
