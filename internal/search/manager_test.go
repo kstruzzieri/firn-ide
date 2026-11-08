@@ -299,6 +299,28 @@ func TestManager_IncludedFileTheWalkAlsoFindsIsReportedOnce(t *testing.T) {
 	}
 }
 
+// TestManager_SecondPassDoesNotSpendTheMatchCap: the lines a second pass over
+// a file repeats are not results, so they must not count toward MatchCap and
+// truncate the search before other files' matches arrive.
+func TestManager_SecondPassDoesNotSpendTheMatchCap(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{
+		"CLAUDE.md": "needle 1\nneedle 2\nneedle 3\n",
+		"other.txt": "needle 4\n",
+	})
+	mgr := NewManager()
+	mgr.cfg.MatchCap = 4
+
+	resp := mgr.Search(context.Background(), SearchRequest{
+		RequestID: "dup-cap",
+		Root:      root,
+		Query:     "needle",
+	}, filepath.Join(root, "CLAUDE.md"))
+	if resp.Status != StatusSuccess || resp.Truncated || resp.TotalLines != 4 {
+		t.Fatalf("want 4 lines untruncated, got status=%s truncated=%v totalLines=%d files=%+v", resp.Status, resp.Truncated, resp.TotalLines, resp.Files)
+	}
+}
+
 func TestManager_InvalidRegex(t *testing.T) {
 	requireRipgrep(t)
 	root := withWorkspace(t, map[string]string{

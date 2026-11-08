@@ -100,13 +100,6 @@ func (m *Manager) Search(ctx context.Context, req SearchRequest, include ...stri
 			buckets[filePath] = bucket
 			order = append(order, bucket)
 		}
-		// ripgrep reports a file's lines in ascending order, once per pass,
-		// and makes a second pass when the walk and an included path both
-		// reach the file (git and ripgrep can disagree about an ignore rule).
-		// A line at or before the last one kept is that second pass.
-		if n := len(bucket.matches); n > 0 && m.Line <= bucket.matches[n-1].Line {
-			return true
-		}
 		bucket.matches = append(bucket.matches, m)
 		totalLines++
 		return true

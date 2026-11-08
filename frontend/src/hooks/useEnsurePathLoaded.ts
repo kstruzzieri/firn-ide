@@ -9,6 +9,8 @@ import { isWindowsPathSyntax, treeLoadLevels, treePathKey } from '../utils/works
 interface InFlightLoad {
   workspace: WorkspaceInfo;
   promise: Promise<void>;
+  /** The re-read forced calls during this load share; see ensurePathLoaded. */
+  followUp?: Promise<void>;
 }
 
 const inFlight = new Map<string, InFlightLoad>();
@@ -90,8 +92,20 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
   }
 
   const existing = inFlight.get(path);
-  // ponytail: a {force:true} call arriving while a non-force load is in flight piggybacks on it — harmless, since the in-flight load fetches the same fresh data.
-  if (existing?.workspace === workspace) return existing.promise;
+  if (existing?.workspace === workspace) {
+    if (!opts.force) return existing.promise;
+    // A forced call says the listing changed (a watcher event, a git status
+    // that moved the tracked files .gitignore matches, #536), and the load in
+    // flight may have read before that. Read again once it settles; every
+    // forced call meanwhile shares that one follow-up. A workspace switched
+    // meanwhile has its own tree; the path means nothing there.
+    existing.followUp ??= existing.promise.then(() =>
+      useIDEStore.getState().workspace === workspace
+        ? ensurePathLoaded(path, { force: true })
+        : undefined
+    );
+    return existing.followUp;
+  }
 
   // Distinguishes "removed from the tree mid-flight" (skip all annotations)
   // from "probed before its parent loaded" (reveal/hydration still need the

@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"firn/internal/git"
 	"firn/internal/git/gittest"
@@ -542,10 +545,24 @@ func TestRefreshTrackedIgnored_FailedListingKeepsLastSet(t *testing.T) {
 		t.Fatalf("GitStatus: %v", err)
 	}
 
-	// A cancelled context makes git fail before it lists anything.
+	// The listing fails: with .git moved aside, ls-files finds no repository.
+	gitDir, aside := filepath.Join(dir, ".git"), filepath.Join(dir, "git-aside")
+	if err := os.Rename(gitDir, aside); err != nil {
+		t.Fatal(err)
+	}
+	app.refreshTrackedIgnored(context.Background(), dir, true)
+	if err := os.Rename(aside, gitDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// The status probe fails: under a cancelled context it reports
+	// IsRepo=false although nothing says the repository went away.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	app.refreshTrackedIgnored(ctx, dir, true)
+	app.ctx = ctx
+	if st, err := app.GitStatus(dir); err != nil || st.IsRepo {
+		t.Fatalf("GitStatus under a cancelled context = %+v, %v; want the non-repo shape", st, err)
+	}
 
 	if stale != 1 {
 		t.Fatalf("filetree:stale events = %d, want only the first refresh's", stale)
@@ -556,6 +573,56 @@ func TestRefreshTrackedIgnored_FailedListingKeepsLastSet(t *testing.T) {
 	}
 	if len(entries) != 2 || entries[1].Name != "f.txt" {
 		t.Fatalf("entries = %+v, want .gitignore and the tracked f.txt", entries)
+	}
+}
+
+// TestRefreshTrackedIgnored_LaterListingWins: git status refreshes overlap,
+// and a listing taken before `git rm --cached` must not land after one taken
+// since and put the untracked file back in the tree.
+func TestRefreshTrackedIgnored_LaterListingWins(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"old.md", "new.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := NewApp()
+	app.emitFn = func(string, any) {}
+	var calls atomic.Int32
+	entered, release := make(chan struct{}), make(chan struct{})
+	app.listTrackedIgnored = func(context.Context, string) ([]string, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+			return []string{"old.md"}, nil
+		}
+		return []string{"new.md"}, nil
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		app.refreshTrackedIgnored(context.Background(), root, true)
+	}()
+	<-entered
+	laterDone := make(chan struct{})
+	go func() {
+		defer wg.Done()
+		defer close(laterDone)
+		app.refreshTrackedIgnored(context.Background(), root, true)
+	}()
+	// Unserialized, the later refresh publishes now, before the earlier one
+	// is released; serialized, it waits.
+	select {
+	case <-laterDone:
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	wg.Wait()
+
+	if got, want := app.dirReader.TrackedIgnoredFiles(root), []string{filepath.Join(root, "new.md")}; !slices.Equal(got, want) {
+		t.Fatalf("tracked-ignored set = %v, want the later listing %v", got, want)
 	}
 }
 

@@ -171,7 +171,17 @@ func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, includ
 		canceledAfterCap = true
 		cancel()
 	}
+	// ripgrep reports a file's lines in ascending order, once per pass, and
+	// makes a second pass when the walk and an included path both reach the
+	// file (git and ripgrep can disagree about an ignore rule). A line at or
+	// before the last one seen for that file is the second pass: it is
+	// neither delivered nor counted toward MatchCap.
+	lastLine := make(map[string]int)
 	parseErr := parseEvents(stdout, func(filePath string, m LineMatch) bool {
+		if last, seen := lastLine[filePath]; seen && m.Line <= last {
+			return true
+		}
+		lastLine[filePath] = m.Line
 		if collected >= cfg.MatchCap {
 			cancelAfterCap()
 			return false

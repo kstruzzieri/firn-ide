@@ -46,10 +46,21 @@ func (a *App) GitStatus(root string) (git.RepoStatus, error) {
 // touching a watched file, so it rides on every git status refresh. When the
 // set moves, filetree:stale names the tree folders to re-read.
 func (a *App) refreshTrackedIgnored(ctx context.Context, root string, isRepo bool) {
+	// Status reports IsRepo=false whenever its probes fail; a cancelled or
+	// expired context is no evidence the repository went away.
+	if ctx.Err() != nil {
+		return
+	}
+	a.trackedIgnoredMu.Lock()
+	defer a.trackedIgnoredMu.Unlock()
 	var paths []string
 	if isRepo {
 		var err error
-		paths, err = a.gitService.TrackedIgnored(ctx, root)
+		list := a.gitService.TrackedIgnored
+		if a.listTrackedIgnored != nil {
+			list = a.listTrackedIgnored
+		}
+		paths, err = list(ctx, root)
 		if err != nil {
 			// A failed listing says nothing about what git tracks. Keep the
 			// last set: clearing it would hide the files #536 brought back
