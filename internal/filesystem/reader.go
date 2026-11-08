@@ -26,14 +26,18 @@ type DirectoryReader struct {
 	fs FileSystem
 
 	trackedMu sync.RWMutex
-	// tracked holds, for the open workspace's root, the files git tracks that
-	// .gitignore rules match (#536). Git applies .gitignore only to untracked
-	// files, so the tree lists these anyway. An entry, even an empty one, means
-	// the root has been listed; a workspace outside any git repository lists
-	// as empty. It holds one root: one workspace is open at a time, and a set
-	// kept for a closed one goes stale (its .gitignore can change meanwhile),
-	// so storing a root forgets the others and reopening one lists it again.
+	// tracked holds, per workspace root, the files git tracks that .gitignore
+	// rules match (#536). Git applies .gitignore only to untracked files, so
+	// the tree lists these anyway. A workspace outside any git repository
+	// lists as empty. Every root keeps its last set, the baseline its next
+	// SetTrackedIgnored diffs against, even when a late git status for
+	// another workspace lands after a switch.
 	tracked map[string]trackedIgnored
+	// freshRoot is the root stored last. One workspace is open at a time, and
+	// another root's set may have gone stale while it was closed (its
+	// .gitignore can change meanwhile), so a read of any other root lists it
+	// again first.
+	freshRoot string
 	// listTracked lists a root no SetTrackedIgnored call has covered yet, so
 	// a workspace's first read (startup, restore) already has its exceptions.
 	listTracked func(root string) []string
@@ -46,6 +50,16 @@ func (d *DirectoryReader) SetTrackedLister(list func(root string) []string) {
 	d.trackedMu.Lock()
 	defer d.trackedMu.Unlock()
 	d.listTracked = list
+}
+
+// store records root's set and makes root the fresh one. trackedMu must be
+// held for writing.
+func (d *DirectoryReader) store(root string, set trackedIgnored) {
+	if d.tracked == nil {
+		d.tracked = make(map[string]trackedIgnored)
+	}
+	d.tracked[root] = set
+	d.freshRoot = root
 }
 
 // newTrackedIgnored builds a root's exception set from root-relative,
@@ -142,7 +156,7 @@ func (d *DirectoryReader) SetTrackedIgnored(root string, paths []string) []strin
 
 	d.trackedMu.Lock()
 	prev := d.tracked[root]
-	d.tracked = map[string]trackedIgnored{root: next}
+	d.store(root, next)
 	d.trackedMu.Unlock()
 
 	changed := map[string]bool{}
@@ -215,19 +229,20 @@ func inDotFolder(rel string) bool {
 func (d *DirectoryReader) scopeFor(root string) listScope {
 	root = filepath.Clean(root)
 	d.trackedMu.RLock()
-	tracked, known := d.tracked[root]
+	tracked := d.tracked[root]
+	fresh := root == d.freshRoot
 	list := d.listTracked
 	d.trackedMu.RUnlock()
-	if !known && list != nil {
+	if !fresh && list != nil {
 		// Listed outside the lock: git may take a while, and reads of other
 		// roots must not wait. A set SetTrackedIgnored stored meanwhile is
 		// newer than this listing and wins.
 		listed := newTrackedIgnored(list(root))
 		d.trackedMu.Lock()
-		if current, ok := d.tracked[root]; ok {
-			tracked = current
+		if root == d.freshRoot {
+			tracked = d.tracked[root]
 		} else {
-			d.tracked = map[string]trackedIgnored{root: listed}
+			d.store(root, listed)
 			tracked = listed
 		}
 		d.trackedMu.Unlock()

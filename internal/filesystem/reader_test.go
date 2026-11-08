@@ -1059,3 +1059,18 @@ func TestSetTrackedLister_ListsAnUnknownRootOnce(t *testing.T) {
 		t.Fatalf("lister ran for a root SetTrackedIgnored covered: %v", listed)
 	}
 }
+
+// TestSetTrackedIgnored_LateOtherRootKeepsTheBaseline: a git status for the
+// previous workspace can land after a switch. It must not erase the open
+// workspace's set, which its next refresh diffs against: erased, removing
+// the last tracked, ignored file would name no folder to re-read.
+func TestSetTrackedIgnored_LateOtherRootKeepsTheBaseline(t *testing.T) {
+	open, previous := filepath.FromSlash("/ws/b"), filepath.FromSlash("/ws/a")
+	reader := NewDirectoryReader(&Mock{})
+	reader.SetTrackedIgnored(open, []string{"CLAUDE.md"})
+	reader.SetTrackedIgnored(previous, []string{"x.md"})
+
+	if got := reader.SetTrackedIgnored(open, nil); strings.Join(got, "|") != open {
+		t.Fatalf("SetTrackedIgnored(open, nil) = %v, want [%s]", got, open)
+	}
+}
