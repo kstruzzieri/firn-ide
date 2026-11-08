@@ -71,7 +71,8 @@ func (a *App) refreshTrackedIgnored(ctx context.Context, root string, isRepo boo
 }
 
 // firstTrackedIgnored lists root's tracked-ignored files for the tree's
-// first read of a root, which comes before any git status (startup, restore).
+// first read of a root, which comes before any git status (startup, restore),
+// and for its first read after another workspace was open.
 // Without it that read would miss the tracked files, and the restore would
 // prune a saved expanded folder that holds them. A folder outside git, or a
 // failed listing, lists as empty: the git status that follows fills the set

@@ -667,6 +667,37 @@ func TestRefreshTrackedIgnored_LaterListingWins(t *testing.T) {
 	}
 }
 
+// TestReadDirectoryShallow_RelistEmitsWhatItChanged: reopening a workspace
+// lists it again before any git status, and the frontend may still hold
+// listings drawn from the set it had. A listing that moves that set names the
+// folders to re-read, as a git status would; the git status that follows then
+// diffs against the listing and would not name them again.
+func TestReadDirectoryShallow_RelistEmitsWhatItChanged(t *testing.T) {
+	root, other := t.TempDir(), t.TempDir()
+	app := NewApp()
+	var stale [][]string
+	app.emitFn = func(event string, data any) {
+		if event == "filetree:stale" {
+			stale = append(stale, data.([]string))
+		}
+	}
+	listed := []string{"a.md"}
+	app.listTrackedIgnored = func(context.Context, string) ([]string, error) { return listed, nil }
+
+	if _, err := app.ReadDirectoryShallow(root, root); err != nil {
+		t.Fatal(err)
+	}
+	app.refreshTrackedIgnored(context.Background(), other, true)
+	stale = nil
+	listed = []string{"b.md"}
+	if _, err := app.ReadDirectoryShallow(root, root); err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 || !slices.Equal(stale[0], []string{root}) {
+		t.Fatalf("filetree:stale = %v, want one event naming %v", stale, root)
+	}
+}
+
 // TestGitStatus_OutsideRepoLeavesGitignoreAsIs: with no index nothing is
 // tracked, so .gitignore hides what it matches, as before #536.
 func TestGitStatus_OutsideRepoLeavesGitignoreAsIs(t *testing.T) {

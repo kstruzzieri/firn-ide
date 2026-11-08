@@ -129,6 +129,15 @@ func TestIncludeBatches(t *testing.T) {
 	if includeBatches(nil, budget) != nil {
 		t.Fatal("no include paths must mean no batches")
 	}
+
+	// Windows may escape every backslash: 50 of them can take 100 bytes.
+	escaped := make([]string, 18)
+	for i := range escaped {
+		escaped[i] = strings.Repeat(`\`, 50)
+	}
+	if got := len(includeBatches(escaped, budget)); got != 2 {
+		t.Fatalf("18 paths of 50 backslashes fill %d batches, want 2 (9 of up to 103 bytes each)", got)
+	}
 }
 
 // TestIncludeBudget: the include paths share a command line with the binary,
@@ -141,6 +150,11 @@ func TestIncludeBudget(t *testing.T) {
 	long := includeBudget("/bin/rg", req)
 	if short <= 0 || short > commandLineBudget || short-long != 20000-len("needle") {
 		t.Fatalf("includeBudget = %d for a short query, %d for a 20,000-byte one; want the difference to be the query growth", short, long)
+	}
+	// Windows escapes each quote with a backslash.
+	req.Query = strings.Repeat(`"`, 3000)
+	if quoted := includeBudget("/bin/rg", req); short-quoted != 2*3000-len("needle") {
+		t.Fatalf("includeBudget = %d for 3,000 quotes, want %d: each takes two bytes once escaped", quoted, short-(2*3000-len("needle")))
 	}
 }
 

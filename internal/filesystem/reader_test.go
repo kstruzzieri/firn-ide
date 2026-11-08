@@ -956,7 +956,7 @@ func TestReadDirectory_ReopenedRootIsListedAgain(t *testing.T) {
 	reader.SetTrackedLister(func(root string) []string {
 		listed[root]++
 		return []string{"CLAUDE.md"}
-	})
+	}, nil)
 	other := filepath.Join(root, "data")
 
 	for _, read := range []string{root, other, root} {
@@ -1034,7 +1034,7 @@ func TestSetTrackedLister_ListsAnUnknownRootOnce(t *testing.T) {
 	reader.SetTrackedLister(func(root string) []string {
 		listed = append(listed, root)
 		return []string{"CLAUDE.md"}
-	})
+	}, nil)
 
 	for range 2 {
 		entries, err := reader.ReadDirectoryShallow(root, root)
@@ -1072,5 +1072,62 @@ func TestSetTrackedIgnored_LateOtherRootKeepsTheBaseline(t *testing.T) {
 
 	if got := reader.SetTrackedIgnored(open, nil); strings.Join(got, "|") != open {
 		t.Fatalf("SetTrackedIgnored(open, nil) = %v, want [%s]", got, open)
+	}
+}
+
+// TestSetTrackedLister_StatusDuringARelistWins: a git status for a root that
+// lands while a read is listing that root is newer than the listing, even
+// when another root's status lands after it: the listing must not replace it.
+func TestSetTrackedLister_StatusDuringARelistWins(t *testing.T) {
+	root, other := filepath.FromSlash("/ws/a"), filepath.FromSlash("/ws/b")
+	reader := NewDirectoryReader(&Mock{})
+	started, release := make(chan struct{}), make(chan struct{})
+	reader.SetTrackedLister(func(string) []string {
+		close(started)
+		<-release
+		return []string{"old.md"}
+	}, nil)
+	reader.SetTrackedIgnored(other, nil)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		reader.TrackedIgnoredFiles(root)
+	}()
+	<-started
+	reader.SetTrackedIgnored(root, []string{"new.md"})
+	reader.SetTrackedIgnored(other, nil)
+	close(release)
+	<-done
+
+	if got := reader.SetTrackedIgnored(root, []string{"new.md"}); len(got) != 0 {
+		t.Fatalf("the listing replaced the newer set: SetTrackedIgnored(root, [new.md]) = %v, want none", got)
+	}
+}
+
+// TestSetTrackedLister_RelistReportsFoldersWhoseListingsChange: reopening a
+// root lists it again, and the tree may still hold listings drawn from the
+// set it had. A listing that moves that set names the folders to re-read, as
+// a git status would; a root's first listing replaces nothing a read used.
+func TestSetTrackedLister_RelistReportsFoldersWhoseListingsChange(t *testing.T) {
+	root, other := filepath.FromSlash("/ws/a"), filepath.FromSlash("/ws/b")
+	reader := NewDirectoryReader(&Mock{})
+	var reported [][]string
+	reader.SetTrackedLister(func(string) []string {
+		return []string{"data/a.csv"}
+	}, func(dirs []string) {
+		reported = append(reported, dirs)
+	})
+
+	reader.TrackedIgnoredFiles(root)
+	if len(reported) != 0 {
+		t.Fatalf("a first listing reported %v, want nothing", reported)
+	}
+	reader.SetTrackedIgnored(root, []string{"CLAUDE.md"})
+	reader.SetTrackedIgnored(other, nil)
+	reader.TrackedIgnoredFiles(root)
+	want := []string{root, filepath.Join(root, "data")}
+	if len(reported) != 1 || strings.Join(reported[0], "|") != strings.Join(want, "|") {
+		t.Fatalf("relisting reported %v, want one report naming %v", reported, want)
 	}
 }

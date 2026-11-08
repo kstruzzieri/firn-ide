@@ -38,18 +38,26 @@ type DirectoryReader struct {
 	// .gitignore can change meanwhile), so a read of any other root lists it
 	// again first.
 	freshRoot string
-	// listTracked lists a root no SetTrackedIgnored call has covered yet, so
-	// a workspace's first read (startup, restore) already has its exceptions.
+	// stores counts store calls; each stored set carries its count as rev.
+	stores uint64
+	// listTracked lists a root other than freshRoot before a read of it, so a
+	// workspace's first read (startup, restore) already has its exceptions.
 	listTracked func(root string) []string
+	// trackedChanged receives the folders a listing by listTracked moved.
+	trackedChanged func(dirs []string)
 }
 
-// SetTrackedLister installs the function that lists, for a root the reader
-// has no set for yet, the files git tracks that .gitignore rules match, in
-// SetTrackedIgnored's form. It runs once per root, on the first read.
-func (d *DirectoryReader) SetTrackedLister(list func(root string) []string) {
+// SetTrackedLister installs the function that lists, for a root other than
+// the fresh one, the files git tracks that .gitignore rules match, in
+// SetTrackedIgnored's form: a root's first read, and its first read after
+// another root was stored. When such a listing moves a stored set, changed
+// receives the folders whose listings may change, as
+// SetTrackedIgnored returns them.
+func (d *DirectoryReader) SetTrackedLister(list func(root string) []string, changed func(dirs []string)) {
 	d.trackedMu.Lock()
 	defer d.trackedMu.Unlock()
 	d.listTracked = list
+	d.trackedChanged = changed
 }
 
 // store records root's set and makes root the fresh one. trackedMu must be
@@ -58,6 +66,8 @@ func (d *DirectoryReader) store(root string, set trackedIgnored) {
 	if d.tracked == nil {
 		d.tracked = make(map[string]trackedIgnored)
 	}
+	d.stores++
+	set.rev = d.stores
 	d.tracked[root] = set
 	d.freshRoot = root
 }
@@ -84,6 +94,9 @@ func newTrackedIgnored(paths []string) trackedIgnored {
 type trackedIgnored struct {
 	files map[string]bool
 	dirs  map[string]bool
+	// rev tells one stored set from another: zero for none, else the store
+	// that recorded it.
+	rev uint64
 }
 
 // listScope is what buildEntries needs beyond the ignore rules: the workspace
@@ -158,7 +171,12 @@ func (d *DirectoryReader) SetTrackedIgnored(root string, paths []string) []strin
 	prev := d.tracked[root]
 	d.store(root, next)
 	d.trackedMu.Unlock()
+	return changedDirs(root, prev, next)
+}
 
+// changedDirs returns, sorted and absolute, every folder from root down to
+// the parent of each file in one of prev and next but not the other.
+func changedDirs(root string, prev, next trackedIgnored) []string {
 	changed := map[string]bool{}
 	markAncestors := func(rel string) {
 		for dir := pathpkg.Dir(rel); !changed[dir]; dir = pathpkg.Dir(dir) {
@@ -231,21 +249,31 @@ func (d *DirectoryReader) scopeFor(root string) listScope {
 	d.trackedMu.RLock()
 	tracked := d.tracked[root]
 	fresh := root == d.freshRoot
-	list := d.listTracked
+	list, report := d.listTracked, d.trackedChanged
 	d.trackedMu.RUnlock()
 	if !fresh && list != nil {
 		// Listed outside the lock: git may take a while, and reads of other
-		// roots must not wait. A set SetTrackedIgnored stored meanwhile is
-		// newer than this listing and wins.
+		// roots must not wait. A set stored for root meanwhile (a git status,
+		// another read's listing) is at least as new as this one and wins,
+		// whichever root is fresh now.
 		listed := newTrackedIgnored(list(root))
+		var dirs []string
 		d.trackedMu.Lock()
-		if root == d.freshRoot {
-			tracked = d.tracked[root]
+		if current := d.tracked[root]; current.rev != tracked.rev {
+			tracked = current
 		} else {
+			// The tree may still show listings drawn from the stored set; a
+			// root never stored drew none.
+			if tracked.rev != 0 {
+				dirs = changedDirs(root, tracked, listed)
+			}
 			d.store(root, listed)
-			tracked = listed
+			tracked = d.tracked[root]
 		}
 		d.trackedMu.Unlock()
+		if len(dirs) > 0 && report != nil {
+			report(dirs)
+		}
 	}
 	return listScope{root: root, tracked: tracked}
 }

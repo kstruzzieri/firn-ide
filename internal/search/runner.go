@@ -125,12 +125,20 @@ func buildArgs(req SearchRequest, paths ...string) []string {
 // ripgrep starts elsewhere (macOS allows 1 MB) when the list is that long.
 const commandLineBudget = 30 << 10
 
-// argsSize is the command-line length args take, with an allowance of 3 per
-// argument for the separating space and the quotes Windows may add.
+// argSize is the most command-line length arg can take: itself, the
+// separating space, the quotes Windows may add, and a backslash for each quote
+// or backslash in it, the most Windows escaping adds.
+// ponytail: counts every backslash though Windows doubles only those before a
+// quote or at the end, so Windows paths batch a little smaller than needed.
+func argSize(arg string) int {
+	return len(arg) + strings.Count(arg, `"`) + strings.Count(arg, `\`) + 3
+}
+
+// argsSize is the most command-line length args can take.
 func argsSize(args []string) int {
 	size := 0
 	for _, arg := range args {
-		size += len(arg) + 3
+		size += argSize(arg)
 	}
 	return size
 }
@@ -150,7 +158,7 @@ func includeBatches(include []string, budget int) [][]string {
 	var batch []string
 	size := 0
 	for _, path := range include {
-		cost := len(path) + 3
+		cost := argSize(path)
 		if len(batch) > 0 && size+cost > budget {
 			batches = append(batches, batch)
 			batch, size = nil, 0

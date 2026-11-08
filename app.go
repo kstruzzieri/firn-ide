@@ -176,7 +176,11 @@ func NewApp() *App {
 		gitService:      git.NewService(),
 		gitMsgGen:       git.NewMessageGenerator(),
 	}
-	app.dirReader.SetTrackedLister(app.firstTrackedIgnored)
+	// A workspace read again after another was open is listed again, and the
+	// tree may still show listings drawn from its old set.
+	app.dirReader.SetTrackedLister(app.firstTrackedIgnored, func(dirs []string) {
+		app.emit("filetree:stale", dirs)
+	})
 	// Tracked files a .gitignore rule matches: the tree lists them (#536), and
 	// ripgrep searches them only when named.
 	app.searchManager.SetIncludes(app.dirReader.TrackedIgnoredFiles)
