@@ -38,7 +38,7 @@ import type { FileEvent } from './types/watcher';
 import { getDirectoryPath, pathsReferToSameFile } from './utils/lspUri';
 import { isDirVisible } from './utils/treeVisibility';
 import { findEntryByPath } from './utils/findEntryByPath';
-import { ensurePathLoaded } from './hooks/useEnsurePathLoaded';
+import { ensurePathLoaded, isPathLoadInFlight } from './hooks/useEnsurePathLoaded';
 import { flushAllFileEdits } from './utils/fileWrites';
 import { focusConfigTab } from './utils/editorSurface';
 import {
@@ -110,15 +110,15 @@ function App() {
     const s = useIDEStore.getState();
     const root = s.workspace?.path;
     if (!root) return;
-    const isRoot = pathsReferToSameFile(dir, root);
-    const node = isRoot ? { children: s.directoryTree } : findEntryByPath(s.directoryTree, dir);
-    if (!node) return;
-    if (node.children === undefined) {
-      // Its first read may predate this change: a forced call re-reads once
-      // that read settles. A folder never loaded has nothing to correct.
-      if (s.loadingPaths.has(dir)) void ensurePathLoaded(dir, { force: true });
+    // A read in flight may predate this change, and its completion clears any
+    // dirty mark set now: re-read once it settles, loaded or not, shown or not.
+    if (isPathLoadInFlight(dir)) {
+      void ensurePathLoaded(dir, { force: true });
       return;
     }
+    const isRoot = pathsReferToSameFile(dir, root);
+    const node = isRoot ? { children: s.directoryTree } : findEntryByPath(s.directoryTree, dir);
+    if (!node || node.children === undefined) return; // not loaded → ignore
 
     // A dir's children are visible when: it's root (always expanded via isRootExpanded)
     // or it's in expandedPaths AND its ancestor chain is visible (isDirVisible).

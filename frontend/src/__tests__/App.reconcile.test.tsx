@@ -371,6 +371,80 @@ describe('App — surgical watcher reconcile', () => {
     expect(useIDEStore.getState().directoryTree[0].children).toEqual([fresh]);
   });
 
+  // Marking a collapsed folder dirty is not enough while its read is in
+  // flight: that read's completion clears the mark and its listing stands.
+  it('re-reads a collapsed loaded folder whose read was in flight when the event came', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [loadedDir('/r/data')],
+        expandedPaths: new Set<string>(),
+        isRootExpanded: true,
+      });
+    });
+    const fresh = { name: 'b.csv', path: '/r/data/b.csv', isDir: false } as FileEntry;
+    let resolveFirst!: (entries: FileEntry[]) => void;
+    (ReadDirectoryShallow as jest.Mock).mockReset();
+    (ReadDirectoryShallow as jest.Mock)
+      .mockReturnValueOnce(
+        new Promise<FileEntry[]>((r) => {
+          resolveFirst = r;
+        })
+      )
+      .mockResolvedValue([fresh]);
+    let firstRead!: Promise<void>;
+    act(() => {
+      firstRead = ensurePathLoaded('/r/data', { force: true });
+    });
+
+    const call = (EventsOn as jest.Mock).mock.calls.find(([name]) => name === 'filetree:stale');
+    act(() => {
+      (call![1] as (dirs: string[]) => void)(['/r/data']);
+    });
+    await act(async () => {
+      resolveFirst([]);
+      await firstRead;
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(ReadDirectoryShallow).toHaveBeenCalledTimes(2);
+    expect(useIDEStore.getState().directoryTree[0].children).toEqual([fresh]);
+  });
+
+  // A loading marker is UI state and can outlive a workspace switch; only a
+  // read the loader holds for this workspace makes an unloaded folder worth
+  // reading on an event.
+  it('ignores an unloaded folder whose loading marker no read in this workspace holds', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [unloadedDir('/r/data')],
+        expandedPaths: new Set(['/r/data']),
+        loadingPaths: new Set(['/r/data']),
+        isRootExpanded: true,
+      });
+    });
+    (ReadDirectoryShallow as jest.Mock).mockClear();
+
+    const call = (EventsOn as jest.Mock).mock.calls.find(([name]) => name === 'filetree:stale');
+    act(() => {
+      (call![1] as (dirs: string[]) => void)(['/r/data']);
+      jest.advanceTimersByTime(100);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(ReadDirectoryShallow).not.toHaveBeenCalled();
+  });
+
   // ── (b) loaded but collapsed dir → markDirty, no fetch ────────────────────
   it('(b) change under a loaded-but-collapsed dir marks it dirty, no ReadDirectoryShallow', async () => {
     await act(async () => {

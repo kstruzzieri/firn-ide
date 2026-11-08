@@ -59,6 +59,16 @@ export function __resetEnsurePathLoaded(): void {
   rootMerges = 0;
 }
 
+/**
+ * True while a read of path started for the current workspace is in flight.
+ * Unlike the store's loadingPaths, which is UI state, this is the loader's own
+ * record, tied to the workspace that started the read.
+ */
+export function isPathLoadInFlight(path: string): boolean {
+  const workspace = useIDEStore.getState().workspace;
+  return Boolean(workspace) && inFlight.get(path)?.workspace === workspace;
+}
+
 interface EnsureOpts {
   force?: boolean;
 }
