@@ -492,6 +492,10 @@ export function RouteEditor({
    */
   const stagedAckFor = staged?.kind === 'route' ? staged.confirmUnknownUseCases : undefined;
   const [ackedFor, setAckedFor] = useState<readonly string[] | undefined>(stagedAckFor);
+  // What the staged acknowledgement covered when the editor opened, captured
+  // with `baseline`'s flag: a question that grows while the editor is open is
+  // one the row does not hold an answer to, so renewing it stays a change.
+  const [baselineAckFor] = useState<readonly string[] | undefined>(stagedAckFor);
   const [ackDrops, setAckDrops] = useState(seed.ackDrops);
   // A fresh request for every Done press, including an identical refusal.
   // Keep the visible message and keyboard focus stable while the alert clears.
@@ -1047,7 +1051,10 @@ export function RouteEditor({
   });
   const now = asked({ provider, defined, manual, exposed, think, ackUnknown, ackDrops }, ackedFor);
   // The picker cannot edit exposure or Think; adopting them never holds Apply.
-  const was = asked(golem === undefined ? baseline : { ...baseline, exposed, think }, stagedAckFor);
+  const was = asked(
+    golem === undefined ? baseline : { ...baseline, exposed, think },
+    baselineAckFor
+  );
   /**
    * What Done would stage that the row does not hold, in words, for the
    * footer — and the one fact the Done/Cancel offer reads (routeEdit.ts), so

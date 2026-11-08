@@ -2475,6 +2475,78 @@ describe('RouteEditor', () => {
     expect(screen.getByLabelText('Apply anyway')).not.toBeChecked();
   });
 
+  // #350 (Codex round 3): the question grows while the editor is open, here
+  // because completion's unassignment is withdrawn elsewhere. Ticking the box
+  // again is a change Done must still offer to stage.
+  it('offers Done for an acknowledgement renewed after the question grew', async () => {
+    const ALL: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    const listed = (role: string, useCase: string) =>
+      model({
+        role,
+        modelName: 'shared',
+        effectiveCapabilities: ALL,
+        capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: ALL,
+        capabilityOverride: ALL,
+        routedUseCases: [useCase],
+      });
+    const routes = [
+      { useCase: 'completion', role: 'comp-role' },
+      { useCase: 'summarize', role: 'sum-role' },
+    ];
+    const models = [listed('comp-role', 'completion'), listed('sum-role', 'summarize')];
+    const narrow: RouteChange = {
+      kind: 'route',
+      useCase: 'summarize',
+      modelFacts: { provider: 'hosted', model: 'shared', type: 'dense' },
+      capabilityFacts: { caps: ALL, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: true,
+      confirmUnknownUseCases: ['summarize'],
+    };
+    const propsFor = (draft: ReturnType<typeof draftWith>): Partial<RoutingCardProps> => {
+      const projection = projectDraft({ routes, models }, draft);
+      return {
+        routes,
+        models,
+        draft,
+        changes: projection.changes,
+        selectorUseCases: projection.selectorUseCases,
+        routeReach: projection.routeReach,
+        reachGroups: projection.reachGroups,
+      };
+    };
+    const { rerender, onStage, onUnstagedChange } = renderRouting(
+      propsFor(draftWith({ kind: 'route-unassign', useCase: 'completion' }, narrow))
+    );
+    await openRoute('summarize');
+    expect(screen.getByLabelText('Apply anyway')).toBeChecked();
+
+    rerender(
+      <RoutingCard
+        {...({
+          providers: [providerRow()],
+          rows: new Map(),
+          roleRows: new Map(),
+          diagnostics: [],
+          editable: true,
+          onStage,
+          onUnstagedChange,
+          ...propsFor(draftWith(narrow)),
+        } as RoutingCardProps)}
+      />
+    );
+    expect(screen.getByText(/Firn has/)).toHaveTextContent(
+      'no requirements on record for summarize and completion'
+    );
+    expect(screen.getByLabelText('Apply anyway')).not.toBeChecked();
+    await userEvent.click(screen.getByLabelText('Apply anyway'));
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage.mock.calls[0][0][0].confirmUnknownUseCases).toEqual(['completion', 'summarize']);
+  });
+
   // Done is what refuses, so the refusal answers beside it: after the Pending
   // line, directly above the footer — not at the top of an editor whose
   // acknowledgement sits forty rows down.
