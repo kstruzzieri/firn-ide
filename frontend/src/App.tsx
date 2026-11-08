@@ -120,17 +120,21 @@ function App() {
     const node = isRoot ? { children: s.directoryTree } : findEntryByPath(s.directoryTree, dir);
     if (!node || node.children === undefined) return; // not loaded → ignore
 
-    // A dir's children are visible when: it's root (always expanded via isRootExpanded)
-    // or it's in expandedPaths AND its ancestor chain is visible (isDirVisible).
+    // A dir's children are visible when it's in expandedPaths AND its ancestor
+    // chain is visible (isDirVisible). The root is always re-read, collapsed
+    // or not: the explorer's mount read (useDirectoryTree) runs outside the
+    // loader and clears a dirty mark when it lands, expanding the root does
+    // not re-read it, and root reads are ticket-ordered, so racing that read
+    // is safe (#536).
     // ponytail: isDirVisible alone is insufficient — it checks row visibility not content visibility
-    const visible = isRoot
-      ? s.isRootExpanded
-      : s.expandedPaths.has(dir) &&
+    const visible =
+      isRoot ||
+      (s.expandedPaths.has(dir) &&
         isDirVisible(dir, {
           rootPath: root,
           isRootExpanded: s.isRootExpanded,
           expandedPaths: s.expandedPaths,
-        });
+        }));
     if (!visible) {
       s.markDirty(dir);
       return;

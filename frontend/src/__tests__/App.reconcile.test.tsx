@@ -445,6 +445,32 @@ describe('App — surgical watcher reconcile', () => {
     expect(ReadDirectoryShallow).not.toHaveBeenCalled();
   });
 
+  // The explorer re-reads the root on every mount (a sidebar switch) outside
+  // the loader, and that read clears the root's dirty mark when it lands. A
+  // collapsed root marked dirty by an event during it would keep the older
+  // listing, and expanding the root does not re-read it. Root reads are
+  // ticket-ordered, so the event re-reads it even while collapsed.
+  it('re-reads a collapsed root on an event', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({ directoryTree: [loadedDir('/r/data')], isRootExpanded: false });
+    });
+    (ReadDirectoryShallow as jest.Mock).mockClear();
+
+    const call = (EventsOn as jest.Mock).mock.calls.find(([name]) => name === 'filetree:stale');
+    act(() => {
+      (call![1] as (dirs: string[]) => void)(['/r']);
+      jest.advanceTimersByTime(100);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r', '/r');
+  });
+
   // ── (b) loaded but collapsed dir → markDirty, no fetch ────────────────────
   it('(b) change under a loaded-but-collapsed dir marks it dirty, no ReadDirectoryShallow', async () => {
     await act(async () => {
