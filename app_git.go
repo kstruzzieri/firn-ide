@@ -56,11 +56,7 @@ func (a *App) refreshTrackedIgnored(ctx context.Context, root string, isRepo boo
 	var paths []string
 	if isRepo {
 		var err error
-		list := a.gitService.TrackedIgnored
-		if a.listTrackedIgnored != nil {
-			list = a.listTrackedIgnored
-		}
-		paths, err = list(ctx, root)
+		paths, err = a.trackedIgnoredLister()(ctx, root)
 		if err != nil {
 			// A failed listing says nothing about what git tracks. Keep the
 			// last set: clearing it would hide the files #536 brought back
@@ -72,6 +68,30 @@ func (a *App) refreshTrackedIgnored(ctx context.Context, root string, isRepo boo
 	if dirs := a.dirReader.SetTrackedIgnored(root, paths); len(dirs) > 0 {
 		a.emit("filetree:stale", dirs)
 	}
+}
+
+// firstTrackedIgnored lists root's tracked-ignored files for the tree's
+// first read of a root, which comes before any git status (startup, restore).
+// Without it that read would miss the tracked files, and the restore would
+// prune a saved expanded folder that holds them. A folder outside git, or a
+// failed listing, lists as empty: the git status that follows fills the set
+// in and names the folders to re-read (and logs a failure it hits too).
+func (a *App) firstTrackedIgnored(root string) []string {
+	ctx, cancel := a.gitCtx(gitLocalTimeout)
+	defer cancel()
+	paths, err := a.trackedIgnoredLister()(ctx, root)
+	if err != nil {
+		return nil
+	}
+	return paths
+}
+
+// trackedIgnoredLister is git's tracked-ignored listing, or the test seam.
+func (a *App) trackedIgnoredLister() func(context.Context, string) ([]string, error) {
+	if a.listTrackedIgnored != nil {
+		return a.listTrackedIgnored
+	}
+	return a.gitService.TrackedIgnored
 }
 
 // GitStage adds repo-root-relative paths to the index.

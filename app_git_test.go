@@ -518,6 +518,47 @@ func TestGitStatus_RefreshesTrackedIgnoredFiles(t *testing.T) {
 	}
 }
 
+// TestReadDirectoryShallow_FirstReadListsTrackedIgnoredFiles: the tree's
+// first read of a workspace (startup, restore) runs before any git status.
+// Reading it without the exceptions would miss the tracked files and let the
+// restore prune a saved expanded folder that holds them, so the first read
+// lists them itself, and the git status that follows finds nothing to change.
+func TestReadDirectoryShallow_FirstReadListsTrackedIgnoredFiles(t *testing.T) {
+	dir := initGitRepoForApp(t)
+	for _, args := range [][]string{{"add", "f.txt"}, {"commit", "-m", "track"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = isolatedGitEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("f.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	stale := 0
+	app.emitFn = func(event string, _ any) {
+		if event == "filetree:stale" {
+			stale++
+		}
+	}
+
+	entries, err := app.ReadDirectoryShallow(dir, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[1].Name != "f.txt" {
+		t.Fatalf("first read = %+v, want .gitignore and the tracked f.txt", entries)
+	}
+	if _, err := app.GitStatus(dir); err != nil {
+		t.Fatalf("GitStatus: %v", err)
+	}
+	if stale != 0 {
+		t.Fatalf("filetree:stale events = %d, want none: the first read already had the set", stale)
+	}
+}
+
 // TestRefreshTrackedIgnored_FailedListingKeepsLastSet: a failed listing says
 // nothing about what git tracks, so the tree keeps the last set it had rather
 // than hiding the files #536 brought back.

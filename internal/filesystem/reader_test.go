@@ -1015,3 +1015,36 @@ func TestTrackedIgnoredFiles_ListsExistingFilesOutsideDotFolders(t *testing.T) {
 		t.Fatalf("a root with no set has no files, got %v", other)
 	}
 }
+
+func TestSetTrackedLister_ListsAnUnknownRootOnce(t *testing.T) {
+	_, root := trackedIgnoredFixture(t)
+	reader := NewDirectoryReader(&OS{})
+	var listed []string
+	reader.SetTrackedLister(func(root string) []string {
+		listed = append(listed, root)
+		return []string{"CLAUDE.md"}
+	})
+
+	for range 2 {
+		entries, err := reader.ReadDirectoryShallow(root, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !entryPaths(t, root, entries)["CLAUDE.md"] {
+			t.Fatalf("the lister's set must apply to the first read: %+v", entries)
+		}
+	}
+	if len(listed) != 1 || listed[0] != root {
+		t.Fatalf("lister calls = %v, want one for %s", listed, root)
+	}
+
+	// A root git status already covered, even with an empty set, is known.
+	other := filepath.Join(root, "data")
+	reader.SetTrackedIgnored(other, nil)
+	if _, err := reader.ReadDirectoryShallow(other, other); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("lister ran for a root SetTrackedIgnored covered: %v", listed)
+	}
+}

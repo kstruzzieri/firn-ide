@@ -28,9 +28,37 @@ type DirectoryReader struct {
 	trackedMu sync.RWMutex
 	// tracked holds, per workspace root, the files git tracks that .gitignore
 	// rules match (#536). Git applies .gitignore only to untracked files, so
-	// the tree lists these anyway. A root with no entry has no exceptions,
-	// which is also the state of a workspace outside any git repository.
+	// the tree lists these anyway. An entry, even an empty one, means the root
+	// has been listed; a workspace outside any git repository lists as empty.
 	tracked map[string]trackedIgnored
+	// listTracked lists a root no SetTrackedIgnored call has covered yet, so
+	// a workspace's first read (startup, restore) already has its exceptions.
+	listTracked func(root string) []string
+}
+
+// SetTrackedLister installs the function that lists, for a root the reader
+// has no set for yet, the files git tracks that .gitignore rules match, in
+// SetTrackedIgnored's form. It runs once per root, on the first read.
+func (d *DirectoryReader) SetTrackedLister(list func(root string) []string) {
+	d.trackedMu.Lock()
+	defer d.trackedMu.Unlock()
+	d.listTracked = list
+}
+
+// newTrackedIgnored builds a root's exception set from root-relative,
+// "/"-separated paths.
+func newTrackedIgnored(paths []string) trackedIgnored {
+	set := trackedIgnored{files: map[string]bool{}, dirs: map[string]bool{}}
+	for _, rel := range paths {
+		if rel == "" {
+			continue
+		}
+		set.files[rel] = true
+		for dir := pathpkg.Dir(rel); dir != "."; dir = pathpkg.Dir(dir) {
+			set.dirs[dir] = true
+		}
+	}
+	return set
 }
 
 // trackedIgnored is one root's exception set: root-relative, "/"-separated
@@ -107,27 +135,14 @@ func (d *DirectoryReader) ReadDirectory(path string) ([]FileEntry, error) {
 // to the parent of each file that joined or left the set.
 func (d *DirectoryReader) SetTrackedIgnored(root string, paths []string) []string {
 	root = filepath.Clean(root)
-	next := trackedIgnored{files: map[string]bool{}, dirs: map[string]bool{}}
-	for _, rel := range paths {
-		if rel == "" {
-			continue
-		}
-		next.files[rel] = true
-		for dir := pathpkg.Dir(rel); dir != "."; dir = pathpkg.Dir(dir) {
-			next.dirs[dir] = true
-		}
-	}
+	next := newTrackedIgnored(paths)
 
 	d.trackedMu.Lock()
 	prev := d.tracked[root]
-	if len(next.files) == 0 {
-		delete(d.tracked, root)
-	} else {
-		if d.tracked == nil {
-			d.tracked = make(map[string]trackedIgnored)
-		}
-		d.tracked[root] = next
+	if d.tracked == nil {
+		d.tracked = make(map[string]trackedIgnored)
 	}
+	d.tracked[root] = next
 	d.trackedMu.Unlock()
 
 	changed := map[string]bool{}
@@ -200,8 +215,27 @@ func inDotFolder(rel string) bool {
 func (d *DirectoryReader) scopeFor(root string) listScope {
 	root = filepath.Clean(root)
 	d.trackedMu.RLock()
-	defer d.trackedMu.RUnlock()
-	return listScope{root: root, tracked: d.tracked[root]}
+	tracked, known := d.tracked[root]
+	list := d.listTracked
+	d.trackedMu.RUnlock()
+	if !known && list != nil {
+		// Listed outside the lock: git may take a while, and reads of other
+		// roots must not wait. A set SetTrackedIgnored stored meanwhile is
+		// newer than this listing and wins.
+		listed := newTrackedIgnored(list(root))
+		d.trackedMu.Lock()
+		if current, ok := d.tracked[root]; ok {
+			tracked = current
+		} else {
+			if d.tracked == nil {
+				d.tracked = make(map[string]trackedIgnored)
+			}
+			d.tracked[root] = listed
+			tracked = listed
+		}
+		d.trackedMu.Unlock()
+	}
+	return listScope{root: root, tracked: tracked}
 }
 
 // loadGitignore reads the rules scoped to one directory.

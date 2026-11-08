@@ -161,7 +161,7 @@ func NewApp() *App {
 		workspaceBaseDir = filepath.Join(firnDir, "workspaces")
 	}
 
-	return &App{
+	app := &App{
 		dirReader:       filesystem.NewDirectoryReader(osFS),
 		fileReader:      filesystem.NewFileReader(osFS),
 		fileWriter:      filesystem.NewFileWriter(osFS),
@@ -176,6 +176,8 @@ func NewApp() *App {
 		gitService:      git.NewService(),
 		gitMsgGen:       git.NewMessageGenerator(),
 	}
+	app.dirReader.SetTrackedLister(app.firstTrackedIgnored)
+	return app
 }
 
 // ServiceStartup is the v3 service lifecycle hook Wails calls before the window
