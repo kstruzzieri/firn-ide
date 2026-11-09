@@ -83,6 +83,11 @@ type SearchOptions struct {
 
 	// WholeWord when true adds --word-regexp.
 	WholeWord bool `json:"wholeWord"`
+
+	// IncludeHidden follows the file tree's Show hidden folders toggle
+	// (#450): true searches dot-folders and hidden files (--hidden), false
+	// leaves every dot-folder out. Version-control metadata is never searched.
+	IncludeHidden bool `json:"includeHidden"`
 }
 
 // MatchRange is a half-open byte range [Start, End) inside the matched line's

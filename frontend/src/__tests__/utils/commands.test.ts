@@ -125,6 +125,7 @@ test('creates the approved command registry with stable metadata', () => {
   expect(commands.map((item) => item.id)).toEqual([
     'open-folder',
     'show-explorer',
+    'toggle-hidden-folders',
     'show-search',
     'show-source-control',
     'show-run-profiles',
@@ -145,6 +146,12 @@ test('creates the approved command registry with stable metadata', () => {
   ).toEqual([
     { id: 'open-folder', title: 'Open Folder', keywords: ['folder', 'workspace'], shortcut: '⌘O' },
     { id: 'show-explorer', title: 'Show Explorer', keywords: undefined, shortcut: undefined },
+    {
+      id: 'toggle-hidden-folders',
+      title: 'Explorer: Toggle Hidden Folders',
+      keywords: ['dot', 'dotfiles', 'show hidden folders', 'files'],
+      shortcut: undefined,
+    },
     { id: 'show-search', title: 'Show Search', keywords: ['find', 'workspace'], shortcut: '⌘⇧F' },
     {
       id: 'show-source-control',
@@ -632,5 +639,28 @@ describe('showGolem across windows', () => {
     });
     // The reveal still happens: seeing the chat was the other half of the ask.
     expect(useIDEStore.getState().isGolemPanelCollapsed).toBe(false);
+  });
+});
+
+// #450: the command palette reaches the file explorer's Show hidden folders
+// toggle.
+describe('toggle-hidden-folders', () => {
+  const command = () => createCommands(jest.fn()).find((c) => c.id === 'toggle-hidden-folders')!;
+
+  afterEach(() => useIDEStore.getState().setShowHiddenFolders(true));
+
+  it('hides shown folders and shows hidden ones', () => {
+    useIDEStore.getState().setShowHiddenFolders(true);
+    expect(command().title).toBe('Explorer: Toggle Hidden Folders');
+    command().run();
+    expect(useIDEStore.getState().showHiddenFolders).toBe(false);
+    command().run();
+    expect(useIDEStore.getState().showHiddenFolders).toBe(true);
+  });
+
+  it('is found by its keywords', () => {
+    expect(matchCommands(createCommands(jest.fn()), 'dot').map((c) => c.id)).toContain(
+      'toggle-hidden-folders'
+    );
   });
 });

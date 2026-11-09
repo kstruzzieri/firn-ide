@@ -341,13 +341,18 @@ func TestReadDirectory_RespectsGitignore(t *testing.T) {
 	}
 }
 
-func TestReadDirectory_HidesDotDirectories(t *testing.T) {
+// TestReadDirectory_ListsDotFoldersButNotVCSMetadata (#450): the tree lists
+// dot-folders such as .github, and the frontend's Show hidden folders toggle
+// filters them; version-control metadata never reaches it.
+func TestReadDirectory_ListsDotFoldersButNotVCSMetadata(t *testing.T) {
 	modTime := time.Now()
 	mockFS := &Mock{
 		ReadDirFunc: func(path string) ([]fs.DirEntry, error) {
 			if path == "/test" {
 				return []fs.DirEntry{
 					&mockDirEntry{name: ".git", isDir: true},
+					&mockDirEntry{name: ".hg", isDir: true},
+					&mockDirEntry{name: ".svn", isDir: true},
 					&mockDirEntry{name: ".github", isDir: true},
 					&mockDirEntry{name: "src", isDir: true},
 					&mockDirEntry{name: ".env", isDir: false},
@@ -375,12 +380,13 @@ func TestReadDirectory_HidesDotDirectories(t *testing.T) {
 		names[e.Name] = true
 	}
 
-	// Dot-directories must be hidden.
-	if names[".git"] {
-		t.Error(".git directory should be hidden from the tree")
+	for _, vcs := range []string{".git", ".hg", ".svn"} {
+		if names[vcs] {
+			t.Errorf("%s directory should be hidden from the tree", vcs)
+		}
 	}
-	if names[".github"] {
-		t.Error(".github directory should be hidden from the tree")
+	if !names[".github"] {
+		t.Error(".github directory should be listed")
 	}
 	// Normal dir and dot-files must remain visible.
 	if !names["src"] {
@@ -946,6 +952,53 @@ func TestReadDirectoryShallow_ListsTrackedFilesIgnoreRulesMatch(t *testing.T) {
 	}
 }
 
+// TestReadDirectory_IgnoredDotFoldersFollowTheTrackedSet (#450): .gitignore
+// rules apply to dot-folders as to any folder, and #536's exception does too:
+// an ignored dot-folder holding a tracked file lists only that file.
+func TestReadDirectory_IgnoredDotFoldersFollowTheTrackedSet(t *testing.T) {
+	root := t.TempDir()
+	writeDirectoryFixture(t, root, map[string]string{
+		".gitignore":        ".venv/\n.cache/\n",
+		".venv/lib.py":      "",
+		".cache/tracked.md": "tracked",
+		".cache/scratch.md": "",
+		".github/ci.yml":    "",
+	})
+	reader := NewDirectoryReader(&OS{})
+	reader.SetTrackedIgnored(root, []string{".cache/tracked.md"})
+
+	entries, err := reader.ReadDirectory(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := entryPaths(t, root, entries)
+	want := map[string]bool{
+		".cache":            true,
+		".cache/tracked.md": true,
+		".github":           true,
+		".github/ci.yml":    true,
+		".gitignore":        true,
+	}
+	for path := range want {
+		if !got[path] {
+			t.Errorf("expected %q to be listed", path)
+		}
+	}
+	for path := range got {
+		if !want[path] {
+			t.Errorf("expected %q to stay hidden", path)
+		}
+	}
+
+	shallow, err := reader.ReadDirectoryShallow(filepath.Join(root, ".cache"), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shallow) != 1 || shallow[0].Name != "tracked.md" {
+		t.Fatalf("ReadDirectoryShallow(.cache) = %+v, want only tracked.md", shallow)
+	}
+}
+
 // TestReadDirectory_ReopenedRootIsListedAgain: one workspace is open at a
 // time, and a root's set goes stale while another is open (its .gitignore can
 // change meanwhile). Opening another root forgets the first, so reopening it
@@ -1000,33 +1053,43 @@ func TestSetTrackedIgnored_ReportsFoldersWhoseListingsChange(t *testing.T) {
 	}
 }
 
-func TestTrackedIgnoredFiles_ListsExistingFilesOutsideDotFolders(t *testing.T) {
+// TestTrackedIgnoredFiles_FollowsShowHiddenFolders (#450): ripgrep applies no
+// --glob to a path named on its command line, so the named list does the
+// toggle's filtering itself. A file inside .git, .hg or .svn is never named.
+func TestTrackedIgnoredFiles_FollowsShowHiddenFolders(t *testing.T) {
 	reader, root := trackedIgnoredFixture(t)
-	writeDirectoryFixture(t, root, map[string]string{".github/ci.yml": "", ".env": ""})
+	writeDirectoryFixture(t, root, map[string]string{".github/ci.yml": "", ".env": "", ".hg/store/x": "", "data/.svn/y": ""})
 	reader.SetTrackedIgnored(root, []string{
 		"CLAUDE.md",
 		"data/kaggle/a.csv",
 		".env",
-		// #450 decides how search treats dot-folders.
 		".github/ci.yml",
+		".hg/store/x",
+		"data/.svn/y",
 		// Deleted from the working tree but still in the index: ripgrep fails
 		// the whole search on a missing path.
 		"gone.txt",
 	})
 
-	got, err := reader.TrackedIgnoredFiles(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
+	visible := []string{
 		filepath.Join(root, ".env"),
 		filepath.Join(root, "CLAUDE.md"),
 		filepath.Join(root, "data", "kaggle", "a.csv"),
 	}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("TrackedIgnoredFiles() = %v, want %v", got, want)
+	for _, includeHidden := range []bool{false, true} {
+		want := visible
+		if includeHidden {
+			want = []string{visible[0], filepath.Join(root, ".github", "ci.yml"), visible[1], visible[2]}
+		}
+		got, err := reader.TrackedIgnoredFiles(root, includeHidden)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Fatalf("TrackedIgnoredFiles(includeHidden=%t) = %v, want %v", includeHidden, got, want)
+		}
 	}
-	if other, err := reader.TrackedIgnoredFiles(filepath.Join(root, "data")); err != nil || len(other) != 0 {
+	if other, err := reader.TrackedIgnoredFiles(filepath.Join(root, "data"), true); err != nil || len(other) != 0 {
 		t.Fatalf("a root with no set has no files, got %v, %v", other, err)
 	}
 }
@@ -1044,7 +1107,7 @@ func TestTrackedIgnoredFiles_SkipsSymlinksAndTheirDescendants(t *testing.T) {
 	}
 	reader := NewDirectoryReader(&OS{})
 	reader.SetTrackedIgnored(root, []string{"link.txt", "dir/a.txt"})
-	if files, err := reader.TrackedIgnoredFiles(root); err != nil || len(files) != 0 {
+	if files, err := reader.TrackedIgnoredFiles(root, true); err != nil || len(files) != 0 {
 		t.Fatalf("tracked symlinks and descendants = %v, %v; want no explicit search paths", files, err)
 	}
 }
@@ -1055,7 +1118,7 @@ func TestTrackedIgnoredFiles_ReportsMetadataErrors(t *testing.T) {
 		return nil, fs.ErrPermission
 	}})
 	reader.SetTrackedIgnored(root, []string{"data/a.txt"})
-	if files, err := reader.TrackedIgnoredFiles(root); !errors.Is(err, fs.ErrPermission) {
+	if files, err := reader.TrackedIgnoredFiles(root, true); !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("tracked files with inaccessible metadata = %v, %v; want permission error", files, err)
 	}
 }
@@ -1125,7 +1188,7 @@ func TestSetTrackedLister_StatusDuringARelistWins(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = reader.TrackedIgnoredFiles(root) // Only publication ordering matters here.
+		_, _ = reader.TrackedIgnoredFiles(root, true) // Only publication ordering matters here.
 	}()
 	<-started
 	reader.SetTrackedIgnored(root, []string{"new.md"})
@@ -1152,7 +1215,7 @@ func TestSetTrackedLister_RelistReportsFoldersWhoseListingsChange(t *testing.T) 
 		reported = append(reported, dirs)
 	})
 
-	if _, err := reader.TrackedIgnoredFiles(root); err != nil {
+	if _, err := reader.TrackedIgnoredFiles(root, true); err != nil {
 		t.Fatal(err)
 	}
 	if len(reported) != 0 {
@@ -1160,7 +1223,7 @@ func TestSetTrackedLister_RelistReportsFoldersWhoseListingsChange(t *testing.T) 
 	}
 	reader.SetTrackedIgnored(root, []string{"CLAUDE.md"})
 	reader.SetTrackedIgnored(other, nil)
-	if _, err := reader.TrackedIgnoredFiles(root); err != nil {
+	if _, err := reader.TrackedIgnoredFiles(root, true); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{root, filepath.Join(root, "data")}
@@ -1234,10 +1297,10 @@ func TestSetTrackedLister_ReadSwitchAlwaysRelistsReopenedRoot(t *testing.T) {
 				}
 				return nil, nil
 			}, nil)
-			if _, err := reader.TrackedIgnoredFiles(root); err != nil {
+			if _, err := reader.TrackedIgnoredFiles(root, true); err != nil {
 				t.Fatal(err)
 			}
-			_, otherErr := reader.TrackedIgnoredFiles(other)
+			_, otherErr := reader.TrackedIgnoredFiles(other, true)
 			if (otherErr != nil) != test.otherFails {
 				t.Fatalf("other root error = %v, want failure=%t", otherErr, test.otherFails)
 			}
@@ -1245,7 +1308,7 @@ func TestSetTrackedLister_ReadSwitchAlwaysRelistsReopenedRoot(t *testing.T) {
 				reader.SetTrackedIgnored(root, []string{"old.md"}) // A late status while other is open.
 			}
 			listed = "new.md"
-			files, err := reader.TrackedIgnoredFiles(root)
+			files, err := reader.TrackedIgnoredFiles(root, true)
 			if err != nil || strings.Join(files, "|") != filepath.Join(root, "new.md") {
 				t.Fatalf("reopened root = %v, %v; want fresh new.md", files, err)
 			}
@@ -1268,7 +1331,7 @@ func TestSetTrackedLister_FailedReopenRemainsRetryable(t *testing.T) {
 		return []string{"a.md"}, nil
 	}, nil)
 	for _, path := range []string{root, other, root, root} {
-		if _, err := reader.TrackedIgnoredFiles(path); (err != nil) != (path == other) {
+		if _, err := reader.TrackedIgnoredFiles(path, true); (err != nil) != (path == other) {
 			t.Fatalf("TrackedIgnoredFiles(%s) error = %v; want only the uncached other root to fail", path, err)
 		}
 	}

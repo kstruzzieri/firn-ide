@@ -36,7 +36,7 @@ import { useGitStore } from './stores/gitStore';
 import { ReadFile } from './wails/bindings';
 import type { FileEvent } from './types/watcher';
 import { getDirectoryPath, pathsReferToSameFile } from './utils/lspUri';
-import { isDirVisible } from './utils/treeVisibility';
+import { isDirListingShown } from './utils/treeVisibility';
 import { findEntryByPath } from './utils/findEntryByPath';
 import { ensurePathLoaded, isPathLoadInFlight } from './hooks/useEnsurePathLoaded';
 import { flushAllFileEdits } from './utils/fileWrites';
@@ -121,21 +121,13 @@ function App() {
     const node = isRoot ? { children: s.directoryTree } : findEntryByPath(s.directoryTree, dir);
     if (!node || node.children === undefined) return; // not loaded → ignore
 
-    // A dir's children are visible when it's in expandedPaths AND its ancestor
-    // chain is visible (isDirVisible). The root is always re-read, collapsed
-    // or not: the explorer's mount read (useDirectoryTree) runs outside the
-    // loader and clears a dirty mark when it lands, expanding the root does
-    // not re-read it, and root reads are ticket-ordered, so racing that read
-    // is safe (#536).
-    // ponytail: isDirVisible alone is insufficient — it checks row visibility not content visibility
-    const visible =
-      isRoot ||
-      (s.expandedPaths.has(dir) &&
-        isDirVisible(dir, {
-          rootPath: root,
-          isRootExpanded: s.isRootExpanded,
-          expandedPaths: s.expandedPaths,
-        }));
+    // Re-read a listing the explorer shows (isDirListingShown); mark any other
+    // dirty, and re-read it when it comes into view (below). The root is
+    // always re-read, collapsed or not: the explorer's mount read
+    // (useDirectoryTree) runs outside the loader and clears a dirty mark when
+    // it lands, and root reads are ticket-ordered, so racing that read is
+    // safe (#536).
+    const visible = isRoot || isDirListingShown(dir, s);
     if (!visible) {
       s.markDirty(dir);
       return;
@@ -211,6 +203,41 @@ function App() {
 
   useFileWatcher(workspace?.path ?? null, handleFileChange);
   useFileTreeStale(reconcileDir);
+
+  // A listing marked dirty while out of view is re-read when it comes into
+  // view: a collapsed root or folder above it expanding, hidden folders shown
+  // again (#450), or the Workspace view changing which folder is the root.
+  // Expanding a folder reads only that folder, so its expanded descendants
+  // would otherwise show what they held before. Listings that stay in or out
+  // of view are left alone, and a workspace switch reconciles its own tree.
+  useEffect(
+    () =>
+      useIDEStore.subscribe((state, prev) => {
+        if (state.dirtyPaths.size === 0 || state.workspace !== prev.workspace) return;
+        if (
+          state.expandedPaths === prev.expandedPaths &&
+          state.isRootExpanded === prev.isRootExpanded &&
+          state.showHiddenFolders === prev.showHiddenFolders &&
+          state.activeWorkspaceId === prev.activeWorkspaceId &&
+          state.workspaces === prev.workspaces
+        )
+          return;
+        const root = state.workspace?.path ?? '';
+        for (const dir of state.dirtyPaths) {
+          if (
+            isDirListingShown(dir, state) &&
+            !isDirListingShown(dir, prev) &&
+            // A folder deleted from the tree keeps its dirty and expanded
+            // marks; reading it would fail and keep it dirty.
+            (pathsReferToSameFile(dir, root) ||
+              findEntryByPath(state.directoryTree, dir)?.isDir === true)
+          ) {
+            void ensurePathLoaded(dir);
+          }
+        }
+      }),
+    []
+  );
 
   useEffect(() => {
     const timers = reconcileTimersRef.current;

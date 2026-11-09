@@ -149,6 +149,13 @@ export class SearchOptions {
      */
     "wholeWord": boolean;
 
+    /**
+     * IncludeHidden follows the file tree's Show hidden folders toggle
+     * (#450): true searches dot-folders and hidden files (--hidden), false
+     * leaves every dot-folder out. Version-control metadata is never searched.
+     */
+    "includeHidden": boolean;
+
     /** Creates a new SearchOptions instance. */
     constructor($$source: Partial<SearchOptions> = {}) {
         if (!("regex" in $$source)) {
@@ -159,6 +166,9 @@ export class SearchOptions {
         }
         if (!("wholeWord" in $$source)) {
             this["wholeWord"] = false;
+        }
+        if (!("includeHidden" in $$source)) {
+            this["includeHidden"] = false;
         }
 
         Object.assign(this, $$source);

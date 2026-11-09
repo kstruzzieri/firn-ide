@@ -53,6 +53,20 @@ export function loadInitialSyntaxTheme(): SyntaxThemeId {
   }
 }
 
+const SHOW_HIDDEN_FOLDERS_STORAGE_KEY = 'firn.showHiddenFolders';
+
+/** The file explorer's Show hidden folders choice (#450): on unless turned off. */
+export function loadInitialShowHiddenFolders(): boolean {
+  try {
+    return (
+      typeof localStorage === 'undefined' ||
+      localStorage.getItem(SHOW_HIDDEN_FOLDERS_STORAGE_KEY) !== 'false'
+    );
+  } catch {
+    return true;
+  }
+}
+
 // Types
 export type SidebarView = 'explorer' | 'search' | 'git' | 'run' | 'structure';
 export type TerminalTab = 'terminal' | 'output' | 'problems';
@@ -280,6 +294,11 @@ interface IDEState {
 
   // Status
   editorSyntaxTheme: SyntaxThemeId;
+  /**
+   * Whether the file tree shows dot-folders such as .github (#450). The tree
+   * state keeps them either way; only what is shown and searched changes.
+   */
+  showHiddenFolders: boolean;
 
   // Editor navigation
   pendingEditorNavigation: EditorNavigationRequest | null;
@@ -418,6 +437,7 @@ interface IDEActions {
 
   // Status actions
   setEditorSyntaxTheme: (id: SyntaxThemeId) => void;
+  setShowHiddenFolders: (show: boolean) => void;
 
   // Editor navigation actions
   requestEditorNavigation: (fileId: string, line: number, column: number) => void;
@@ -1036,6 +1056,7 @@ export const useIDEStore = create<IDEStore>()(
       recentWorkspaces: [],
       recentWorkspacesVersion: 0,
       editorSyntaxTheme: loadInitialSyntaxTheme(),
+      showHiddenFolders: loadInitialShowHiddenFolders(),
       pendingEditorNavigation: null,
       editorTabRevealNonce: 0,
 
@@ -2728,6 +2749,17 @@ export const useIDEStore = create<IDEStore>()(
         }
       },
 
+      setShowHiddenFolders: (show) => {
+        set({ showHiddenFolders: show }, false, 'setShowHiddenFolders');
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(SHOW_HIDDEN_FOLDERS_STORAGE_KEY, String(show));
+          }
+        } catch {
+          // localStorage may be unavailable (private mode / WebView quirks); state still updates.
+        }
+      },
+
       // Editor navigation actions
       requestEditorNavigation: (fileId, line, column) =>
         set(
@@ -2851,6 +2883,7 @@ export const useActiveTerminalSession = () =>
   });
 export const useEditorSyntaxTheme = (): SyntaxThemeId =>
   useIDEStore((state) => state.editorSyntaxTheme);
+export const useShowHiddenFolders = (): boolean => useIDEStore((state) => state.showHiddenFolders);
 export const useDirectoryTree = () => useIDEStore((state) => state.directoryTree);
 export const useExpandedPaths = () => useIDEStore((state) => state.expandedPaths);
 export const useLoadingPaths = () => useIDEStore((s) => s.loadingPaths);

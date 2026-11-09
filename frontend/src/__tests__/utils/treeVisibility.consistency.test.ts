@@ -33,9 +33,15 @@ const roots: FileEntry[] = [
 const ALL_DIR_PATHS = ['/r/a', '/r/a/b', '/r/a/b/c', '/r/a/d', '/r/e', '/r/e/f'];
 const ROOT = '/r';
 
-function flatDirPaths(expandedPaths: Set<string>, isRootExpanded: boolean): Set<string> {
+function flatDirPaths(
+  expandedPaths: Set<string>,
+  isRootExpanded: boolean,
+  showHiddenFolders?: boolean,
+  tree: FileEntry[] = roots
+): Set<string> {
   const rows = flattenVisibleTree({
-    roots,
+    roots: tree,
+    showHiddenFolders,
     expandedPaths,
     selectedPath: null,
     isRootExpanded,
@@ -48,12 +54,15 @@ function flatDirPaths(expandedPaths: Set<string>, isRootExpanded: boolean): Set<
 function assertConsistency(
   label: string,
   expandedPaths: Set<string>,
-  isRootExpanded: boolean
+  isRootExpanded: boolean,
+  showHiddenFolders?: boolean,
+  tree: FileEntry[] = roots,
+  dirPaths: string[] = ALL_DIR_PATHS
 ): void {
-  const state = { rootPath: ROOT, isRootExpanded, expandedPaths };
-  const flatSet = flatDirPaths(expandedPaths, isRootExpanded);
+  const state = { rootPath: ROOT, isRootExpanded, expandedPaths, showHiddenFolders };
+  const flatSet = flatDirPaths(expandedPaths, isRootExpanded, showHiddenFolders, tree);
 
-  for (const p of ALL_DIR_PATHS) {
+  for (const p of dirPaths) {
     const visible = isDirVisible(p, state);
     const inFlat = flatSet.has(p);
     expect({ path: p, scenario: label, isDirVisible: visible }).toEqual({
@@ -91,5 +100,46 @@ describe('isDirVisible mirrors flattenVisibleTree — consistency', () => {
 
   it('scenario: /r/e expanded without /r/a — only /r/e/f added', () => {
     assertConsistency('e-only-expanded', new Set(['/r/e']), true);
+  });
+});
+
+// #450: a dot-folder and everything under it is hidden while the Show hidden
+// folders toggle is off, though its branch stays expanded in the store.
+describe('isDirVisible mirrors flattenVisibleTree with dot-folders', () => {
+  const dotTree: FileEntry[] = [
+    dir('/r/.github', [dir('/r/.github/workflows', [])]),
+    dir('/r/a', [dir('/r/a/.cache', [dir('/r/a/.cache/x', [])]), dir('/r/a/b', [])]),
+  ];
+  const dotDirs = [
+    '/r/.github',
+    '/r/.github/workflows',
+    '/r/a',
+    '/r/a/.cache',
+    '/r/a/.cache/x',
+    '/r/a/b',
+  ];
+  const expanded = new Set(['/r/.github', '/r/a', '/r/a/.cache']);
+
+  it.each([undefined, true, false])('showHiddenFolders: %s', (showHiddenFolders) => {
+    assertConsistency(
+      `dot-${showHiddenFolders}`,
+      expanded,
+      true,
+      showHiddenFolders,
+      dotTree,
+      dotDirs
+    );
+  });
+
+  it('hides a dot-folder branch when off', () => {
+    const state = {
+      rootPath: ROOT,
+      isRootExpanded: true,
+      expandedPaths: expanded,
+      showHiddenFolders: false,
+    };
+    expect(isDirVisible('/r/.github/workflows', state)).toBe(false);
+    expect(isDirVisible('/r/a/.cache', state)).toBe(false);
+    expect(isDirVisible('/r/a/b', state)).toBe(true);
   });
 });

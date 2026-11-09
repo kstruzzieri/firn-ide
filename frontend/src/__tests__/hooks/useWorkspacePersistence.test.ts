@@ -1136,6 +1136,46 @@ describe('useWorkspacePersistence', () => {
     }
   });
 
+  // #450: Show hidden folders filters only what the explorer shows, so a
+  // hidden branch stays in the saved snapshot and the tree cache.
+  it('keeps hidden folders in the saved snapshot while they are hidden', async () => {
+    jest.useFakeTimers();
+    try {
+      useIDEStore.setState({
+        workspace: { name: 'tree-hidden', path: '/workspace/tree-hidden' },
+        directoryTree: [],
+        isLoadingTree: false,
+      });
+      useIDEStore.getState().setShowHiddenFolders(false);
+      renderHook(() => useWorkspacePersistence());
+      await waitFor(() => expect(useIDEStore.getState().isRestoringWorkspace).toBe(false));
+
+      const github = filesystem.FileEntry.createFrom({
+        name: '.github',
+        path: '/workspace/tree-hidden/.github',
+        isDir: true,
+        size: 0,
+        modTime: new Date().toISOString(),
+      });
+      act(() => {
+        useIDEStore.getState().setDirectoryTree([github]);
+      });
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+
+      await waitFor(() => expect(mockSaveWorkspaceState).toHaveBeenCalled());
+      const savedState = lastSavedWorkspaceState as {
+        explorer: { treeSnapshot: filesystem.FileEntry[] };
+      };
+      expect(savedState.explorer.treeSnapshot).toEqual([github]);
+      expect(getCachedWorkspaceTree('/workspace/tree-hidden')).toEqual([github]);
+    } finally {
+      useIDEStore.getState().setShowHiddenFolders(true);
+      jest.useRealTimers();
+    }
+  });
+
   it('saves the previous workspace tree, not the live one, when switching workspaces', async () => {
     const treeA = filesystem.FileEntry.createFrom({
       name: 'main.go',

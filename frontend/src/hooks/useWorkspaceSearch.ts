@@ -57,7 +57,8 @@ function fireCancelSearch(requestId: string): void {
  *     SearchWorkspace, so rapid typing collapses into one request
  *   - assign each fired request a unique RequestID; drop stale responses by
  *     comparing against the store's activeRequestId
- *   - on query/option supersession, workspace switch, or unmount, fire
+ *   - on query/option supersession (Show hidden folders included), workspace
+ *     switch, or unmount, fire
  *     CancelSearch(activeRequestId) so the backend ripgrep process is reaped
  *     instead of running to completion
  *   - keep ideStore.workspace and searchStore in sync: empty query → empty
@@ -114,7 +115,11 @@ export function useWorkspaceSearch(): void {
       const requestId = `search-${Date.now()}-${++requestCounter.current}`;
       const generation = searchGeneration;
       const requestQuery = query;
-      const requestOptions = { ...options };
+      // #450: search follows the file explorer's Show hidden folders toggle.
+      const requestOptions = {
+        ...options,
+        includeHidden: useIDEStore.getState().showHiddenFolders,
+      };
 
       debounceTimer = window.setTimeout(() => {
         debounceTimer = null;
@@ -146,7 +151,10 @@ export function useWorkspaceSearch(): void {
     const unsubscribeWorkspace = useIDEStore.subscribe((state, prevState) => {
       const workspacePath = state.workspace?.path ?? null;
       const previousWorkspacePath = prevState.workspace?.path ?? null;
-      if (workspacePath === previousWorkspacePath) return;
+      if (workspacePath === previousWorkspacePath) {
+        if (state.showHiddenFolders !== prevState.showHiddenFolders) scheduleSearch();
+        return;
+      }
 
       clearPendingSearch(true);
       useSearchStore.getState().resetForWorkspace(workspacePath);

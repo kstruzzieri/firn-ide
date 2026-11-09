@@ -33,14 +33,15 @@ type Manager struct {
 	nextToken atomic.Uint64
 
 	// includes, when set, names files a search of root must cover although
-	// an ignore rule matches them: the tracked, ignored files of #536.
-	includes func(root string) ([]string, error)
+	// an ignore rule matches them: the tracked, ignored files of #536, left
+	// out of hidden folders as the request's IncludeHidden says (#450).
+	includes func(root string, includeHidden bool) ([]string, error)
 }
 
 // SetIncludes installs the function that names, for a search root, the files
 // ripgrep must search although an ignore rule matches them. Call it before
 // the first Search.
-func (m *Manager) SetIncludes(includes func(root string) ([]string, error)) {
+func (m *Manager) SetIncludes(includes func(root string, includeHidden bool) ([]string, error)) {
 	m.includes = includes
 }
 
@@ -98,7 +99,7 @@ func (m *Manager) Search(ctx context.Context, req SearchRequest) SearchResponse 
 	var include []string
 	if m.includes != nil {
 		var err error
-		include, err = m.includes(req.Root)
+		include, err = m.includes(req.Root, req.Options.IncludeHidden)
 		if err != nil {
 			resp.Status = StatusFailed
 			resp.Message = err.Error()

@@ -242,10 +242,11 @@ func changedDirs(root string, prev, next trackedIgnored) []string {
 }
 
 // TrackedIgnoredFiles returns sorted absolute regular files in root's exception
-// set, skipping missing paths, dot-folders (#450), and symlinks below root.
-// Other metadata errors are returned. Search names these paths to ripgrep,
-// which otherwise skips them as ignored.
-func (d *DirectoryReader) TrackedIgnoredFiles(root string) ([]string, error) {
+// set, skipping missing paths, symlinks below root, and the folders search
+// leaves out (inHiddenFolder). Other metadata errors are returned. Search
+// names these paths to ripgrep, which otherwise skips them as ignored and
+// applies no --glob to a named path.
+func (d *DirectoryReader) TrackedIgnoredFiles(root string, includeHidden bool) ([]string, error) {
 	root = filepath.Clean(root)
 	scope, err := d.scopeFor(root)
 	if err != nil {
@@ -256,7 +257,7 @@ func (d *DirectoryReader) TrackedIgnoredFiles(root string) ([]string, error) {
 
 filesLoop:
 	for rel := range tracked.files {
-		if inDotFolder(rel) {
+		if inHiddenFolder(rel, includeHidden) {
 			continue
 		}
 		path := root
@@ -281,12 +282,18 @@ filesLoop:
 	return files, nil
 }
 
-// inDotFolder reports whether the "/"-separated rel lies inside a folder
-// whose name starts with a dot.
-func inDotFolder(rel string) bool {
+// vcsDirs are the version-control metadata folders the tree and search never
+// show, whatever the Show hidden folders toggle says (#450). Search's globs in
+// internal/search/runner.go name the same three.
+var vcsDirs = map[string]bool{".git": true, ".hg": true, ".svn": true}
+
+// inHiddenFolder reports whether the "/"-separated rel lies inside a folder
+// search leaves out: version-control metadata always, and any other folder
+// whose name starts with a dot unless includeHidden.
+func inHiddenFolder(rel string, includeHidden bool) bool {
 	parts := strings.Split(rel, "/")
 	for _, part := range parts[:len(parts)-1] {
-		if strings.HasPrefix(part, ".") {
+		if vcsDirs[part] || !includeHidden && strings.HasPrefix(part, ".") {
 			return true
 		}
 	}
@@ -503,7 +510,7 @@ func matchGitignorePath(rule ignoreRule, name string) bool {
 	return match(0, 0)
 }
 
-// buildEntries reads ONE directory level: filter (dot-dirs, gitignore), stat,
+// buildEntries reads ONE directory level: filter (VCS metadata, gitignore), stat,
 // sort folders-first. Child directories are returned WITHOUT Children populated.
 // A path a rule would hide is still listed when scope's exception set lists
 // it; inside an ignored folder, only those paths are.
@@ -516,7 +523,8 @@ func (d *DirectoryReader) buildEntries(path string, ignoreRules []ignoreRule, sc
 	entries := make([]FileEntry, 0, len(dirEntries))
 	for _, de := range dirEntries {
 		name := de.Name()
-		if de.IsDir() && strings.HasPrefix(name, ".") {
+		// Other dot-folders are listed; the frontend's toggle filters them.
+		if de.IsDir() && vcsDirs[name] {
 			continue
 		}
 		fullPath := filepath.Join(path, name)

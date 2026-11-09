@@ -50,6 +50,7 @@ beforeEach(() => {
     buildResponse({ requestId: req.requestId })
   );
   useSearchStore.setState(useSearchStore.getInitialState());
+  useIDEStore.setState({ showHiddenFolders: true });
   setWorkspace(null);
 });
 
@@ -135,7 +136,12 @@ describe('useWorkspaceSearch', () => {
     const arg = mockSearchWorkspace.mock.calls[0][0];
     expect(arg.root).toBe('/workspace');
     expect(arg.query).toBe('alpha');
-    expect(arg.options).toEqual({ regex: false, caseSensitive: false, wholeWord: false });
+    expect(arg.options).toEqual({
+      regex: false,
+      caseSensitive: false,
+      wholeWord: false,
+      includeHidden: true,
+    });
     expect(typeof arg.requestId).toBe('string');
     expect(arg.requestId.length).toBeGreaterThan(0);
   });
@@ -307,6 +313,31 @@ describe('useWorkspaceSearch', () => {
     expect(mockSearchWorkspace).toHaveBeenCalledTimes(2);
     expect(mockSearchWorkspace.mock.calls[1][0].query).toBe('alpha');
     expect(mockSearchWorkspace.mock.calls[1][0].options.regex).toBe(true);
+  });
+
+  // #450: search follows the file explorer's Show hidden folders toggle.
+  it('cancels and reruns a search when Show hidden folders changes', async () => {
+    setWorkspace('/workspace');
+    mockSearchWorkspace.mockImplementation(() => new Promise<SearchResponse>(() => {}));
+    renderHook(() => useWorkspaceSearch());
+
+    await typeAndDebounce('alpha');
+    const firstRequestId = useSearchStore.getState().activeRequestId;
+    expect(mockSearchWorkspace.mock.calls[0][0].options.includeHidden).toBe(true);
+
+    act(() => {
+      useIDEStore.getState().setShowHiddenFolders(false);
+    });
+    expect(mockCancelSearch).toHaveBeenCalledWith(firstRequestId);
+
+    act(() => {
+      jest.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    });
+    await flushMicrotasks();
+
+    expect(mockSearchWorkspace).toHaveBeenCalledTimes(2);
+    expect(mockSearchWorkspace.mock.calls[1][0].query).toBe('alpha');
+    expect(mockSearchWorkspace.mock.calls[1][0].options.includeHidden).toBe(false);
   });
 
   it('cancels the in-flight request when the workspace switches', async () => {
