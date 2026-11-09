@@ -162,6 +162,7 @@ describe('App — surgical watcher reconcile', () => {
       loadingPaths: new Set<string>(),
       dirtyPaths: new Set<string>(),
       isRootExpanded: true,
+      showHiddenFolders: true,
     });
 
     useSearchStore.setState({
@@ -614,6 +615,53 @@ describe('App — surgical watcher reconcile', () => {
 
     expect(ReadDirectoryShallow).not.toHaveBeenCalled();
     expect(useIDEStore.getState().dirtyPaths.has('/r/a')).toBe(true);
+  });
+
+  // #450: a watcher event inside a hidden folder only marks it dirty, so
+  // showing hidden folders again re-reads each expanded branch it brings back.
+  it('re-reads an expanded hidden folder that changed while hidden once shown again', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [loadedDir('/r/.github'), loadedDir('/r/src')],
+        expandedPaths: new Set(['/r/.github']),
+        isRootExpanded: true,
+      });
+      useIDEStore.getState().setShowHiddenFolders(false);
+    });
+
+    act(() => {
+      getWatcherCallback()({
+        type: 'created',
+        path: '/r/.github/new.yml',
+        isDir: false,
+        time: new Date().toISOString(),
+      });
+      jest.advanceTimersByTime(100);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(ReadDirectoryShallow).not.toHaveBeenCalled();
+    expect(useIDEStore.getState().dirtyPaths.has('/r/.github')).toBe(true);
+
+    const created = { ...loadedDir('/r/.github/new.yml'), isDir: false, children: undefined };
+    (ReadDirectoryShallow as jest.Mock).mockResolvedValue([created]);
+    act(() => {
+      useIDEStore.getState().setShowHiddenFolders(true);
+      jest.advanceTimersByTime(100);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/.github', '/r');
+    const github = useIDEStore.getState().directoryTree.find((e) => e.path === '/r/.github');
+    expect(github?.children?.map((c) => c.path)).toEqual(['/r/.github/new.yml']);
+    expect(useIDEStore.getState().dirtyPaths.has('/r/.github')).toBe(false);
   });
 
   // ── (c) unloaded dir → ignored entirely ────────────────────────────────────

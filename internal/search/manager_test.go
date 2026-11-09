@@ -49,7 +49,7 @@ func withWorkspace(t *testing.T, files map[string]string) string {
 // names tracked, ignored files (#536).
 func includingManager(paths ...string) *Manager {
 	mgr := NewManager()
-	mgr.SetIncludes(func(string) ([]string, error) { return paths, nil })
+	mgr.SetIncludes(func(string, bool) ([]string, error) { return paths, nil })
 	return mgr
 }
 
@@ -252,6 +252,78 @@ func TestManager_RespectsGitignoreOutsideGitRepo(t *testing.T) {
 	}
 }
 
+// searchedFiles runs a search for "needle" and returns the matched files'
+// relative paths, sorted.
+func searchedFiles(t *testing.T, mgr *Manager, root string, options SearchOptions) []string {
+	t.Helper()
+	resp := mgr.Search(context.Background(), SearchRequest{RequestID: "files", Root: root, Query: "needle", Options: options})
+	if resp.Status != StatusSuccess && resp.Status != StatusNoMatches {
+		t.Fatalf("status = %s msg=%s", resp.Status, resp.Message)
+	}
+	got := []string{}
+	for _, file := range resp.Files {
+		got = append(got, file.RelativePath)
+	}
+	slices.Sort(got)
+	return got
+}
+
+// TestManager_HiddenFoldersFollowIncludeHidden (#450): search follows the
+// tree's Show hidden folders toggle, and never enters version-control
+// metadata. Shown, hidden files are searched too, as the tree lists them.
+func TestManager_HiddenFoldersFollowIncludeHidden(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{
+		".github/ci.yml":     "needle\n",
+		".env":               "needle\n",
+		"src/a.txt":          "needle\n",
+		".git/HEAD":          "needle\n",
+		".hg/store":          "needle\n",
+		"src/.svn/entries":   "needle\n",
+		"src/.github/nested": "needle\n",
+	})
+
+	if got, want := searchedFiles(t, NewManager(), root, SearchOptions{IncludeHidden: true}), []string{".env", ".github/ci.yml", "src/.github/nested", "src/a.txt"}; !slices.Equal(got, want) {
+		t.Fatalf("shown: files = %v, want %v", got, want)
+	}
+	if got, want := searchedFiles(t, NewManager(), root, SearchOptions{}), []string{"src/a.txt"}; !slices.Equal(got, want) {
+		t.Fatalf("hidden: files = %v, want %v", got, want)
+	}
+}
+
+// TestManager_HiddenFoldersStayOutWhenWhitelisted: ripgrep enters a
+// dot-folder an ignore file whitelists even without --hidden, so hiding them
+// takes a glob.
+func TestManager_HiddenFoldersStayOutWhenWhitelisted(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{
+		".ignore":        "!.github/\n!.github/**\n",
+		".github/ci.yml": "needle\n",
+		"a.txt":          "needle\n",
+	})
+	if got, want := searchedFiles(t, NewManager(), root, SearchOptions{}), []string{"a.txt"}; !slices.Equal(got, want) {
+		t.Fatalf("files = %v, want %v", got, want)
+	}
+}
+
+// TestManager_IncludesFollowIncludeHidden: the named files are listed for the
+// request's toggle, since ripgrep applies no glob to a named path.
+func TestManager_IncludesFollowIncludeHidden(t *testing.T) {
+	root := t.TempDir()
+	for _, includeHidden := range []bool{false, true} {
+		mgr := NewManager()
+		var asked []bool
+		mgr.SetIncludes(func(_ string, hidden bool) ([]string, error) {
+			asked = append(asked, hidden)
+			return nil, errors.New("stop")
+		})
+		mgr.Search(context.Background(), SearchRequest{RequestID: "inc", Root: root, Query: "needle", Options: SearchOptions{IncludeHidden: includeHidden}})
+		if !slices.Equal(asked, []bool{includeHidden}) {
+			t.Fatalf("includes asked with %v, want [%t]", asked, includeHidden)
+		}
+	}
+}
+
 // TestManager_SearchesIncludedIgnoredFiles: the tracked files a .gitignore
 // rule matches are passed as extra paths (#536), and ripgrep searches a path
 // named on its command line whatever the ignore rules say. Untracked files
@@ -370,7 +442,7 @@ func TestManager_CancelWhileListingIncludesSkipsTheSearch(t *testing.T) {
 	root := withWorkspace(t, map[string]string{"a.txt": "needle\n"})
 	mgr := NewManager()
 	entered, release := make(chan struct{}), make(chan struct{})
-	mgr.SetIncludes(func(string) ([]string, error) {
+	mgr.SetIncludes(func(string, bool) ([]string, error) {
 		close(entered)
 		<-release
 		return nil, nil
@@ -395,7 +467,7 @@ func TestManager_IncludeListingFailure(t *testing.T) {
 			mgr := NewManager()
 			root := t.TempDir()
 			failure := errors.New("include listing failed")
-			mgr.SetIncludes(func(string) ([]string, error) {
+			mgr.SetIncludes(func(string, bool) ([]string, error) {
 				if canceled {
 					mgr.Cancel("listing-failure")
 				}

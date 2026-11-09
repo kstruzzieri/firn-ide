@@ -17,6 +17,17 @@ import (
 // TestBuildArgs verifies the option-to-argument mapping is exact and that
 // the query is its own argv element rather than being string-templated.
 func TestBuildArgs(t *testing.T) {
+	// #450: version-control metadata is never searched, and with hidden
+	// folders hidden no dot-folder is, even one an ignore file whitelists.
+	vcs := []string{"--glob", "!.git", "--glob", "!.hg", "--glob", "!.svn"}
+	head := func(hidden ...string) []string {
+		args := []string{"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never"}
+		args = append(args, vcs...)
+		if len(hidden) == 0 {
+			hidden = []string{"--glob", "!.*/"}
+		}
+		return append(args, hidden...)
+	}
 	cases := []struct {
 		name    string
 		req     SearchRequest
@@ -30,12 +41,11 @@ func TestBuildArgs(t *testing.T) {
 				Query:   "needle",
 				Options: SearchOptions{},
 			},
-			want: []string{
-				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
+			want: append(head(),
 				"--fixed-strings", "--ignore-case",
 				"--regexp", "needle",
 				"--", "/abs/root",
-			},
+			),
 		},
 		{
 			name: "regex-case-sensitive-whole-word",
@@ -44,12 +54,11 @@ func TestBuildArgs(t *testing.T) {
 				Query:   `\bfoo\b`,
 				Options: SearchOptions{Regex: true, CaseSensitive: true, WholeWord: true},
 			},
-			want: []string{
-				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
+			want: append(head(),
 				"--case-sensitive", "--word-regexp",
 				"--regexp", `\bfoo\b`,
 				"--", "/r",
-			},
+			),
 		},
 		{
 			name: "leading-dash-query-is-safe",
@@ -57,12 +66,11 @@ func TestBuildArgs(t *testing.T) {
 				Root:  "/r",
 				Query: "-flag",
 			},
-			want: []string{
-				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
+			want: append(head(),
 				"--fixed-strings", "--ignore-case",
 				"--regexp", "-flag",
 				"--", "/r",
-			},
+			),
 		},
 		{
 			name: "literal-mode-includes-fixed-strings",
@@ -71,12 +79,11 @@ func TestBuildArgs(t *testing.T) {
 				Query:   ".*",
 				Options: SearchOptions{Regex: false, CaseSensitive: true},
 			},
-			want: []string{
-				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
+			want: append(head(),
 				"--fixed-strings", "--case-sensitive",
 				"--regexp", ".*",
 				"--", "/r",
-			},
+			),
 		},
 		{
 			// #536: ripgrep searches a path named on its command line even
@@ -85,12 +92,20 @@ func TestBuildArgs(t *testing.T) {
 			name:    "named-paths-replace-the-root",
 			req:     SearchRequest{Root: "/r", Query: "needle"},
 			include: []string{"/r", "/r/CLAUDE.md", "/r/-data/a.csv"},
-			want: []string{
-				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
+			want: append(head(),
 				"--fixed-strings", "--ignore-case",
 				"--regexp", "needle",
 				"--", "/r", "/r/CLAUDE.md", "/r/-data/a.csv",
-			},
+			),
+		},
+		{
+			name: "include-hidden-searches-dot-folders",
+			req:  SearchRequest{Root: "/r", Query: "needle", Options: SearchOptions{IncludeHidden: true}},
+			want: append(head("--hidden"),
+				"--fixed-strings", "--ignore-case",
+				"--regexp", "needle",
+				"--", "/r",
+			),
 		},
 	}
 

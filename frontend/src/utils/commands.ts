@@ -268,6 +268,15 @@ export const createCommands = (openFolder: () => void): Command[] => [
   },
   { id: 'show-explorer', title: 'Show Explorer', run: () => showSidebarView('explorer') },
   {
+    id: 'toggle-hidden-folders',
+    title: 'Explorer: Toggle Hidden Folders',
+    keywords: ['dot', 'dotfiles', 'show hidden folders', 'files'],
+    run: () => {
+      const { showHiddenFolders, setShowHiddenFolders } = useIDEStore.getState();
+      setShowHiddenFolders(!showHiddenFolders);
+    },
+  },
+  {
     id: 'show-search',
     title: 'Show Search',
     keywords: ['find', 'workspace'],

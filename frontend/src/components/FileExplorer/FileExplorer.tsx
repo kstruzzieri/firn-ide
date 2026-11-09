@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import type { Range } from '@tanstack/react-virtual';
 import { Panel, PanelAction } from '../layout';
-import { MinusIcon } from '../icons';
+import { EyeIcon, MinusIcon } from '../icons';
 import {
   useIDEStore,
   useExpandedPaths,
@@ -13,6 +13,7 @@ import {
   useTreeError,
   useActiveFileId,
   useWorkspace,
+  useShowHiddenFolders,
 } from '../../stores/ideStore';
 import { useDirectoryTree as useFetchDirectoryTree } from './useDirectoryTree';
 import { useFileTreePresentation } from '../../hooks/useFileTreePresentation';
@@ -29,6 +30,7 @@ import { pathUnderRoot, relativePathFromRoot } from '../../utils/workspaceRegion
 import { useGitStatusByPath } from '../../stores/gitStore';
 import { normalizeFsPath } from '../../utils/paths';
 import { accentVar } from '../../utils/accent';
+import { isHiddenFolderName } from '../../utils/hiddenFolders';
 import styles from './FileExplorer.module.css';
 
 export function FileExplorer() {
@@ -39,6 +41,7 @@ export function FileExplorer() {
   const isLoadingTree = useIsLoadingTree();
   const treeError = useTreeError();
   const activeFileId = useActiveFileId();
+  const showHiddenFolders = useShowHiddenFolders();
 
   const presentation = useFileTreePresentation();
   const {
@@ -87,6 +90,8 @@ export function FileExplorer() {
     if (!ws || !relPath) return;
 
     const rel = relPath.split('/');
+    // A file inside a folder Show hidden folders hides is not revealed (#450).
+    if (!showHiddenFolders && rel.slice(0, -1).some(isHiddenFolderName)) return;
 
     void (async () => {
       const toExpand: string[] = [];
@@ -103,7 +108,7 @@ export function FileExplorer() {
       toExpand.forEach((p) => next.add(p));
       useIDEStore.setState({ expandedPaths: next, selectedPath: activeFileId });
     })();
-  }, [activeFileId, ensurePathLoaded, setSelectedPath, workspace]);
+  }, [activeFileId, ensurePathLoaded, setSelectedPath, workspace, showHiddenFolders]);
 
   // Workspace-View scoped hydration: when findScopedNode returns null (scopedError),
   // load the relDir chain in the background. If the path exists but was unloaded,
@@ -192,6 +197,7 @@ export function FileExplorer() {
         isRootExpanded,
         rootLabel,
         rootPath,
+        showHiddenFolders,
       }),
     [
       roots,
@@ -204,6 +210,7 @@ export function FileExplorer() {
       isRootExpanded,
       rootLabel,
       rootPath,
+      showHiddenFolders,
     ]
   );
 
@@ -441,7 +448,12 @@ export function FileExplorer() {
 
   return (
     <Panel
-      title={<TreeViewToggle />}
+      title={
+        <span className={styles.headerControls}>
+          <TreeViewToggle />
+          <HiddenFoldersToggle />
+        </span>
+      }
       actions={
         <PanelAction
           icon={<MinusIcon />}
@@ -456,6 +468,27 @@ export function FileExplorer() {
         <div className={styles.tree}>{renderContent()}</div>
       </div>
     </Panel>
+  );
+}
+
+/**
+ * Show hidden folders (#450): on by default, for every project. Off, the tree
+ * and search leave out dot-folders such as .github; the tree keeps them.
+ */
+function HiddenFoldersToggle() {
+  const show = useShowHiddenFolders();
+  const setShowHiddenFolders = useIDEStore((state) => state.setShowHiddenFolders);
+  return (
+    <button
+      type="button"
+      className={styles.hiddenToggle}
+      aria-label="Show hidden folders"
+      aria-pressed={show}
+      title="Show hidden folders"
+      onClick={() => setShowHiddenFolders(!show)}
+    >
+      <EyeIcon aria-hidden="true" />
+    </button>
   );
 }
 

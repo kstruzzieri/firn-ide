@@ -183,3 +183,45 @@
   color: var(--text-muted);
   font-size: 12px;
 }
+
+/* Header: Project | Workspace, then Show hidden folders (#450). */
+.headerControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hiddenToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--surface-border-subtle);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.hiddenToggle:hover {
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+}
+
+.hiddenToggle[aria-pressed='true'] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.hiddenToggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.hiddenToggle svg {
+  width: 13px;
+  height: 13px;
+}

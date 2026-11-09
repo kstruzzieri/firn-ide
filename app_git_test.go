@@ -517,6 +517,73 @@ func TestGitStatus_RefreshesTrackedIgnoredFiles(t *testing.T) {
 	}
 }
 
+// TestIgnoredDotFolder_TreeAndSearchListOnlyTrackedFiles (#450): a dot-folder
+// a .gitignore rule matches holds a tracked and an untracked file. The tree
+// lists the folder with only the tracked file (the frontend's Show hidden
+// folders toggle filters it), and search follows the toggle: shown, it finds
+// text only in the tracked file; hidden, in neither.
+func TestIgnoredDotFolder_TreeAndSearchListOnlyTrackedFiles(t *testing.T) {
+	dir := initGitRepoForApp(t)
+	write := func(rel, content string) {
+		t.Helper()
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".cache/tracked.md", "needle\n")
+	for _, args := range [][]string{{"add", ".cache"}, {"commit", "-m", "track"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = isolatedGitEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write(".gitignore", ".cache/\n")
+	write(".cache/scratch.md", "needle\n")
+
+	app := NewApp()
+	entries, err := app.ReadDirectoryShallow(filepath.Join(dir, ".cache"), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name != "tracked.md" {
+		t.Fatalf(".cache = %+v, want only tracked.md", entries)
+	}
+	root, err := app.ReadDirectoryShallow(dir, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(root) == 0 || root[0].Name != ".cache" {
+		t.Fatalf("root = %+v, want .cache listed first", root)
+	}
+
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skipf("ripgrep not installed: %v", err)
+	}
+	for _, includeHidden := range []bool{true, false} {
+		resp := app.SearchWorkspace(search.SearchRequest{
+			RequestID: "450", Root: dir, Query: "needle",
+			Options: search.SearchOptions{IncludeHidden: includeHidden},
+		})
+		var got []string
+		for _, file := range resp.Files {
+			got = append(got, file.RelativePath)
+		}
+		var want []string
+		if includeHidden {
+			want = []string{".cache/tracked.md"}
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("includeHidden=%t: search files = %v (status %s %s), want %v", includeHidden, got, resp.Status, resp.Message, want)
+		}
+	}
+}
+
 // TestReadDirectoryShallow_FirstReadListsTrackedIgnoredFiles: the tree's
 // first read of a workspace (startup, restore) runs before any git status.
 // Reading it without the exceptions would miss the tracked files and let the
@@ -658,7 +725,7 @@ func TestRefreshTrackedIgnored_LaterListingWins(t *testing.T) {
 	close(release)
 	<-firstDone
 
-	if got, err := app.dirReader.TrackedIgnoredFiles(root); err != nil || !slices.Equal(got, []string{filepath.Join(root, "new.md")}) {
+	if got, err := app.dirReader.TrackedIgnoredFiles(root, true); err != nil || !slices.Equal(got, []string{filepath.Join(root, "new.md")}) {
 		t.Fatalf("tracked-ignored set = %v, %v; want the later listing new.md", got, err)
 	}
 }
@@ -721,7 +788,7 @@ func TestRefreshTrackedIgnored_OlderStatusCannotReplaceFirstRead(t *testing.T) {
 	<-started
 	// The initial tree listing is newer than the status snapshot held open.
 	_, readErr := app.ReadDirectoryShallow(root, root)
-	before, beforeErr := app.dirReader.TrackedIgnoredFiles(root)
+	before, beforeErr := app.dirReader.TrackedIgnoredFiles(root, true)
 	close(release)
 	<-done
 	if readErr != nil {
@@ -731,7 +798,7 @@ func TestRefreshTrackedIgnored_OlderStatusCannotReplaceFirstRead(t *testing.T) {
 	if beforeErr != nil || !slices.Equal(before, want) {
 		t.Fatalf("first read set = %v, %v; want %v", before, beforeErr, want)
 	}
-	if got, err := app.dirReader.TrackedIgnoredFiles(root); err != nil || !slices.Equal(got, want) {
+	if got, err := app.dirReader.TrackedIgnoredFiles(root, true); err != nil || !slices.Equal(got, want) {
 		t.Fatalf("set after older status = %v, %v; want %v", got, err, want)
 	}
 }

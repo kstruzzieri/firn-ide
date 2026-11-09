@@ -135,6 +135,7 @@ function App() {
           rootPath: root,
           isRootExpanded: s.isRootExpanded,
           expandedPaths: s.expandedPaths,
+          showHiddenFolders: s.showHiddenFolders,
         }));
     if (!visible) {
       s.markDirty(dir);
@@ -211,6 +212,32 @@ function App() {
 
   useFileWatcher(workspace?.path ?? null, handleFileChange);
   useFileTreeStale(reconcileDir);
+
+  // #450: while Show hidden folders is off, a watcher event inside a hidden
+  // branch only marks it dirty. Showing them again re-reads each expanded
+  // branch that comes back into view, so its contents are current.
+  useEffect(
+    () =>
+      useIDEStore.subscribe((state, prev) => {
+        const root = state.workspace?.path;
+        if (!state.showHiddenFolders || prev.showHiddenFolders || !root) return;
+        const shown = {
+          rootPath: root,
+          isRootExpanded: state.isRootExpanded,
+          expandedPaths: state.expandedPaths,
+        };
+        for (const dir of state.dirtyPaths) {
+          if (
+            state.expandedPaths.has(dir) &&
+            !isDirVisible(dir, { ...shown, showHiddenFolders: false }) &&
+            isDirVisible(dir, shown)
+          ) {
+            reconcileDir(dir);
+          }
+        }
+      }),
+    [reconcileDir]
+  );
 
   useEffect(() => {
     const timers = reconcileTimersRef.current;

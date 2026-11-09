@@ -1,5 +1,6 @@
 // src/utils/flattenTree.ts
 import type { FileEntry, WorkspaceAccent } from '../stores/ideStore';
+import { shownEntries } from './hiddenFolders';
 
 /** Stable key for the synthetic root row (index 0 of every flat list). */
 export const ROOT_ROW_KEY = '__root__';
@@ -50,6 +51,8 @@ export interface FlattenOptions {
   isRootExpanded: boolean;
   rootLabel: string;
   rootPath: string;
+  /** False leaves dot-folders and everything under them out (#450). Default true. */
+  showHiddenFolders?: boolean;
 }
 
 /**
@@ -70,6 +73,7 @@ export function flattenVisibleTree(opts: FlattenOptions): FlatRow[] {
     isRootExpanded,
     rootLabel,
     rootPath,
+    showHiddenFolders = true,
   } = opts;
 
   const rows: FlatRow[] = [
@@ -94,12 +98,16 @@ export function flattenVisibleTree(opts: FlattenOptions): FlatRow[] {
 
   if (!isRootExpanded) return rows;
 
-  const walk = (entries: FileEntry[], depth: number): void => {
+  const walk = (all: FileEntry[], depth: number): void => {
+    const entries = shownEntries(all, showHiddenFolders);
     const setSize = entries.length;
     entries.forEach((entry, index) => {
       const isDir = entry.isDir;
       const isExpanded = isDir && expandedPaths.has(entry.path);
-      const canExpand = isDir && (entry.children === undefined || entry.children.length > 0);
+      const canExpand =
+        isDir &&
+        (entry.children === undefined ||
+          shownEntries(entry.children, showHiddenFolders).length > 0);
       const fileAccent = getFileAccent?.(entry) ?? null;
       rows.push({
         kind: 'entry',

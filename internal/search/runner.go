@@ -71,9 +71,11 @@ func isMissingTool(err error) bool {
 //     plain folders; without this flag ripgrep silently disables ignore rules
 //     for non-Git roots and surfaces files the user expects to be hidden.
 //  3. --json, --line-number, --column, --color=never: stable parsing contract.
-//  4. Mode flags: --fixed-strings, --case-sensitive/--ignore-case, --word-regexp.
-//  5. --regexp <query>: query is its own argv element; leading "-" is safe.
-//  6. -- <paths...>: end-of-options sentinel so paths starting with "-" are
+//  4. Hidden folders (#450): --glob exclusions for .git, .hg and .svn, then
+//     --hidden when IncludeHidden, otherwise --glob '!.*/'.
+//  5. Mode flags: --fixed-strings, --case-sensitive/--ignore-case, --word-regexp.
+//  6. --regexp <query>: query is its own argv element; leading "-" is safe.
+//  7. -- <paths...>: end-of-options sentinel so paths starting with "-" are
 //     safe. paths defaults to the search root. runRipgrep also names files
 //     ripgrep must search although an ignore rule matches them, the tracked
 //     files of #536: ripgrep always searches a path named on its command line.
@@ -81,7 +83,7 @@ func buildArgs(req SearchRequest, paths ...string) []string {
 	if len(paths) == 0 {
 		paths = []string{req.Root}
 	}
-	args := make([]string, 0, 14+len(paths))
+	args := make([]string, 0, 22+len(paths))
 	args = append(args,
 		// Ignore any user-level ripgrep config file so our explicit flags
 		// are authoritative. Without this, a stray RIPGREP_CONFIG_PATH or
@@ -96,7 +98,22 @@ func buildArgs(req SearchRequest, paths ...string) []string {
 		"--line-number",
 		"--column",
 		"--color", "never",
+		// Version-control metadata is never searched (#450). ripgrep skips
+		// it only as a hidden folder, so --hidden or an ignore file that
+		// whitelists it would let it in. internal/filesystem's vcsDirs names
+		// the same three for the tree and the named files.
+		"--glob", "!.git",
+		"--glob", "!.hg",
+		"--glob", "!.svn",
 	)
+	if req.Options.IncludeHidden {
+		args = append(args, "--hidden")
+	} else {
+		// Leaving out --hidden is not enough: ripgrep still enters a
+		// dot-folder an ignore file whitelists. The trailing slash limits the
+		// glob to folders, so dot-files stay as ripgrep treats them.
+		args = append(args, "--glob", "!.*/")
+	}
 
 	if !req.Options.Regex {
 		args = append(args, "--fixed-strings")

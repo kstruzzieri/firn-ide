@@ -6,6 +6,7 @@ import {
   useDirectoryTree,
   useTreeViewMode,
   useCanFocusWorkspace,
+  useShowHiddenFolders,
 } from '../stores/ideStore';
 import type { FileEntry, WorkspaceAccent } from '../stores/ideStore';
 import {
@@ -14,6 +15,7 @@ import {
   getInfraFileAccent,
   relativePathFromRoot,
 } from '../utils/workspaceRegions';
+import { shownEntries } from '../utils/hiddenFolders';
 
 export interface FileTreePresentation {
   mode: 'project' | 'workspace';
@@ -22,7 +24,7 @@ export interface FileTreePresentation {
   rootLabel: string;
   /** Repo root (project) or workspace dir absolute path (workspace). */
   rootPath: string;
-  /** Top-level entries to render as tree roots. */
+  /** Top-level entries to render as tree roots, as Show hidden folders filters them. */
   roots: FileEntry[];
   /** True when a workspace's relDir cannot be located in the loaded tree. */
   scopedError: boolean;
@@ -69,6 +71,7 @@ export function useFileTreePresentation(): FileTreePresentation {
   const tree = useDirectoryTree();
   const mode = useTreeViewMode();
   const canFocusWorkspace = useCanFocusWorkspace();
+  const showHiddenFolders = useShowHiddenFolders();
 
   const repoRoot = repo?.path ?? '';
   const repoName = repo?.name ?? '';
@@ -97,7 +100,7 @@ export function useFileTreePresentation(): FileTreePresentation {
         ...base,
         rootLabel: repoName,
         rootPath: repoRoot,
-        roots: tree,
+        roots: shownEntries(tree, showHiddenFolders),
         scopedError: false,
         getRegionAccent,
       };
@@ -113,7 +116,7 @@ export function useFileTreePresentation(): FileTreePresentation {
         ...base,
         rootLabel: workspaceLabel,
         rootPath: repoRoot,
-        roots: tree,
+        roots: shownEntries(tree, showHiddenFolders),
         scopedError: false,
         getRegionAccent: getOwnershipAccent,
         getOwnershipAccent,
@@ -129,7 +132,7 @@ export function useFileTreePresentation(): FileTreePresentation {
       ...base,
       rootLabel: workspaceLabel,
       rootPath: scoped?.path ?? `${repoRoot}/${relDir}`,
-      roots: scopedIsExact ? (scoped.children ?? []) : [],
+      roots: scopedIsExact ? shownEntries(scoped.children ?? [], showHiddenFolders) : [],
       scopedError: scoped === null || scopedUnloaded,
       rootUnreadable,
       getRegionAccent: getOwnershipAccent,
@@ -142,6 +145,7 @@ export function useFileTreePresentation(): FileTreePresentation {
     repoName,
     repoRoot,
     tree,
+    showHiddenFolders,
     active,
     getRegionAccent,
     getOwnershipAccent,
