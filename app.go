@@ -40,6 +40,9 @@ type App struct {
 	profileManager       *runprofile.ProjectRunProfileManager
 	profileWorkspaceRoot string
 	loadRunProfilesFn    func(*runprofile.ProjectRunProfileManager) error
+	// listTrackedIgnored lets tests hold a tracked-ignored listing open (#536).
+	// nil in production → gitService.TrackedIgnored.
+	listTrackedIgnored func(ctx context.Context, root string) ([]string, error)
 	// emitFn lets tests observe emitted events. nil in production → the v3 event bus.
 	emitFn func(event string, data any)
 	// quitFn lets tests observe the drain's final quit, which cannot run
@@ -153,7 +156,7 @@ func NewApp() *App {
 		workspaceBaseDir = filepath.Join(firnDir, "workspaces")
 	}
 
-	return &App{
+	app := &App{
 		dirReader:       filesystem.NewDirectoryReader(osFS),
 		fileReader:      filesystem.NewFileReader(osFS),
 		fileWriter:      filesystem.NewFileWriter(osFS),
@@ -168,6 +171,15 @@ func NewApp() *App {
 		gitService:      git.NewService(),
 		gitMsgGen:       git.NewMessageGenerator(),
 	}
+	// A workspace read again after another was open is listed again, and the
+	// tree may still show listings drawn from its old set.
+	app.dirReader.SetTrackedLister(app.firstTrackedIgnored, func(dirs []string) {
+		app.emit("filetree:stale", dirs)
+	})
+	// Tracked files a .gitignore rule matches: the tree lists them (#536), and
+	// ripgrep searches them only when named.
+	app.searchManager.SetIncludes(app.dirReader.TrackedIgnoredFiles)
+	return app
 }
 
 // ServiceStartup is the v3 service lifecycle hook Wails calls before the window

@@ -31,6 +31,17 @@ type Manager struct {
 	// older registrations from newer ones with the same RequestID without
 	// relying on undefined func equality.
 	nextToken atomic.Uint64
+
+	// includes, when set, names files a search of root must cover although
+	// an ignore rule matches them: the tracked, ignored files of #536.
+	includes func(root string) ([]string, error)
+}
+
+// SetIncludes installs the function that names, for a search root, the files
+// ripgrep must search although an ignore rule matches them. Call it before
+// the first Search.
+func (m *Manager) SetIncludes(includes func(root string) ([]string, error)) {
+	m.includes = includes
 }
 
 // activeRun is the bookkeeping entry for a single in-flight rg invocation.
@@ -81,6 +92,25 @@ func (m *Manager) Search(ctx context.Context, req SearchRequest) SearchResponse 
 	token := m.register(req.RequestID, cancel)
 	defer m.unregister(req.RequestID, token)
 
+	// Listed after registering: a workspace's first listing can wait on git,
+	// and a request superseded meanwhile must be cancellable. runRipgrep
+	// checks the cancellation before starting ripgrep.
+	var include []string
+	if m.includes != nil {
+		var err error
+		include, err = m.includes(req.Root)
+		if err != nil {
+			resp.Status = StatusFailed
+			resp.Message = err.Error()
+			if runCtx.Err() != nil {
+				resp.Status = StatusCanceled
+				resp.Message = "search canceled"
+			}
+			resp.DurationMs = time.Since(start).Milliseconds()
+			return resp
+		}
+	}
+
 	// Group matches by file path as we receive them. We preserve ripgrep's
 	// emission order for both files and lines so the UI shows results in the
 	// natural directory-walk order.
@@ -105,7 +135,7 @@ func (m *Manager) Search(ctx context.Context, req SearchRequest) SearchResponse 
 		return true
 	}
 
-	outcome := runRipgrep(runCtx, m.cfg, req, collector)
+	outcome := runRipgrep(runCtx, m.cfg, req, include, collector)
 
 	switch {
 	case errors.Is(outcome.Err, errCanceled):

@@ -59,6 +59,93 @@ it('dedupes concurrent calls (one backend call, same promise)', async () => {
   expect(mockRead).toHaveBeenCalledTimes(1);
 });
 
+// A forced read means "something changed since your last listing" (a watcher
+// event, a filetree:stale event, #536). A read already in flight may have
+// started before that change, so the forced call reads again once it settles,
+// and every forced call during it shares that one follow-up.
+it('a forced call during an in-flight read reads again after it', async () => {
+  let resolveOld!: (v: unknown) => void;
+  mockRead
+    .mockReturnValueOnce(
+      new Promise((r) => {
+        resolveOld = r;
+      })
+    )
+    .mockResolvedValueOnce([dir('/r/a/fresh')]);
+  const first = ensurePathLoaded('/r/a');
+  const forced = ensurePathLoaded('/r/a', { force: true });
+  expect(ensurePathLoaded('/r/a', { force: true })).toBe(forced);
+  resolveOld([dir('/r/a/stale')]);
+  await first;
+  await forced;
+  expect(mockRead).toHaveBeenCalledTimes(2);
+  expect(useIDEStore.getState().directoryTree[0].children?.map((c) => c.path)).toEqual([
+    '/r/a/fresh',
+  ]);
+});
+
+it('drops the follow-up when the workspace changed during the in-flight read', async () => {
+  let resolveOld!: (v: unknown) => void;
+  mockRead.mockReturnValueOnce(
+    new Promise((r) => {
+      resolveOld = r;
+    })
+  );
+  void ensurePathLoaded('/r/a');
+  const forced = ensurePathLoaded('/r/a', { force: true });
+  useIDEStore.setState({ workspace: { path: '/s', name: 's' } as never, directoryTree: [] });
+  resolveOld([]);
+  await forced;
+  expect(mockRead).toHaveBeenCalledTimes(1);
+});
+
+it.each([false, true])(
+  'drops the follow-up when its directory disappeared before the forced call (replaced by file: %s)',
+  async (replacedByFile) => {
+    let rejectOld!: (reason: Error) => void;
+    mockRead
+      .mockReturnValueOnce(
+        new Promise((_resolve, reject) => {
+          rejectOld = reject;
+        })
+      )
+      .mockRejectedValueOnce(new Error('no such file or directory'));
+    void ensurePathLoaded('/r/a');
+    const nextTree = replacedByFile ? [{ ...dir('/r/a'), isDir: false }] : [];
+    useIDEStore.getState().mergeChildren('/r', nextTree);
+    const forced = ensurePathLoaded('/r/a', { force: true });
+    rejectOld(new Error('no such file or directory'));
+    await forced;
+
+    expect(useIDEStore.getState().dirtyPaths.size).toBe(0);
+    expect(useIDEStore.getState().toast).toBeNull();
+    expect(useIDEStore.getState().directoryTree).toEqual(nextTree);
+    expect(mockRead).toHaveBeenCalledTimes(1);
+  }
+);
+
+it.each(['/r', '/r/not-yet-listed/deep'])(
+  'keeps the forced follow-up for a root or pre-parent hydration probe: %s',
+  async (path) => {
+    let resolveOld!: (value: FileEntry[]) => void;
+    mockRead
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveOld = resolve;
+        })
+      )
+      .mockRejectedValueOnce(new Error('permission denied'));
+    void ensurePathLoaded(path, { force: true });
+    const forced = ensurePathLoaded(path, { force: true });
+    resolveOld([]);
+    await forced;
+
+    expect(mockRead).toHaveBeenCalledTimes(2);
+    expect(useIDEStore.getState().dirtyPaths.has(path)).toBe(true);
+    expect(useIDEStore.getState().toast?.type).toBe('error');
+  }
+);
+
 it('skips already-loaded dir unless force', async () => {
   useIDEStore.setState({ directoryTree: [dir('/r/a', [])] });
   await ensurePathLoaded('/r/a');

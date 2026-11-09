@@ -1,10 +1,15 @@
 package filesystem
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"log"
 	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,6 +28,103 @@ type FileEntry struct {
 // DirectoryReader provides directory tree reading functionality.
 type DirectoryReader struct {
 	fs FileSystem
+
+	trackedMu sync.RWMutex
+	// tracked holds, per workspace root, the files git tracks that .gitignore
+	// rules match (#536). Git applies .gitignore only to untracked files, so
+	// the tree lists these anyway. A workspace outside any git repository
+	// lists as empty. Every root keeps its last set, the baseline its next
+	// SetTrackedIgnored diffs against, even when a late git status for
+	// another workspace lands after a switch.
+	tracked map[string]trackedIgnored
+	// freshRoot is the root stored last, invalidated when a read needs a relist.
+	// A closed workspace's .gitignore and index may change before it reopens.
+	freshRoot string
+	// Status publication cannot hide a read's switch away from and back to a root.
+	lastReadRoot string
+	// nextRevision orders listings by start, including status and first reads.
+	nextRevision uint64
+	// listTracked refreshes stale roots before reading them, including startup.
+	listTracked func(root string) ([]string, error)
+	// trackedChanged receives the folders a listing by listTracked moved.
+	trackedChanged func(dirs []string)
+}
+
+// SetTrackedLister installs the function that lists, for a root other than
+// the fresh one, the files git tracks that .gitignore rules match, in
+// SetTrackedIgnored's form: a root's first read, and reopening it after
+// another root was read or stored. When such a listing moves a stored set, changed
+// receives the folders whose listings may change, as
+// SetTrackedIgnored returns them.
+func (d *DirectoryReader) SetTrackedLister(list func(root string) ([]string, error), changed func(dirs []string)) {
+	d.trackedMu.Lock()
+	defer d.trackedMu.Unlock()
+	d.listTracked = list
+	d.trackedChanged = changed
+}
+
+// store records root's set and makes root the fresh one. trackedMu must be
+// held for writing.
+func (d *DirectoryReader) store(root string, set trackedIgnored) {
+	if d.tracked == nil {
+		d.tracked = make(map[string]trackedIgnored)
+	}
+	d.tracked[root] = set
+	d.freshRoot = root
+}
+
+// newTrackedIgnored builds a root's exception set from root-relative,
+// "/"-separated paths.
+func newTrackedIgnored(paths []string) trackedIgnored {
+	set := trackedIgnored{files: map[string]bool{}, dirs: map[string]bool{}}
+	for _, rel := range paths {
+		if rel == "" {
+			continue
+		}
+		set.files[rel] = true
+		for dir := pathpkg.Dir(rel); dir != "."; dir = pathpkg.Dir(dir) {
+			set.dirs[dir] = true
+		}
+	}
+	return set
+}
+
+// trackedIgnored is one root's exception set: root-relative, "/"-separated
+// tracked files a .gitignore rule matches, and every folder leading to one.
+// A zero value (nil maps) is the empty set.
+type trackedIgnored struct {
+	files map[string]bool
+	dirs  map[string]bool
+	// rev is the listing's start revision; zero means no successful listing.
+	rev uint64
+}
+
+// listScope is what buildEntries needs beyond the ignore rules: the workspace
+// root and its exception set, and whether the folder being listed is itself
+// ignored but listed for the tracked files it holds. Inside such a folder a
+// child may match no rule on its own ("data/" matches only the folder), so
+// only the paths in the set are listed there, as git treats them.
+type listScope struct {
+	root    string
+	tracked trackedIgnored
+	ignored bool
+}
+
+// lists reports whether the exception set lists fullPath, a file or folder
+// under the scope's root.
+func (s listScope) lists(fullPath string, isDir bool) bool {
+	set := s.tracked.files
+	if isDir {
+		set = s.tracked.dirs
+	}
+	if len(set) == 0 {
+		return false
+	}
+	rel, err := filepath.Rel(s.root, fullPath)
+	if err != nil {
+		return false
+	}
+	return set[filepath.ToSlash(rel)]
 }
 
 // ignoreRule is a single parsed .gitignore line, scoped to the directory whose
@@ -53,7 +155,172 @@ func NewDirectoryReader(fs FileSystem) *DirectoryReader {
 // It respects .gitignore patterns and includes file metadata.
 // Returns an error if the path is invalid or inaccessible.
 func (d *DirectoryReader) ReadDirectory(path string) ([]FileEntry, error) {
-	return d.readDirRecursive(path, nil)
+	scope, err := d.scopeFor(path)
+	if err != nil {
+		return nil, err
+	}
+	return d.readDirRecursive(path, nil, scope)
+}
+
+// SetTrackedIgnored replaces root's exception set with paths: the files git
+// tracks that .gitignore rules match, relative to root and "/"-separated, as
+// `git ls-files --cached --ignored` lists them. It returns, sorted, the
+// folders whose listings may change as a result: every folder from root down
+// to the parent of each file that joined or left the set.
+func (d *DirectoryReader) SetTrackedIgnored(root string, paths []string) []string {
+	root = filepath.Clean(root)
+	next := newTrackedIgnored(paths)
+
+	d.trackedMu.Lock()
+	d.nextRevision++
+	next.rev = d.nextRevision
+	prev := d.tracked[root]
+	d.store(root, next)
+	d.trackedMu.Unlock()
+	return changedDirs(root, prev, next)
+}
+
+// RefreshTrackedIgnored lists and publishes root's exceptions unless a newer
+// listing already published. replaced reports whether a prior set existed at
+// publication; a first tree read need not invalidate an uninitialized tree.
+// Errors preserve the previous set and do not make root fresh.
+func (d *DirectoryReader) RefreshTrackedIgnored(root string, list func() ([]string, error)) (dirs []string, replaced bool, err error) {
+	root = filepath.Clean(root)
+	d.trackedMu.Lock()
+	d.nextRevision++
+	revision := d.nextRevision
+	d.trackedMu.Unlock()
+
+	paths, err := list()
+	if err != nil {
+		return nil, false, err
+	}
+	next := newTrackedIgnored(paths)
+	next.rev = revision
+	d.trackedMu.Lock()
+	prev := d.tracked[root]
+	if prev.rev > revision {
+		d.trackedMu.Unlock()
+		return nil, true, nil
+	}
+	d.store(root, next)
+	d.trackedMu.Unlock()
+	return changedDirs(root, prev, next), prev.rev != 0, nil
+}
+
+// changedDirs returns, sorted and absolute, every folder from root down to
+// the parent of each file in one of prev and next but not the other.
+func changedDirs(root string, prev, next trackedIgnored) []string {
+	changed := map[string]bool{}
+	markAncestors := func(rel string) {
+		for dir := pathpkg.Dir(rel); !changed[dir]; dir = pathpkg.Dir(dir) {
+			changed[dir] = true
+			if dir == "." {
+				return
+			}
+		}
+	}
+	for rel := range prev.files {
+		if !next.files[rel] {
+			markAncestors(rel)
+		}
+	}
+	for rel := range next.files {
+		if !prev.files[rel] {
+			markAncestors(rel)
+		}
+	}
+	if len(changed) == 0 {
+		return nil
+	}
+	dirs := make([]string, 0, len(changed))
+	for rel := range changed {
+		dirs = append(dirs, filepath.Join(root, filepath.FromSlash(rel)))
+	}
+	sort.Strings(dirs)
+	return dirs
+}
+
+// TrackedIgnoredFiles returns sorted absolute regular files in root's exception
+// set, skipping missing paths, dot-folders (#450), and symlinks below root.
+// Other metadata errors are returned. Search names these paths to ripgrep,
+// which otherwise skips them as ignored.
+func (d *DirectoryReader) TrackedIgnoredFiles(root string) ([]string, error) {
+	root = filepath.Clean(root)
+	scope, err := d.scopeFor(root)
+	if err != nil {
+		return nil, err
+	}
+	tracked := scope.tracked
+	var files []string
+
+filesLoop:
+	for rel := range tracked.files {
+		if inDotFolder(rel) {
+			continue
+		}
+		path := root
+		parts := strings.Split(rel, "/")
+		for i, part := range parts {
+			path = filepath.Join(path, part)
+			info, err := Lstat(d.fs, path)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue filesLoop // Deleted files stay indexed until commit.
+			}
+			if err != nil {
+				return nil, fmt.Errorf("inspect tracked path %s: %w", path, err)
+			}
+			// Explicit rg paths follow symlinks; its normal walk skips them.
+			if i < len(parts)-1 && !info.IsDir() || i == len(parts)-1 && !info.Mode().IsRegular() {
+				continue filesLoop
+			}
+		}
+		files = append(files, path)
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+// inDotFolder reports whether the "/"-separated rel lies inside a folder
+// whose name starts with a dot.
+func inDotFolder(rel string) bool {
+	parts := strings.Split(rel, "/")
+	for _, part := range parts[:len(parts)-1] {
+		if strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// scopeFor returns the listing scope for a read rooted at root.
+func (d *DirectoryReader) scopeFor(root string) (listScope, error) {
+	root = filepath.Clean(root)
+	d.trackedMu.Lock()
+	tracked := d.tracked[root]
+	fresh := root == d.freshRoot && (d.lastReadRoot == "" || root == d.lastReadRoot)
+	if !fresh {
+		d.freshRoot = ""
+	}
+	d.lastReadRoot = root
+	list, report := d.listTracked, d.trackedChanged
+	d.trackedMu.Unlock()
+	if !fresh && list != nil {
+		dirs, replaced, err := d.RefreshTrackedIgnored(root, func() ([]string, error) { return list(root) })
+		d.trackedMu.RLock()
+		tracked = d.tracked[root]
+		d.trackedMu.RUnlock()
+		if err != nil {
+			if tracked.rev == 0 {
+				return listScope{}, err
+			}
+			log.Printf("firn: keeping tracked files after listing %s failed: %v", root, err)
+		}
+		if replaced && len(dirs) > 0 && report != nil {
+			report(dirs)
+		}
+	}
+	return listScope{root: root, tracked: tracked}, nil
 }
 
 // loadGitignore reads the rules scoped to one directory.
@@ -238,7 +505,9 @@ func matchGitignorePath(rule ignoreRule, name string) bool {
 
 // buildEntries reads ONE directory level: filter (dot-dirs, gitignore), stat,
 // sort folders-first. Child directories are returned WITHOUT Children populated.
-func (d *DirectoryReader) buildEntries(path string, ignoreRules []ignoreRule) ([]FileEntry, error) {
+// A path a rule would hide is still listed when scope's exception set lists
+// it; inside an ignored folder, only those paths are.
+func (d *DirectoryReader) buildEntries(path string, ignoreRules []ignoreRule, scope listScope) ([]FileEntry, error) {
 	dirEntries, err := d.fs.ReadDir(path)
 	if err != nil {
 		return nil, err
@@ -251,7 +520,11 @@ func (d *DirectoryReader) buildEntries(path string, ignoreRules []ignoreRule) ([
 			continue
 		}
 		fullPath := filepath.Join(path, name)
-		if name != ".gitignore" && d.shouldIgnore(fullPath, de.IsDir(), ignoreRules) {
+		if scope.ignored {
+			if !scope.lists(fullPath, de.IsDir()) {
+				continue
+			}
+		} else if name != ".gitignore" && d.shouldIgnore(fullPath, de.IsDir(), ignoreRules) && !scope.lists(fullPath, de.IsDir()) {
 			continue
 		}
 		entry := FileEntry{Name: name, Path: fullPath, IsDir: de.IsDir()}
@@ -271,15 +544,19 @@ func (d *DirectoryReader) buildEntries(path string, ignoreRules []ignoreRule) ([
 // ReadDirectoryShallow reads a single directory level (immediate children only).
 // Child directories are returned without their own children populated.
 func (d *DirectoryReader) ReadDirectoryShallow(path string, rootPath string) ([]FileEntry, error) {
-	ignoreRules, ignored := d.loadGitignoreRules(rootPath, path)
-	if ignored {
+	scope, err := d.scopeFor(rootPath)
+	if err != nil {
+		return nil, err
+	}
+	ignoreRules, hidden := d.loadGitignoreRules(rootPath, path, &scope)
+	if hidden {
 		return []FileEntry{}, nil
 	}
-	return d.buildEntries(path, ignoreRules)
+	return d.buildEntries(path, ignoreRules, scope)
 }
 
 // readDirRecursive reads a directory recursively and returns FileEntry slice.
-func (d *DirectoryReader) readDirRecursive(path string, inheritedRules []ignoreRule) ([]FileEntry, error) {
+func (d *DirectoryReader) readDirRecursive(path string, inheritedRules []ignoreRule, scope listScope) ([]FileEntry, error) {
 	local := d.loadGitignore(path)
 	// Build on a fresh backing array. Reusing inheritedRules' array via
 	// append(inheritedRules, ...) would let each sibling recursion write local
@@ -287,13 +564,18 @@ func (d *DirectoryReader) readDirRecursive(path string, inheritedRules []ignoreR
 	ignoreRules := make([]ignoreRule, 0, len(inheritedRules)+len(local))
 	ignoreRules = append(ignoreRules, inheritedRules...)
 	ignoreRules = append(ignoreRules, local...)
-	entries, err := d.buildEntries(path, ignoreRules)
+	entries, err := d.buildEntries(path, ignoreRules, scope)
 	if err != nil {
 		return nil, err
 	}
 	for i := range entries {
 		if entries[i].IsDir && !entries[i].Unreadable {
-			children, err := d.readDirRecursive(entries[i].Path, ignoreRules)
+			childScope := scope
+			// Only a folder the set lists can be ignored and still listed, so
+			// the rules are consulted again just for those.
+			childScope.ignored = scope.ignored ||
+				(scope.lists(entries[i].Path, true) && d.shouldIgnore(entries[i].Path, true, ignoreRules))
+			children, err := d.readDirRecursive(entries[i].Path, ignoreRules, childScope)
 			if err != nil {
 				entries[i].Unreadable = true
 			} else {
@@ -304,7 +586,11 @@ func (d *DirectoryReader) readDirRecursive(path string, inheritedRules []ignoreR
 	return entries, nil
 }
 
-func (d *DirectoryReader) loadGitignoreRules(rootPath, path string) ([]ignoreRule, bool) {
+// loadGitignoreRules walks from rootPath down to path, gathering the rules
+// that apply to path's children. It reports hidden when a folder on the way
+// is ignored and scope's exception set does not list it; a listed one marks
+// scope ignored, so path's listing holds only the set's paths.
+func (d *DirectoryReader) loadGitignoreRules(rootPath, path string, scope *listScope) ([]ignoreRule, bool) {
 	rules := d.loadGitignore(rootPath)
 	rel, err := filepath.Rel(rootPath, path)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -314,8 +600,11 @@ func (d *DirectoryReader) loadGitignoreRules(rootPath, path string) ([]ignoreRul
 	current := rootPath
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		current = filepath.Join(current, part)
-		if d.shouldIgnore(current, true, rules) {
-			return rules, true
+		if scope.ignored || d.shouldIgnore(current, true, rules) {
+			if !scope.lists(current, true) {
+				return rules, true
+			}
+			scope.ignored = true
 		}
 		rules = append(rules, d.loadGitignore(current)...)
 	}

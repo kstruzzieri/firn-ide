@@ -18,9 +18,10 @@ import (
 // the query is its own argv element rather than being string-templated.
 func TestBuildArgs(t *testing.T) {
 	cases := []struct {
-		name string
-		req  SearchRequest
-		want []string
+		name    string
+		req     SearchRequest
+		include []string // the paths after --; empty means the root
+		want    []string
 	}{
 		{
 			name: "literal-case-insensitive",
@@ -77,15 +78,83 @@ func TestBuildArgs(t *testing.T) {
 				"--", "/r",
 			},
 		},
+		{
+			// #536: ripgrep searches a path named on its command line even
+			// when an ignore rule matches it, so runRipgrep names tracked,
+			// ignored files after the root (and alone in later passes).
+			name:    "named-paths-replace-the-root",
+			req:     SearchRequest{Root: "/r", Query: "needle"},
+			include: []string{"/r", "/r/CLAUDE.md", "/r/-data/a.csv"},
+			want: []string{
+				"--no-config", "--no-require-git", "--json", "--line-number", "--column", "--color", "never",
+				"--fixed-strings", "--ignore-case",
+				"--regexp", "needle",
+				"--", "/r", "/r/CLAUDE.md", "/r/-data/a.csv",
+			},
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildArgs(tc.req)
+			got := buildArgs(tc.req, tc.include...)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("buildArgs:\n got %#v\nwant %#v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestIncludeBatches keeps each batch's paths within the budget and loses
+// none of them.
+func TestIncludeBatches(t *testing.T) {
+	const budget = 1000
+	path := strings.Repeat("p", 97) // 100 bytes with its quoting allowance
+	include := make([]string, 25)
+	for i := range include {
+		include[i] = path
+	}
+	include = append(include, strings.Repeat("x", budget+10))
+
+	batches := includeBatches(include, budget)
+	total := 0
+	for i, batch := range batches {
+		if size := argsSize(batch); size > budget && len(batch) > 1 {
+			t.Errorf("batch %d holds %d bytes over %d paths, past the %d budget", i, size, len(batch), budget)
+		}
+		total += len(batch)
+	}
+	if total != len(include) || len(batches) != 4 {
+		t.Fatalf("got %d paths in %d batches, want %d in 4 (10+10+5, then the long one alone)", total, len(batches), len(include))
+	}
+	if includeBatches(nil, budget) != nil {
+		t.Fatal("no include paths must mean no batches")
+	}
+
+	// Windows may escape every backslash: 50 of them can take 100 bytes.
+	escaped := make([]string, 18)
+	for i := range escaped {
+		escaped[i] = strings.Repeat(`\`, 50)
+	}
+	if got := len(includeBatches(escaped, budget)); got != 2 {
+		t.Fatalf("18 paths of 50 backslashes fill %d batches, want 2 (9 of up to 103 bytes each)", got)
+	}
+}
+
+// TestIncludeBudget: the include paths share a command line with the binary,
+// the flags, the root and the query, and Windows caps the whole line, so a
+// long query leaves less room for them.
+func TestIncludeBudget(t *testing.T) {
+	req := SearchRequest{Root: "/r", Query: "needle"}
+	short := includeBudget("/bin/rg", req)
+	req.Query = strings.Repeat("q", 20000)
+	long := includeBudget("/bin/rg", req)
+	if short <= 0 || short > commandLineBudget || short-long != 20000-len("needle") {
+		t.Fatalf("includeBudget = %d for a short query, %d for a 20,000-byte one; want the difference to be the query growth", short, long)
+	}
+	// Windows escapes each quote with a backslash.
+	req.Query = strings.Repeat(`"`, 3000)
+	if quoted := includeBudget("/bin/rg", req); short-quoted != 2*3000-len("needle") {
+		t.Fatalf("includeBudget = %d for 3,000 quotes, want %d: each takes two bytes once escaped", quoted, short-(2*3000-len("needle")))
 	}
 }
 
@@ -214,6 +283,7 @@ func TestRunRipgrepCancelsProcessAtMatchCap(t *testing.T) {
 		context.Background(),
 		runnerConfig{MatchCap: matchCap, Timeout: time.Minute},
 		SearchRequest{RequestID: "cap", Root: "/tmp", Query: "needle"},
+		nil,
 		func(string, LineMatch) bool { delivered++; return true },
 	)
 

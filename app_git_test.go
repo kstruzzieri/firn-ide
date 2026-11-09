@@ -2,15 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"firn/internal/git"
 	"firn/internal/git/gittest"
+	"firn/internal/search"
 )
 
 // isolatedGitEnv strips the repository-local GIT_* variables (so an inherited
@@ -410,5 +414,456 @@ func TestApp_GitConflictState_OperationalErrorStillErrors(t *testing.T) {
 	// never be reported as a benign version mismatch.
 	if _, err := app.GitConflictState(t.TempDir(), "f.txt"); err == nil {
 		t.Fatal("GitConflictState(non-repo) error = nil, want an operational error")
+	}
+}
+
+// TestGitStatus_RefreshesTrackedIgnoredFiles (#536): git applies .gitignore
+// only to untracked files, so the tree and search list a tracked file a rule
+// matches. Each git status refresh re-reads that set, and when it moves the
+// app names the tree folders whose listings changed.
+func TestGitStatus_RefreshesTrackedIgnoredFiles(t *testing.T) {
+	dir := initGitRepoForApp(t)
+	gitRun := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = isolatedGitEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(rel, content string) {
+		t.Helper()
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("CLAUDE.md", "needle\n")
+	write("data/kaggle/a.csv", "needle\n")
+	gitRun("add", "CLAUDE.md", "data")
+	gitRun("commit", "-m", "track")
+	write(".gitignore", "**/CLAUDE.md\ndata/\n")
+	write("data/kaggle/u.csv", "needle\n")
+
+	app := NewApp()
+	var stale [][]string
+	app.emitFn = func(event string, data any) {
+		if event == "filetree:stale" {
+			stale = append(stale, data.([]string))
+		}
+	}
+	names := func(path string) []string {
+		t.Helper()
+		entries, err := app.ReadDirectoryShallow(path, dir)
+		if err != nil {
+			t.Fatalf("ReadDirectoryShallow(%q): %v", path, err)
+		}
+		var out []string
+		for _, entry := range entries {
+			out = append(out, entry.Name)
+		}
+		return out
+	}
+
+	if _, err := app.GitStatus(dir); err != nil {
+		t.Fatalf("GitStatus: %v", err)
+	}
+	if got, want := names(dir), []string{"data", ".gitignore", "CLAUDE.md", "f.txt"}; !slices.Equal(got, want) {
+		t.Fatalf("root = %v, want %v", got, want)
+	}
+	if got, want := names(filepath.Join(dir, "data", "kaggle")), []string{"a.csv"}; !slices.Equal(got, want) {
+		t.Fatalf("data/kaggle = %v, want %v", got, want)
+	}
+	wantStale := []string{dir, filepath.Join(dir, "data"), filepath.Join(dir, "data", "kaggle")}
+	if len(stale) != 1 || !slices.Equal(stale[0], wantStale) {
+		t.Fatalf("filetree:stale = %v, want one event naming %v", stale, wantStale)
+	}
+
+	t.Run("search finds the tracked files", func(t *testing.T) {
+		if _, err := exec.LookPath("rg"); err != nil {
+			t.Skipf("ripgrep not installed: %v", err)
+		}
+		resp := app.SearchWorkspace(search.SearchRequest{RequestID: "536", Root: dir, Query: "needle"})
+		var got []string
+		for _, file := range resp.Files {
+			got = append(got, file.RelativePath)
+		}
+		slices.Sort(got)
+		if want := []string{"CLAUDE.md", "data/kaggle/a.csv"}; !slices.Equal(got, want) {
+			t.Fatalf("search files = %v (status %s %s), want %v", got, resp.Status, resp.Message, want)
+		}
+	})
+
+	// An unchanged set names nothing; untracking a file takes it back out.
+	if _, err := app.GitStatus(dir); err != nil {
+		t.Fatalf("GitStatus: %v", err)
+	}
+	if len(stale) != 1 {
+		t.Fatalf("an unchanged set must not emit, got %v", stale)
+	}
+	gitRun("rm", "--cached", "-q", "CLAUDE.md")
+	if _, err := app.GitStatus(dir); err != nil {
+		t.Fatalf("GitStatus: %v", err)
+	}
+	if len(stale) != 2 || !slices.Equal(stale[1], []string{dir}) {
+		t.Fatalf("filetree:stale after git rm --cached = %v, want a second event naming %v", stale, dir)
+	}
+	if got, want := names(dir), []string{"data", ".gitignore", "f.txt"}; !slices.Equal(got, want) {
+		t.Fatalf("root after git rm --cached = %v, want %v", got, want)
+	}
+}
+
+// TestReadDirectoryShallow_FirstReadListsTrackedIgnoredFiles: the tree's
+// first read of a workspace (startup, restore) runs before any git status.
+// Reading it without the exceptions would miss the tracked files and let the
+// restore prune a saved expanded folder that holds them, so the first read
+// lists them itself, and the git status that follows finds nothing to change.
+func TestReadDirectoryShallow_FirstReadListsTrackedIgnoredFiles(t *testing.T) {
+	dir := initGitRepoForApp(t)
+	for _, args := range [][]string{{"add", "f.txt"}, {"commit", "-m", "track"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = isolatedGitEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("f.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	stale := 0
+	app.emitFn = func(event string, _ any) {
+		if event == "filetree:stale" {
+			stale++
+		}
+	}
+
+	entries, err := app.ReadDirectoryShallow(dir, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[1].Name != "f.txt" {
+		t.Fatalf("first read = %+v, want .gitignore and the tracked f.txt", entries)
+	}
+	if _, err := app.GitStatus(dir); err != nil {
+		t.Fatalf("GitStatus: %v", err)
+	}
+	if stale != 0 {
+		t.Fatalf("filetree:stale events = %d, want none: the first read already had the set", stale)
+	}
+}
+
+// TestRefreshTrackedIgnored_FailedListingKeepsLastSet: a failed listing says
+// nothing about what git tracks, so the tree keeps the last set it had rather
+// than hiding the files #536 brought back.
+func TestRefreshTrackedIgnored_FailedListingKeepsLastSet(t *testing.T) {
+	dir := initGitRepoForApp(t)
+	for _, args := range [][]string{{"add", "f.txt"}, {"commit", "-m", "track"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = isolatedGitEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("f.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	stale := 0
+	app.emitFn = func(event string, _ any) {
+		if event == "filetree:stale" {
+			stale++
+		}
+	}
+	if _, err := app.GitStatus(dir); err != nil {
+		t.Fatalf("GitStatus: %v", err)
+	}
+
+	// A broken index is an operational failure, unlike a confirmed non-repo.
+	indexPath := filepath.Join(dir, ".git", "index")
+	index, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, []byte("broken index"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app.refreshTrackedIgnored(context.Background(), dir)
+	if err := os.WriteFile(indexPath, index, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The status probe fails: under a cancelled context it reports
+	// IsRepo=false although nothing says the repository went away.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	app.ctx = ctx
+	if st, err := app.GitStatus(dir); err != nil || st.IsRepo {
+		t.Fatalf("GitStatus under a cancelled context = %+v, %v; want the non-repo shape", st, err)
+	}
+
+	if stale != 1 {
+		t.Fatalf("filetree:stale events = %d, want only the first refresh's", stale)
+	}
+	entries, err := app.ReadDirectoryShallow(dir, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[1].Name != "f.txt" {
+		t.Fatalf("entries = %+v, want .gitignore and the tracked f.txt", entries)
+	}
+}
+
+// TestRefreshTrackedIgnored_LaterListingWins: git status refreshes overlap,
+// and a listing taken before `git rm --cached` must not land after one taken
+// since and put the untracked file back in the tree.
+func TestRefreshTrackedIgnored_LaterListingWins(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"old.md", "new.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := NewApp()
+	app.emitFn = func(string, any) {}
+	var calls atomic.Int32
+	entered, release := make(chan struct{}), make(chan struct{})
+	app.listTrackedIgnored = func(context.Context, string) ([]string, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+			return []string{"old.md"}, nil
+		}
+		return []string{"new.md"}, nil
+	}
+
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		app.refreshTrackedIgnored(context.Background(), root)
+	}()
+	<-entered
+	laterDone := make(chan struct{})
+	go func() {
+		defer close(laterDone)
+		app.refreshTrackedIgnored(context.Background(), root)
+	}()
+	<-laterDone
+	close(release)
+	<-firstDone
+
+	if got, err := app.dirReader.TrackedIgnoredFiles(root); err != nil || !slices.Equal(got, []string{filepath.Join(root, "new.md")}) {
+		t.Fatalf("tracked-ignored set = %v, %v; want the later listing new.md", got, err)
+	}
+}
+
+// TestReadDirectoryShallow_RelistEmitsWhatItChanged: reopening a workspace
+// lists it again before any git status, and the frontend may still hold
+// listings drawn from the set it had. A listing that moves that set names the
+// folders to re-read, as a git status would; the git status that follows then
+// diffs against the listing and would not name them again.
+func TestReadDirectoryShallow_RelistEmitsWhatItChanged(t *testing.T) {
+	root, other := t.TempDir(), t.TempDir()
+	app := NewApp()
+	var stale [][]string
+	app.emitFn = func(event string, data any) {
+		if event == "filetree:stale" {
+			stale = append(stale, data.([]string))
+		}
+	}
+	listed := []string{"a.md"}
+	app.listTrackedIgnored = func(context.Context, string) ([]string, error) { return listed, nil }
+
+	if _, err := app.ReadDirectoryShallow(root, root); err != nil {
+		t.Fatal(err)
+	}
+	app.refreshTrackedIgnored(context.Background(), other)
+	stale = nil
+	listed = []string{"b.md"}
+	if _, err := app.ReadDirectoryShallow(root, root); err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 || !slices.Equal(stale[0], []string{root}) {
+		t.Fatalf("filetree:stale = %v, want one event naming %v", stale, root)
+	}
+}
+
+func TestRefreshTrackedIgnored_OlderStatusCannotReplaceFirstRead(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"old.md", "new.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := NewApp()
+	app.emitFn = func(string, any) {}
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	app.listTrackedIgnored = func(context.Context, string) ([]string, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+			<-release
+			return []string{"old.md"}, nil
+		}
+		return []string{"new.md"}, nil
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		app.refreshTrackedIgnored(context.Background(), root)
+	}()
+	<-started
+	// The initial tree listing is newer than the status snapshot held open.
+	_, readErr := app.ReadDirectoryShallow(root, root)
+	before, beforeErr := app.dirReader.TrackedIgnoredFiles(root)
+	close(release)
+	<-done
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	want := []string{filepath.Join(root, "new.md")}
+	if beforeErr != nil || !slices.Equal(before, want) {
+		t.Fatalf("first read set = %v, %v; want %v", before, beforeErr, want)
+	}
+	if got, err := app.dirReader.TrackedIgnoredFiles(root); err != nil || !slices.Equal(got, want) {
+		t.Fatalf("set after older status = %v, %v; want %v", got, err, want)
+	}
+}
+
+func TestReadDirectoryShallow_FailedRelistKeepsKnownSetAndRetries(t *testing.T) {
+	root, other := t.TempDir(), t.TempDir()
+	for name, content := range map[string]string{"a.md": "tracked\n", ".gitignore": "a.md\n"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := NewApp()
+	var stale [][]string
+	app.emitFn = func(event string, data any) {
+		if event == "filetree:stale" {
+			stale = append(stale, data.([]string))
+		}
+	}
+	app.dirReader.SetTrackedIgnored(root, []string{"a.md"})
+	app.dirReader.SetTrackedIgnored(other, nil)
+	calls := 0
+	app.listTrackedIgnored = func(context.Context, string) ([]string, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("temporary listing failure")
+		}
+		return nil, nil // A successful retry confirms a.md was untracked.
+	}
+	entries, err := app.ReadDirectoryShallow(root, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[1].Name != "a.md" || len(stale) != 0 {
+		t.Fatalf("failed relist = %+v, events = %v; want known a.md and no event", entries, stale)
+	}
+	entries, err = app.ReadDirectoryShallow(root, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || len(entries) != 1 || entries[0].Name != ".gitignore" {
+		t.Fatalf("retry calls = %d, entries = %+v; want two calls and only .gitignore", calls, entries)
+	}
+	if len(stale) != 1 || !slices.Equal(stale[0], []string{root}) {
+		t.Fatalf("retry events = %v, want one event naming %s", stale, root)
+	}
+}
+
+func TestReadDirectoryShallow_FirstListingFailureReturnsErrorAndRetries(t *testing.T) {
+	root := t.TempDir()
+	app := NewApp()
+	app.emitFn = func(string, any) {}
+	failure := errors.New("temporary listing failure")
+	calls := 0
+	app.listTrackedIgnored = func(context.Context, string) ([]string, error) {
+		calls++
+		return nil, failure
+	}
+	if _, err := app.ReadDirectoryShallow(root, root); !errors.Is(err, failure) {
+		t.Fatalf("first directory read error = %v, want %v", err, failure)
+	}
+	if _, err := app.ReadDirectory(root); !errors.Is(err, failure) {
+		t.Fatalf("recursive read error = %v, want %v", err, failure)
+	}
+	response := app.SearchWorkspace(search.SearchRequest{RequestID: "listing-error", Root: root, Query: "needle"})
+	if response.Status != search.StatusFailed || !strings.Contains(response.Message, failure.Error()) {
+		t.Fatalf("search after listing failure = %+v, want explicit failure", response)
+	}
+	if calls != 3 {
+		t.Fatalf("failed initial listing calls = %d, want each of the three reads to retry", calls)
+	}
+	app.listTrackedIgnored = func(context.Context, string) ([]string, error) { return nil, nil }
+	if _, err := app.ReadDirectoryShallow(root, root); err != nil {
+		t.Fatalf("recovered directory read: %v", err)
+	}
+}
+
+func TestWorkspace_MissingGitStillListsAndSearches(t *testing.T) {
+	root, bin := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("needle\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Keep only ripgrep available so the optional Git dependency cannot mask it.
+	rgPath, rgErr := exec.LookPath("rg")
+	if rgErr == nil {
+		binary, err := os.ReadFile(rgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bin, filepath.Base(rgPath)), binary, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
+	app := NewApp()
+	app.emitFn = func(string, any) {}
+	entries, err := app.ReadDirectoryShallow(root, root)
+	if err != nil || len(entries) != 1 || entries[0].Name != "a.txt" {
+		t.Fatalf("workspace without Git = %+v, %v; want a.txt", entries, err)
+	}
+	if rgErr != nil {
+		t.Log("ripgrep unavailable; directory behavior verified, search check skipped")
+		return
+	}
+	response := app.SearchWorkspace(search.SearchRequest{RequestID: "missing-git", Root: root, Query: "needle"})
+	if response.Status != search.StatusSuccess || response.TotalFiles != 1 || response.Files[0].RelativePath != "a.txt" {
+		t.Fatalf("search without Git = %+v, want one match in a.txt", response)
+	}
+}
+
+// TestGitStatus_OutsideRepoLeavesGitignoreAsIs: with no index nothing is
+// tracked, so .gitignore hides what it matches, as before #536.
+func TestGitStatus_OutsideRepoLeavesGitignoreAsIs(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{".gitignore": "CLAUDE.md\n", "CLAUDE.md": "x\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := NewApp()
+	app.emitFn = func(event string, _ any) {
+		if event == "filetree:stale" {
+			t.Errorf("a folder outside git must not emit %s", event)
+		}
+	}
+	if st, err := app.GitStatus(dir); err != nil || st.IsRepo {
+		t.Fatalf("GitStatus = %+v, %v; want a non-repo status", st, err)
+	}
+	entries, err := app.ReadDirectoryShallow(dir, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name != ".gitignore" {
+		t.Fatalf("entries = %+v, want only .gitignore", entries)
 	}
 }

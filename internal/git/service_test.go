@@ -927,3 +927,71 @@ func TestService_StagedChanges_RejectsRawPathspecSpellingAsCopySource(t *testing
 		t.Fatalf("StagedChanges() = %+v, %v, want no changes and ErrUnexpectedCopySource", changes, err)
 	}
 }
+
+// TestTrackedIgnored_ListsTrackedFilesIgnoreRulesMatch: git applies .gitignore
+// only to untracked files, so a file committed before a pattern matched it,
+// or inside a folder ignored after the fact, stays tracked (#536). The list
+// is relative to the directory asked about, so a workspace inside a repo
+// gets its own paths.
+func TestTrackedIgnored_ListsTrackedFilesIgnoreRulesMatch(t *testing.T) {
+	dir := initRepo(t)
+	writeFile(t, dir, "ws/CLAUDE.md", "tracked\n")
+	writeFile(t, dir, "ws/data/kaggle/a.csv", "tracked\n")
+	writeFile(t, dir, "ws/keep.txt", "tracked\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-m", "track")
+	writeFile(t, dir, "ws/.gitignore", "**/CLAUDE.md\ndata/\n")
+	writeFile(t, dir, "ws/data/kaggle/u.csv", "untracked\n")
+
+	got, err := NewService().TrackedIgnored(context.Background(), filepath.Join(dir, "ws"))
+	if err != nil {
+		t.Fatalf("TrackedIgnored: %v", err)
+	}
+	want := []string{"CLAUDE.md", "data/kaggle/a.csv"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("TrackedIgnored = %q, want %q", got, want)
+	}
+}
+
+func TestTrackedIgnored_OutsideRepoIsEmpty(t *testing.T) {
+	requireGit(t)
+	if paths, err := NewService().TrackedIgnored(context.Background(), t.TempDir()); err != nil || len(paths) != 0 {
+		t.Fatalf("TrackedIgnored outside a repository = %v, %v; want empty success", paths, err)
+	}
+}
+
+func TestTrackedIgnored_DiscoveryFailuresRemainErrors(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewService().TrackedIgnored(ctx, root); err == nil {
+		t.Fatal("TrackedIgnored with a cancelled context must fail")
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: missing-git-dir\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewService().TrackedIgnored(context.Background(), root); err == nil {
+		t.Fatal("TrackedIgnored with a broken .git pointer must fail")
+	}
+	repo := initRepo(t)
+	if err := os.Rename(filepath.Join(repo, ".git", "HEAD"), filepath.Join(repo, ".git", "HEAD.saved")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewService().TrackedIgnored(context.Background(), repo); err == nil {
+		t.Fatal("TrackedIgnored with a missing HEAD must fail, not report a non-repository")
+	}
+	t.Run("symlinked subdirectory", func(t *testing.T) {
+		subdir := filepath.Join(repo, "subdir")
+		if err := os.Mkdir(subdir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		alias := filepath.Join(t.TempDir(), "alias")
+		if err := os.Symlink(subdir, alias); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if _, err := NewService().TrackedIgnored(context.Background(), alias); err == nil {
+			t.Fatal("TrackedIgnored through a symlink must retain the damaged parent-repository error")
+		}
+	})
+}

@@ -3,10 +3,12 @@ package search
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -41,6 +43,14 @@ func withWorkspace(t *testing.T, files map[string]string) string {
 		}
 	}
 	return root
+}
+
+// includingManager is a Manager whose searches also name paths, as the app
+// names tracked, ignored files (#536).
+func includingManager(paths ...string) *Manager {
+	mgr := NewManager()
+	mgr.SetIncludes(func(string) ([]string, error) { return paths, nil })
+	return mgr
 }
 
 func TestManager_NoMatchesEmptyResponse(t *testing.T) {
@@ -239,6 +249,167 @@ func TestManager_RespectsGitignoreOutsideGitRepo(t *testing.T) {
 	}
 	if !strings.HasSuffix(resp.Files[0].RelativePath, "included.txt") {
 		t.Errorf("matched relative path = %q, want included.txt", resp.Files[0].RelativePath)
+	}
+}
+
+// TestManager_SearchesIncludedIgnoredFiles: the tracked files a .gitignore
+// rule matches are passed as extra paths (#536), and ripgrep searches a path
+// named on its command line whatever the ignore rules say. Untracked files
+// the same rules match stay out.
+func TestManager_SearchesIncludedIgnoredFiles(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{
+		".gitignore":        "**/CLAUDE.md\ndata/\n",
+		"CLAUDE.md":         "needle\n",
+		"data/kaggle/a.csv": "needle\n",
+		"data/kaggle/u.csv": "needle\n",
+		"keep.txt":          "needle\n",
+	})
+
+	resp := includingManager(filepath.Join(root, "CLAUDE.md"), filepath.Join(root, "data", "kaggle", "a.csv")).Search(context.Background(), SearchRequest{
+		RequestID: "tracked-ignored",
+		Root:      root,
+		Query:     "needle",
+	})
+	if resp.Status != StatusSuccess {
+		t.Fatalf("status = %s msg=%s", resp.Status, resp.Message)
+	}
+	var got []string
+	for _, file := range resp.Files {
+		got = append(got, file.RelativePath)
+	}
+	slices.Sort(got)
+	want := []string{"CLAUDE.md", "data/kaggle/a.csv", "keep.txt"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("files = %v, want %v", got, want)
+	}
+}
+
+// TestManager_IncludedFileTheWalkAlsoFindsIsReportedOnce: git and ripgrep
+// can disagree about whether a file is ignored (git honours core.ignorecase,
+// ripgrep matches case-sensitively), and ripgrep searches a file twice when
+// both the walk and an extra path reach it. Each line is reported once.
+func TestManager_IncludedFileTheWalkAlsoFindsIsReportedOnce(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{
+		"CLAUDE.md": "needle one\nplain\nneedle two\n",
+	})
+
+	resp := includingManager(filepath.Join(root, "CLAUDE.md")).Search(context.Background(), SearchRequest{
+		RequestID: "dup",
+		Root:      root,
+		Query:     "needle",
+	})
+	if resp.Status != StatusSuccess {
+		t.Fatalf("status = %s msg=%s", resp.Status, resp.Message)
+	}
+	if resp.TotalFiles != 1 || resp.TotalLines != 2 || len(resp.Files[0].Matches) != 2 {
+		t.Fatalf("want 1 file with 2 lines, got totalFiles=%d totalLines=%d files=%+v", resp.TotalFiles, resp.TotalLines, resp.Files)
+	}
+}
+
+// TestManager_SecondPassDoesNotSpendTheMatchCap: the lines a second pass over
+// a file repeats are not results, so they must not count toward MatchCap and
+// truncate the search before other files' matches arrive.
+func TestManager_SecondPassDoesNotSpendTheMatchCap(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{
+		"CLAUDE.md": "needle 1\nneedle 2\nneedle 3\n",
+		"other.txt": "needle 4\n",
+	})
+	mgr := includingManager(filepath.Join(root, "CLAUDE.md"))
+	mgr.cfg.MatchCap = 4
+
+	resp := mgr.Search(context.Background(), SearchRequest{
+		RequestID: "dup-cap",
+		Root:      root,
+		Query:     "needle",
+	})
+	if resp.Status != StatusSuccess || resp.Truncated || resp.TotalLines != 4 {
+		t.Fatalf("want 4 lines untruncated, got status=%s truncated=%v totalLines=%d files=%+v", resp.Status, resp.Truncated, resp.TotalLines, resp.Files)
+	}
+}
+
+// TestManager_ManyIncludedPathsStillSearch: a repository that committed a
+// vendored folder and then ignored it can have thousands of tracked, ignored
+// files. Named on one command line they overflow the platform's limit (about
+// 32 KB on Windows, 1 MB on macOS, 2 MB on Linux) and ripgrep never starts,
+// so no search works at all. ~3 MB of paths here overflows all three.
+func TestManager_ManyIncludedPathsStillSearch(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{
+		".gitignore":  "vendor/\n",
+		"keep.txt":    "needle\n",
+		"vendor/a.go": "needle\n",
+	})
+	vendored := filepath.Join(root, "vendor", "a.go")
+	include := make([]string, 3<<20/len(vendored))
+	for i := range include {
+		include[i] = vendored
+	}
+
+	resp := includingManager(include...).Search(context.Background(), SearchRequest{
+		RequestID: "many",
+		Root:      root,
+		Query:     "needle",
+	})
+	if resp.Status != StatusSuccess {
+		t.Fatalf("status = %s msg=%s", resp.Status, resp.Message)
+	}
+	if resp.TotalFiles != 2 || resp.TotalLines != 2 {
+		t.Fatalf("want keep.txt and vendor/a.go once each, got files=%+v", resp.Files)
+	}
+}
+
+// TestManager_CancelWhileListingIncludesSkipsTheSearch: listing the include
+// paths can wait on git (a workspace's first listing), and the search box
+// works meanwhile, so a request superseded during that wait must already be
+// cancellable and must not start ripgrep once the listing returns.
+func TestManager_CancelWhileListingIncludesSkipsTheSearch(t *testing.T) {
+	requireRipgrep(t)
+	root := withWorkspace(t, map[string]string{"a.txt": "needle\n"})
+	mgr := NewManager()
+	entered, release := make(chan struct{}), make(chan struct{})
+	mgr.SetIncludes(func(string) ([]string, error) {
+		close(entered)
+		<-release
+		return nil, nil
+	})
+
+	done := make(chan SearchResponse, 1)
+	go func() {
+		done <- mgr.Search(context.Background(), SearchRequest{RequestID: "slow", Root: root, Query: "needle"})
+	}()
+	<-entered
+	mgr.Cancel("slow")
+	close(release)
+
+	if resp := <-done; resp.Status != StatusCanceled || len(resp.Files) != 0 {
+		t.Fatalf("status = %s files=%+v, want a cancelled search with no results", resp.Status, resp.Files)
+	}
+}
+
+func TestManager_IncludeListingFailure(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
+			mgr := NewManager()
+			root := t.TempDir()
+			failure := errors.New("include listing failed")
+			mgr.SetIncludes(func(string) ([]string, error) {
+				if canceled {
+					mgr.Cancel("listing-failure")
+				}
+				return nil, failure
+			})
+			response := mgr.Search(context.Background(), SearchRequest{RequestID: "listing-failure", Root: root, Query: "needle"})
+			wantStatus, wantMessage := StatusFailed, failure.Error()
+			if canceled {
+				wantStatus, wantMessage = StatusCanceled, "search canceled"
+			}
+			if response.Status != wantStatus || response.Message != wantMessage || len(response.Files) != 0 {
+				t.Fatalf("search with failed include listing = %+v, want %s: %s and no results", response, wantStatus, wantMessage)
+			}
+		})
 	}
 }
 

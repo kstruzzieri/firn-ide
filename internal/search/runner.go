@@ -73,9 +73,15 @@ func isMissingTool(err error) bool {
 //  3. --json, --line-number, --column, --color=never: stable parsing contract.
 //  4. Mode flags: --fixed-strings, --case-sensitive/--ignore-case, --word-regexp.
 //  5. --regexp <query>: query is its own argv element; leading "-" is safe.
-//  6. -- <root>: end-of-options sentinel so paths starting with "-" are safe.
-func buildArgs(req SearchRequest) []string {
-	args := make([]string, 0, 15)
+//  6. -- <paths...>: end-of-options sentinel so paths starting with "-" are
+//     safe. paths defaults to the search root. runRipgrep also names files
+//     ripgrep must search although an ignore rule matches them, the tracked
+//     files of #536: ripgrep always searches a path named on its command line.
+func buildArgs(req SearchRequest, paths ...string) []string {
+	if len(paths) == 0 {
+		paths = []string{req.Root}
+	}
+	args := make([]string, 0, 14+len(paths))
 	args = append(args,
 		// Ignore any user-level ripgrep config file so our explicit flags
 		// are authoritative. Without this, a stray RIPGREP_CONFIG_PATH or
@@ -105,8 +111,65 @@ func buildArgs(req SearchRequest) []string {
 	}
 
 	args = append(args, "--regexp", req.Query)
-	args = append(args, "--", req.Root)
+	args = append(args, "--")
+	args = append(args, paths...)
 	return args
+}
+
+// commandLineBudget bounds one ripgrep command line, in bytes. Windows caps a
+// whole command line at 32,767 UTF-16 units, and a string's UTF-8 length is
+// never below its UTF-16 length, so counting bytes is safe; the rest is the
+// margin argsSize does not cover. A repository that committed a vendored
+// folder and then ignored it can have thousands of tracked, ignored files.
+// ponytail: one budget for every platform, sized for Windows; a few extra
+// ripgrep starts elsewhere (macOS allows 1 MB) when the list is that long.
+const commandLineBudget = 30 << 10
+
+// argSize is the most command-line length arg can take: itself, the
+// separating space, the quotes Windows may add, and a backslash for each quote
+// or backslash in it, the most Windows escaping adds.
+// ponytail: counts every backslash though Windows doubles only those before a
+// quote or at the end, so Windows paths batch a little smaller than needed.
+func argSize(arg string) int {
+	return len(arg) + strings.Count(arg, `"`) + strings.Count(arg, `\`) + 3
+}
+
+// argsSize is the most command-line length args can take.
+func argsSize(args []string) int {
+	size := 0
+	for _, arg := range args {
+		size += argSize(arg)
+	}
+	return size
+}
+
+// includeBudget is the room one pass has for include paths: the command-line
+// budget less the binary and everything else buildArgs puts on the line,
+// root and query included. It can be negative for a query too long to search
+// at all; includeBatches then gives each path a pass of its own.
+func includeBudget(bin string, req SearchRequest) int {
+	return commandLineBudget - argsSize([]string{bin}) - argsSize(buildArgs(req))
+}
+
+// includeBatches splits include into groups whose argsSize stays within
+// budget. A path that does not fit even alone gets a group of its own.
+func includeBatches(include []string, budget int) [][]string {
+	var batches [][]string
+	var batch []string
+	size := 0
+	for _, path := range include {
+		cost := argSize(path)
+		if len(batch) > 0 && size+cost > budget {
+			batches = append(batches, batch)
+			batch, size = nil, 0
+		}
+		batch = append(batch, path)
+		size += cost
+	}
+	if len(batch) > 0 {
+		batches = append(batches, batch)
+	}
+	return batches
 }
 
 // runOutcome captures the terminal state of one rg invocation.
@@ -119,11 +182,16 @@ type runOutcome struct {
 // parseEvents. The function returns whether the result was truncated and an
 // optional typed error. Exit code 1 is mapped to a successful empty run.
 //
+// include names files to search although an ignore rule matches them. They
+// ride in batches sized to the command-line budget (includeBatches): the
+// first pass searches the root and the first batch, each later pass one batch. The passes share one timeout, one
+// MatchCap and one duplicate-line guard, and the first failure ends the run.
+//
 // The context owned by the caller controls cancelation. When ctx is canceled
 // before rg finishes, runRipgrep returns errCanceled. Process group
 // cleanup is delegated to exec.CommandContext + Wait; exec.CommandContext
 // already kills the child process on context expiry on all supported OSes.
-func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatch func(filePath string, m LineMatch) bool) runOutcome {
+func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, include []string, onMatch func(filePath string, m LineMatch) bool) runOutcome {
 	bin, err := rgLookup(rgBinaryName)
 	if err != nil {
 		return runOutcome{Err: fmt.Errorf("ripgrep not found on PATH: %w", err)}
@@ -132,7 +200,58 @@ func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatc
 	runCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, bin, buildArgs(req)...)
+	run := &ripgrepRun{
+		ctx:      ctx,
+		runCtx:   runCtx,
+		cancel:   cancel,
+		cfg:      cfg,
+		bin:      bin,
+		onMatch:  onMatch,
+		lastLine: make(map[string]int),
+	}
+	batches := includeBatches(include, includeBudget(bin, req))
+	paths := []string{req.Root}
+	if len(batches) > 0 {
+		paths = append(paths, batches[0]...)
+	}
+	for i := 0; ; i++ {
+		// Cancelled before this pass starts (while the include paths were
+		// listed, or between passes): exec would report a failed start.
+		if ctx.Err() != nil {
+			return runOutcome{Truncated: run.truncated, Err: errCanceled}
+		}
+		outcome := run.pass(buildArgs(req, paths...))
+		if outcome.Err != nil || run.canceledAfterCap || i+1 >= len(batches) {
+			return outcome
+		}
+		paths = batches[i+1]
+	}
+}
+
+// ripgrepRun is the state one search shares across its ripgrep passes.
+type ripgrepRun struct {
+	ctx, runCtx context.Context
+	cancel      context.CancelFunc
+	cfg         runnerConfig
+	bin         string
+	onMatch     func(filePath string, m LineMatch) bool
+
+	collected        int
+	truncated        bool
+	canceledAfterCap bool
+	// lastLine is the last line delivered per file. ripgrep reports a file's
+	// lines in ascending order, once per search of it, and searches a file
+	// twice when the walk and an included path both reach it (git and
+	// ripgrep can disagree about an ignore rule). A line at or before the
+	// last one seen for that file is that second search: it is neither
+	// delivered nor counted toward MatchCap.
+	lastLine map[string]int
+}
+
+// pass runs one ripgrep process with args and classifies how it ended.
+func (r *ripgrepRun) pass(args []string) runOutcome {
+	ctx, runCtx, cfg := r.ctx, r.runCtx, r.cfg
+	cmd := exec.CommandContext(runCtx, r.bin, args...)
 	// Intentionally do not set cmd.Dir: we always pass an absolute search
 	// root as a positional argument, and ripgrep emits absolute paths in
 	// that mode. Setting Dir would couple ripgrep's CWD to the search root
@@ -159,26 +278,28 @@ func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatc
 		stderrCh <- buf
 	}()
 
-	collected := 0
-	truncated := false
-	canceledAfterCap := false
 	cancelAfterCap := func() {
-		truncated = true
-		canceledAfterCap = true
-		cancel()
+		r.truncated = true
+		r.canceledAfterCap = true
+		r.cancel()
 	}
 	parseErr := parseEvents(stdout, func(filePath string, m LineMatch) bool {
-		if collected >= cfg.MatchCap {
+		if last, seen := r.lastLine[filePath]; seen && m.Line <= last {
+			return true
+		}
+		r.lastLine[filePath] = m.Line
+		if r.collected >= cfg.MatchCap {
 			cancelAfterCap()
 			return false
 		}
-		collected++
-		if !onMatch(filePath, m) {
+		r.collected++
+		if !r.onMatch(filePath, m) {
 			cancelAfterCap()
 			return false
 		}
 		return true
 	})
+	truncated := r.truncated
 
 	// Always read remaining stdout so rg can exit cleanly even after we stop
 	// collecting. parseEvents already drains via the scanner, but if it
@@ -201,7 +322,7 @@ func runRipgrep(ctx context.Context, cfg runnerConfig, req SearchRequest, onMatc
 		return runOutcome{Truncated: truncated, Err: errCanceled}
 	}
 
-	if canceledAfterCap {
+	if r.canceledAfterCap {
 		return runOutcome{Truncated: true}
 	}
 

@@ -25,6 +25,7 @@ import { useGolemWindow } from './hooks/useGolemWindow';
 import { useLSPDocumentSync } from './hooks/useLSPDocumentSync';
 import { useLSPEvents } from './hooks/useLSPEvents';
 import { useFileWatcher } from './hooks/useFileWatcher';
+import { useFileTreeStale } from './hooks/useFileTreeStale';
 import { useGitSync } from './hooks/useGitSync';
 import { useWorkspaceSearch } from './hooks/useWorkspaceSearch';
 import { useWorkspaceDetection } from './hooks/useWorkspaceDetection';
@@ -37,7 +38,7 @@ import type { FileEvent } from './types/watcher';
 import { getDirectoryPath, pathsReferToSameFile } from './utils/lspUri';
 import { isDirVisible } from './utils/treeVisibility';
 import { findEntryByPath } from './utils/findEntryByPath';
-import { ensurePathLoaded } from './hooks/useEnsurePathLoaded';
+import { ensurePathLoaded, isPathLoadInFlight } from './hooks/useEnsurePathLoaded';
 import { flushAllFileEdits } from './utils/fileWrites';
 import { focusConfigTab } from './utils/editorSurface';
 import {
@@ -107,23 +108,34 @@ function App() {
 
   const reconcileDir = useCallback((dir: string) => {
     const s = useIDEStore.getState();
-    const root = s.workspace?.path;
+    const workspace = s.workspace;
+    const root = workspace?.path;
     if (!root) return;
+    // A read in flight may predate this change, and its completion clears any
+    // dirty mark set now: re-read once it settles, loaded or not, shown or not.
+    if (isPathLoadInFlight(dir)) {
+      void ensurePathLoaded(dir, { force: true });
+      return;
+    }
     const isRoot = pathsReferToSameFile(dir, root);
     const node = isRoot ? { children: s.directoryTree } : findEntryByPath(s.directoryTree, dir);
     if (!node || node.children === undefined) return; // not loaded → ignore
 
-    // A dir's children are visible when: it's root (always expanded via isRootExpanded)
-    // or it's in expandedPaths AND its ancestor chain is visible (isDirVisible).
+    // A dir's children are visible when it's in expandedPaths AND its ancestor
+    // chain is visible (isDirVisible). The root is always re-read, collapsed
+    // or not: the explorer's mount read (useDirectoryTree) runs outside the
+    // loader and clears a dirty mark when it lands, expanding the root does
+    // not re-read it, and root reads are ticket-ordered, so racing that read
+    // is safe (#536).
     // ponytail: isDirVisible alone is insufficient — it checks row visibility not content visibility
-    const visible = isRoot
-      ? s.isRootExpanded
-      : s.expandedPaths.has(dir) &&
+    const visible =
+      isRoot ||
+      (s.expandedPaths.has(dir) &&
         isDirVisible(dir, {
           rootPath: root,
           isRootExpanded: s.isRootExpanded,
           expandedPaths: s.expandedPaths,
-        });
+        }));
     if (!visible) {
       s.markDirty(dir);
       return;
@@ -136,6 +148,9 @@ function App() {
       dir,
       setTimeout(() => {
         timers.delete(dir);
+        const after = useIDEStore.getState();
+        if (after.workspace !== workspace) return;
+        if (!isRoot && findEntryByPath(after.directoryTree, dir)?.isDir !== true) return;
         void ensurePathLoaded(dir, { force: true });
       }, 75)
     );
@@ -195,6 +210,7 @@ function App() {
   );
 
   useFileWatcher(workspace?.path ?? null, handleFileChange);
+  useFileTreeStale(reconcileDir);
 
   useEffect(() => {
     const timers = reconcileTimersRef.current;
