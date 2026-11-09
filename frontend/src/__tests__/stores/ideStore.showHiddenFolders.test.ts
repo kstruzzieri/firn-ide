@@ -63,3 +63,16 @@ describe('loadInitialShowHiddenFolders', () => {
     expect(loadInitialShowHiddenFolders()).toBe(true);
   });
 });
+
+// A restart builds the store afresh, and it starts from the stored choice.
+describe('a fresh store', () => {
+  afterEach(() => localStorage.clear());
+
+  it('starts with the stored choice', () => {
+    localStorage.setItem(KEY, 'false');
+    jest.isolateModules(() => {
+      const fresh = require('../../stores/ideStore') as typeof import('../../stores/ideStore');
+      expect(fresh.useIDEStore.getState().showHiddenFolders).toBe(false);
+    });
+  });
+});

@@ -15,6 +15,7 @@ import App from '../App';
 import { useIDEStore } from '../stores/ideStore';
 import { clearWorkspaceTreeCache } from '../utils/workspaceTreeCache';
 import type { FileEntry } from '../stores/ideStore';
+import type { workspace } from '../wails/bindings';
 import { useSearchStore } from '../stores/searchStore';
 import { useGitStore, GIT_REFRESH_DEBOUNCE_MS } from '../stores/gitStore';
 import { GitStatus } from '../wails/bindings';
@@ -662,6 +663,152 @@ describe('App — surgical watcher reconcile', () => {
     const github = useIDEStore.getState().directoryTree.find((e) => e.path === '/r/.github');
     expect(github?.children?.map((c) => c.path)).toEqual(['/r/.github/new.yml']);
     expect(useIDEStore.getState().dirtyPaths.has('/r/.github')).toBe(false);
+  });
+
+  // A branch marked dirty while out of view is re-read when it comes back into
+  // view, whatever brings it back: expanding a collapsed root or ancestor,
+  // showing hidden folders (#450), or the Workspace view scoping the tree.
+  const loadedWith = (path: string, children: FileEntry[]): FileEntry =>
+    ({ ...loadedDir(path), children }) as FileEntry;
+  const fileChanged = (path: string) =>
+    act(() => {
+      getWatcherCallback()({
+        type: 'created',
+        path,
+        isDir: false,
+        time: new Date().toISOString(),
+      });
+      jest.advanceTimersByTime(100);
+    });
+  const settle = () =>
+    act(async () => {
+      jest.advanceTimersByTime(100);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+  it('re-reads an expanded folder that changed under a collapsed root once the root expands', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [loadedDir('/r/src')],
+        expandedPaths: new Set(['/r/src']),
+        isRootExpanded: false,
+      });
+    });
+    fileChanged('/r/src/new.ts');
+    await settle();
+    (ReadDirectoryShallow as jest.Mock).mockClear();
+    expect(useIDEStore.getState().dirtyPaths.has('/r/src')).toBe(true);
+
+    act(() => useIDEStore.getState().toggleRootExpanded());
+    await settle();
+
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/src', '/r');
+  });
+
+  it('re-reads a hidden folder shown again under a collapsed root once the root expands', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [loadedDir('/r/.github')],
+        expandedPaths: new Set(['/r/.github']),
+        isRootExpanded: true,
+      });
+      useIDEStore.getState().setShowHiddenFolders(false);
+    });
+    fileChanged('/r/.github/new.yml');
+    act(() => {
+      useIDEStore.setState({ isRootExpanded: false });
+      useIDEStore.getState().setShowHiddenFolders(true);
+    });
+    await settle();
+    expect(ReadDirectoryShallow).not.toHaveBeenCalledWith('/r/.github', '/r');
+
+    act(() => useIDEStore.getState().toggleRootExpanded());
+    await settle();
+
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/.github', '/r');
+  });
+
+  it('does not read a dirty folder deleted from the tree before it comes back into view', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [loadedDir('/r/.github')],
+        expandedPaths: new Set(['/r/.github']),
+        isRootExpanded: true,
+      });
+      useIDEStore.getState().setShowHiddenFolders(false);
+    });
+    fileChanged('/r/.github/new.yml');
+    // A root refresh drops the deleted folder; its dirty and expanded marks stay.
+    act(() => useIDEStore.setState({ directoryTree: [] }));
+    (ReadDirectoryShallow as jest.Mock).mockClear();
+
+    act(() => useIDEStore.getState().setShowHiddenFolders(true));
+    await settle();
+
+    expect(ReadDirectoryShallow).not.toHaveBeenCalled();
+  });
+
+  describe('in the Workspace view of a nested workspace', () => {
+    const scope = () =>
+      act(() => {
+        useIDEStore.setState({
+          workspaces: [
+            { id: 'project', name: 'r', relDir: '', type: 'generic', accent: '' },
+            { id: 'fe', name: 'frontend', relDir: 'frontend', type: 'node', accent: '' },
+          ] as unknown as workspace.WorkspaceDef[],
+          activeWorkspaceId: 'fe',
+          directoryTree: [
+            loadedWith('/r/frontend', [
+              loadedDir('/r/frontend/src'),
+              loadedDir('/r/frontend/.github'),
+            ]),
+          ],
+          // The scope folder is the view's root, not an expanded row.
+          expandedPaths: new Set(['/r/frontend/src', '/r/frontend/.github']),
+          isRootExpanded: true,
+        });
+      });
+
+    it('re-reads an expanded folder the view shows on an event', async () => {
+      await act(async () => {
+        render(<App />);
+      });
+      scope();
+      (ReadDirectoryShallow as jest.Mock).mockClear();
+
+      fileChanged('/r/frontend/src/new.ts');
+      await settle();
+
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/frontend/src', '/r');
+    });
+
+    it('re-reads a hidden folder that changed while hidden once shown again', async () => {
+      await act(async () => {
+        render(<App />);
+      });
+      scope();
+      act(() => useIDEStore.getState().setShowHiddenFolders(false));
+      (ReadDirectoryShallow as jest.Mock).mockClear();
+
+      fileChanged('/r/frontend/.github/new.yml');
+      await settle();
+      expect(ReadDirectoryShallow).not.toHaveBeenCalled();
+
+      act(() => useIDEStore.getState().setShowHiddenFolders(true));
+      await settle();
+
+      expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/frontend/.github', '/r');
+    });
   });
 
   // ── (c) unloaded dir → ignored entirely ────────────────────────────────────

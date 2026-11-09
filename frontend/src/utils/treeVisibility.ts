@@ -32,3 +32,33 @@ export function isDirVisible(path: string, state: VisibilityState): boolean {
   }
   return true;
 }
+
+/** The store fields that decide which folder listings the explorer shows. */
+export interface ShownTreeState {
+  workspace: { path: string } | null;
+  workspaces: readonly { id: string; relDir: string }[];
+  activeWorkspaceId: string;
+  isRootExpanded: boolean;
+  expandedPaths: Set<string>;
+  showHiddenFolders: boolean;
+}
+
+/**
+ * Whether the explorer shows dir's listing: dir is the root the explorer
+ * shows, expanded (the repository, or a nested workspace's folder in
+ * Workspace view), or an expanded folder whose row is shown under it. Mirrors
+ * useFileTreePresentation and flattenVisibleTree.
+ */
+export function isDirListingShown(dir: string, state: ShownTreeState): boolean {
+  const repoRoot = state.workspace?.path;
+  if (!repoRoot) return false;
+  const relDir =
+    state.activeWorkspaceId === 'project'
+      ? ''
+      : (state.workspaces.find((w) => w.id === state.activeWorkspaceId)?.relDir ?? '');
+  const rootPath = pathUnderRoot(repoRoot, relDir);
+  return (
+    isDirVisible(dir, { ...state, rootPath }) &&
+    (relativePathFromRoot(dir, rootPath) === '' || state.expandedPaths.has(dir))
+  );
+}
