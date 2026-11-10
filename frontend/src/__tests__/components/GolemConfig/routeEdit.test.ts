@@ -191,7 +191,7 @@ describe('routeEdit', () => {
       snapshotOf(variants.ctxDecimal, 'row')
     );
     expect(pendingOf(variants.ctxBinary, variants.ctxDecimal)).toEqual([
-      'Model: gpt-5-mini 262144 ctx (was 256000 ctx)',
+      'Model: gpt-5-mini 262,144 ctx (was 256,000 ctx)',
     ]);
     expect(pendingOf(variants.dims1024, variants.dims768)).toEqual([
       'Model: gpt-5-mini 1024 dim (was 768 dim)',
@@ -235,13 +235,13 @@ describe('routeEdit', () => {
     expect(pendingOf(variants.declaredWindow, variants.listedWindow)).toEqual([]);
     // Between two declarations of one model, the field is the only fact.
     expect(pendingOf(variants.declaredWindow, variants.declaredSameName)).toEqual([
-      'Context window: 32768 (was —)',
+      'Context window: 32,768 (was —)',
     ]);
     expect(pendingOf(variants.declaredSameName, variants.declaredWindow)).toEqual([
-      'Context window: — (was 32768)',
+      'Context window: — (was 32,768)',
     ]);
     expect(pendingOf(variants.declaredOtherWindow, variants.declaredWindow)).toEqual([
-      'Context window: 65536 (was 32768)',
+      'Context window: 65,536 (was 32,768)',
     ]);
     // Text that is no window is still an edit, so Done is offered and refuses it.
     expect(pendingOf(variants.declaredBadWindow, variants.declaredSameName)).toEqual([
@@ -258,7 +258,7 @@ describe('routeEdit', () => {
       },
     });
     expect(pendingOf(wider, variants.declaredSameName)).toEqual([
-      'Context window: 32768 (was —)',
+      'Context window: 32,768 (was —)',
       'Declares: + tool_call',
     ]);
     // Against a list card, the Model clause carries the declared window.
@@ -330,6 +330,9 @@ describe('declaredWindow', () => {
     ['   ', undefined],
     ['32768', 32768],
     [' 32768 ', 32768],
+    ['32,768', 32768],
+    [' 1,048,576 ', 1048576],
+    ['2,147,483,647', 2147483647],
     ['1', 1],
     ['2147483647', 2147483647],
   ])('reads %p as %p', (text, want) => {
@@ -337,13 +340,25 @@ describe('declaredWindow', () => {
   });
 
   // The range the backend accepts (internal/ai/settings_apply.go: 1 to
-  // maxModelFactNumber), as whole digits only: no unit, sign, point or exponent.
-  it.each(['0', '-1', '2.5', '2147483648', '32k', '32,768', '1e5', '+5', '0x10'])(
-    'refuses %p',
-    (text) => {
-      expect(declaredWindow(text)).toBeNull();
-    }
-  );
+  // maxModelFactNumber), with no unit, sign, point, exponent or malformed grouping.
+  it.each([
+    '0',
+    '-1',
+    '2.5',
+    '2147483648',
+    '2,147,483,648',
+    '32k',
+    '32,76',
+    '1,,000',
+    ',123',
+    '123,',
+    '1234,567',
+    '1e5',
+    '+5',
+    '0x10',
+  ])('refuses %p', (text) => {
+    expect(declaredWindow(text)).toBeNull();
+  });
 });
 
 describe('card helpers', () => {

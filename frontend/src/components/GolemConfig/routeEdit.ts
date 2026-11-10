@@ -40,13 +40,15 @@ export interface ManualModel {
 /**
  * [#506] The Context window field as the number it stages: undefined while
  * blank, null when it is not a whole number of tokens in the range the backend
- * accepts (1 to 2147483647, `isOptionalModelNumber`). Digits only, so a unit,
- * sign, separator or exponent is refused rather than guessed at.
+ * accepts (1 to 2147483647, `isOptionalModelNumber`). Optional commas must
+ * separate groups of three digits; units, signs and exponents are refused.
  */
 export const declaredWindow = (text: string | undefined): number | undefined | null => {
   const trimmed = (text ?? '').trim();
   if (trimmed === '') return undefined;
-  const value = /^[0-9]+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+  const value = /^(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)$/.test(trimmed)
+    ? Number(trimmed.replaceAll(',', ''))
+    : Number.NaN;
   return isOptionalModelNumber(value) ? value : null;
 };
 
@@ -56,7 +58,7 @@ export const declaredWindow = (text: string | undefined): number | undefined | n
  * when `deriveInputCeiling` (internal/ai/runtime.go) has no window to read.
  */
 export const WINDOW_UNSET =
-  'Context window not set. Golem chat on this model uses an 8192-token input budget.';
+  'Context window not set. Golem chat on this model uses an 8,192-token input budget.';
 /** [#506] A model already in the file has no editor for its window in this release. */
 export const WINDOW_IN_FILE =
   'To set it, add context_window to this model in the configuration file.';
@@ -253,8 +255,12 @@ export const snapshotOf = (seed: Seed, side: Side, arrival: Seed = seed): string
   JSON.stringify(facetsOf(seed, side, arrival));
 
 const shown = (value: string): string => value || '—';
-/** [#506] A declaration's Context window as the field holds it, or the placeholder while blank. */
-const windowText = (seed: Seed): string => shown((seed.manual?.contextWindow ?? '').trim());
+/** [#506] Format valid counts; retain invalid input so the pending edit stays visible. */
+const windowText = (seed: Seed): string => {
+  const text = (seed.manual?.contextWindow ?? '').trim();
+  const value = declaredWindow(text);
+  return typeof value === 'number' ? value.toLocaleString('en-US') : shown(text);
+};
 /** The declare form's own Type label, or the placeholder while none is chosen. */
 const typeLabel = (type: ModelType | ''): string => (type === '' ? '—' : TYPE_LABEL[type]);
 
@@ -270,7 +276,11 @@ const identityText = (seed: Seed, exact: boolean): string => {
     const declared = seed.manual === null ? undefined : windowFacet(seed.manual);
     if (declared === undefined) return 'declared by hand';
     const text =
-      typeof declared === 'number' && !exact ? formatContextWindow(declared) : `${declared}`;
+      typeof declared === 'number'
+        ? exact
+          ? declared.toLocaleString('en-US')
+          : formatContextWindow(declared)
+        : declared;
     return `declared by hand · ${text} ctx`;
   }
   if (!exact) return shown(factsLine(seed.defined));
@@ -278,7 +288,9 @@ const identityText = (seed: Seed, exact: boolean): string => {
   return shown(
     [
       facts.parameters,
-      facts.contextWindow === undefined ? undefined : `${facts.contextWindow} ctx`,
+      facts.contextWindow === undefined
+        ? undefined
+        : `${facts.contextWindow.toLocaleString('en-US')} ctx`,
       facts.dimensions === undefined ? undefined : `${facts.dimensions} dim`,
     ]
       .filter((part): part is string => part !== undefined)

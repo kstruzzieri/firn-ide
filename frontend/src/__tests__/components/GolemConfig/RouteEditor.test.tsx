@@ -4912,7 +4912,7 @@ describe('RouteEditor reach sentence (#307, #349)', () => {
 describe('[#506] the Declare form context window', () => {
   const windowField = () => screen.getByLabelText('Context window');
   const CONFLICT =
-    'chat already sets the context window to 32768 on this model; a route joining it cannot declare a different one. Enter 32768 in Context window, or leave it blank.';
+    'chat already sets the context window to 32,768 on this model; a route joining it cannot declare a different one. Enter 32,768 in Context window, or leave it blank.';
 
   /** Declare `name` for analysis on hosted, as a dense model. */
   async function declareForAnalysis(name: string) {
@@ -4926,19 +4926,23 @@ describe('[#506] the Declare form context window', () => {
     await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
   }
 
-  it('stages a declared window as a model fact', async () => {
-    const { onStage } = renderRouting();
-    await declareForAnalysis('fresh-model');
-    await userEvent.type(windowField(), '65536');
-    await stage();
-    expect(onStage).toHaveBeenCalledTimes(1);
-    expect((onStage.mock.calls[0][0][0] as RouteChange).modelFacts).toStrictEqual({
-      provider: 'hosted',
-      model: 'fresh-model',
-      type: 'dense',
-      contextWindow: 65536,
-    });
-  });
+  it.each(['65536', '65,536'])(
+    'stages a declared window of %p as a numeric model fact',
+    async (text) => {
+      const { onStage } = renderRouting();
+      await declareForAnalysis('fresh-model');
+      await userEvent.type(windowField(), text);
+      expect(windowField()).toHaveValue(text);
+      await stage();
+      expect(onStage).toHaveBeenCalledTimes(1);
+      expect((onStage.mock.calls[0][0][0] as RouteChange).modelFacts).toStrictEqual({
+        provider: 'hosted',
+        model: 'fresh-model',
+        type: 'dense',
+        contextWindow: 65536,
+      });
+    }
+  );
 
   it('omits a blank window from the change and the request, never zero', async () => {
     const { onStage } = renderRouting();
@@ -4960,16 +4964,19 @@ describe('[#506] the Declare form context window', () => {
     expect(JSON.stringify(request)).not.toContain('contextWindow');
   });
 
-  it.each(['32k', '0', '2147483648'])('refuses a window of %p before staging', async (text) => {
-    const { onStage } = renderRouting();
-    await declareForAnalysis('fresh-model');
-    await userEvent.type(windowField(), text);
-    await stage();
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'Enter the context window as a whole number of tokens, from 1 to 2147483647, or leave it blank.'
-    );
-    expect(onStage).not.toHaveBeenCalled();
-  });
+  it.each(['32k', '0', '2147483648', '32,76'])(
+    'refuses a window of %p before staging',
+    async (text) => {
+      const { onStage } = renderRouting();
+      await declareForAnalysis('fresh-model');
+      await userEvent.type(windowField(), text);
+      await stage();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Enter the context window as a whole number of tokens, from 1 to 2,147,483,647, or leave it blank.'
+      );
+      expect(onStage).not.toHaveBeenCalled();
+    }
+  );
 
   it('reopens a staged declaration with its window, nothing pending', async () => {
     const staged: RouteChange = {
@@ -4983,14 +4990,14 @@ describe('[#506] the Declare form context window', () => {
     };
     renderRouting({ draft: draftWith(staged) });
     await openRoute('analysis', 'Assign');
-    expect(windowField()).toHaveValue('65536');
+    expect(windowField()).toHaveValue('65,536');
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
 
     // Editing it is a change the footer names for its field.
     await userEvent.clear(windowField());
     await userEvent.type(windowField(), '131072');
-    expect(summary()).toBe('Context window: 131072 (was 65536)');
+    expect(summary()).toBe('Context window: 131,072 (was 65,536)');
   });
 
   it('refuses a window that differs from the one its selector holds in the file', async () => {
@@ -5125,7 +5132,7 @@ describe('[#506] the Declare form context window', () => {
     await openRoute('agent');
     await pickModel('sized-model');
     const restore =
-      'chat already sets the context window to 65536 on this model; a route joining it cannot declare a different one.';
+      'chat already sets the context window to 65,536 on this model; a route joining it cannot declare a different one.';
     expect(screen.getByText(/already sets the context window/).closest('div')).toHaveTextContent(
       restore
     );
@@ -5166,7 +5173,7 @@ describe('[#506] the Declare form context window', () => {
     await openRoute('chat');
     expect(
       within(screen.getByTestId('model-detail')).getByText(
-        'Context window not set. Golem chat on this model uses an 8192-token input budget. To set it, add context_window to this model in the configuration file.'
+        'Context window not set. Golem chat on this model uses an 8,192-token input budget. To set it, add context_window to this model in the configuration file.'
       )
     ).toBeVisible();
   });

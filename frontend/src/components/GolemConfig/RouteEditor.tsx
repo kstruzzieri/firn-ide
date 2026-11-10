@@ -114,7 +114,7 @@ const MODEL_INVALID = copy('model_invalid');
 const INELIGIBLE = copy('eligibility_ineligible');
 /** [#506] The Context window field holds text that is no window. */
 const WINDOW_INVALID =
-  'Enter the context window as a whole number of tokens, from 1 to 2147483647, or leave it blank.';
+  'Enter the context window as a whole number of tokens, from 1 to 2,147,483,647, or leave it blank.';
 /** [W5-1] What an all-unticked checklist would actually persist. */
 const EMPTY_EXPOSURE =
   "Mark at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing.";
@@ -362,7 +362,7 @@ function seedFrom(
               // [#506] Reopening shows the window the change carries.
               ...(facts.contextWindow === undefined
                 ? {}
-                : { contextWindow: String(facts.contextWindow) }),
+                : { contextWindow: facts.contextWindow.toLocaleString('en-US') }),
             }
           : null,
       exposed: canonicalCaps(staged.exposedCaps),
@@ -1013,9 +1013,11 @@ export function RouteEditor({
   }));
   /** [#506] The field is the declaration's to fix; a list card's window is its own. */
   const windowRemedy = (tokens: number): string =>
-    manual === null ? '' : ` Enter ${tokens} in Context window, or leave it blank.`;
+    manual === null
+      ? ''
+      : ` Enter ${tokens.toLocaleString('en-US')} in Context window, or leave it blank.`;
   const windowConflictLine = ({ tokens, names }: { tokens: number; names: string[] }): string =>
-    `${listUseCases(names)} already ${agrees(names, 'sets', 'set')} the context window to ${tokens} on this model; a route joining it cannot declare a different one.${windowRemedy(tokens)}`;
+    `${listUseCases(names)} already ${agrees(names, 'sets', 'set')} the context window to ${tokens.toLocaleString('en-US')} on this model; a route joining it cannot declare a different one.${windowRemedy(tokens)}`;
   const capsConflict = lockedCaps === undefined ? null : { caps: lockedCaps, names: [...lockedBy] };
   const capsConflictLine = ({ caps, names }: { caps: CapabilityName[]; names: string[] }): string =>
     `${listUseCases(names)} already ${agrees(names, 'exposes', 'expose')} ${caps.join(', ')} on this model; a route joining it cannot expose a different set.`;
@@ -1512,8 +1514,8 @@ export function RouteEditor({
         <div key={tokens} className={styles.disclosure} data-tone="blocking">
           <p className={styles.disclosureText}>
             <strong>{listUseCases(names)}</strong> already {agrees(names, 'sets', 'set')} the
-            context window to <strong>{tokens}</strong> on this model; a route joining it cannot
-            declare a different one.{windowRemedy(tokens)}
+            context window to <strong>{tokens.toLocaleString('en-US')}</strong> on this model; a
+            route joining it cannot declare a different one.{windowRemedy(tokens)}
           </p>
         </div>
       ))}

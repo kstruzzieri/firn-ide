@@ -5,7 +5,7 @@ import { ModelCardPopup, type CardInfo } from '../../../components/GolemConfig/M
 const info = (over: Partial<CardInfo> = {}): CardInfo => ({
   name: 'gemma4:31b',
   type: 'Dense',
-  facts: '31B parameters · 256000-token context',
+  facts: '31B parameters · 256,000-token context',
   abilities: 'chat stream',
   notes: [{ role: 'agent', description: 'Agent / tool-use.' }],
   usedBy: ['agent', 'chat'],
@@ -108,7 +108,7 @@ describe('ModelCardPopup', () => {
     const pop = screen.getByRole('tooltip');
     expect(pop).toHaveAttribute('id', 'band-card-pop');
     expect(pop.textContent).toBe(
-      'gemma4:31btypeDensesize31B parameters · 256000-token contextcan dochat streamnoteAgent / tool-use.used byagent, chat'
+      'gemma4:31btypeDensesize31B parameters · 256,000-token contextcan dochat streamnoteAgent / tool-use.used byagent, chat'
     );
   });
 

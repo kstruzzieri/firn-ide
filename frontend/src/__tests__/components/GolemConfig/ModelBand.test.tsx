@@ -116,7 +116,7 @@ describe('ModelBand compact cards', () => {
     renderBand({ models: [model(), { ...embedModel, contextWindow: 262144 }] });
     await userEvent.click(screen.getByRole('button', { name: /show it/ }));
     const blocked = cardNamed('nomic-embed');
-    expect(within(blocked).getByText('256K ctx')).toHaveAttribute('title', '262144 tokens');
+    expect(within(blocked).getByText('256K ctx')).toHaveAttribute('title', '262,144 tokens');
   });
 
   it('formats the detail readout context exactly like the card', () => {
@@ -995,7 +995,8 @@ describe('ModelBand declare readout', () => {
 
 describe('ModelBand context window', () => {
   const strip = () => screen.getByTestId('model-detail');
-  const UNSET = 'Context window not set. Golem chat on this model uses an 8192-token input budget.';
+  const UNSET =
+    'Context window not set. Golem chat on this model uses an 8,192-token input budget.';
   const IN_FILE = 'To set it, add context_window to this model in the configuration file.';
 
   /** Plain text: neither a live region nor inside one (#506 acceptance). */
@@ -1045,7 +1046,7 @@ describe('ModelBand context window', () => {
     ).toBeTruthy();
     // The hint and, while blank, the unset line describe the field.
     expect(field).toHaveAccessibleDescription(
-      `Optional. The most tokens this model accepts in one request; check the provider's documentation. ${UNSET}`
+      `Optional. The most tokens this model accepts in one request; check the provider's documentation. Commas are optional. ${UNSET}`
     );
     const line = within(form).getByText(UNSET);
     expect(line).toBeVisible();
@@ -1060,7 +1061,7 @@ describe('ModelBand context window', () => {
     expect(field).toHaveValue('32768');
     expect(screen.queryByText(UNSET)).not.toBeInTheDocument();
     expect(field).toHaveAccessibleDescription(
-      "Optional. The most tokens this model accepts in one request; check the provider's documentation."
+      "Optional. The most tokens this model accepts in one request; check the provider's documentation. Commas are optional."
     );
   });
 
@@ -1165,7 +1166,7 @@ describe('ModelBand card popup timing', () => {
     const pop = screen.getByRole('tooltip');
     expect(pop).toHaveAttribute('id', 'band-card-pop');
     expect(pop).toHaveTextContent('Dense');
-    expect(pop).toHaveTextContent('31B parameters · 256000-token context');
+    expect(pop).toHaveTextContent('31B parameters · 256,000-token context');
     expect(pop).toHaveTextContent('chat stream');
     expect(pop).toHaveTextContent('Agent / tool-use.');
     // The portal moved the node out of the band; an id reference crosses that

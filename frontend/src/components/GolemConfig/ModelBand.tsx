@@ -104,7 +104,9 @@ interface PopupHold {
 
 /** Hover detail wherever the abbreviated context renders: the exact count. */
 const contextTitle = (model: ModelProjection): string | undefined =>
-  model.contextWindow === undefined ? undefined : `${model.contextWindow} tokens`;
+  model.contextWindow === undefined
+    ? undefined
+    : `${model.contextWindow.toLocaleString('en-US')} tokens`;
 
 export interface ModelBandProps {
   /** DOM id root; the grid is `<id>-grid` and its cards `<id>-card-N`. */
@@ -329,7 +331,7 @@ export function ModelBand({
       row.model.parameters === undefined ? undefined : `${row.model.parameters} parameters`,
       row.model.contextWindow === undefined
         ? undefined
-        : `${row.model.contextWindow}-token context`,
+        : `${row.model.contextWindow.toLocaleString('en-US')}-token context`,
       row.model.dimensions === undefined ? undefined : `${row.model.dimensions} dimensions`,
     ]
       .filter((part): part is string => part !== undefined)
@@ -687,7 +689,7 @@ export function ModelBand({
           />
           <span className={styles.fieldHint} id={`${id}-manual-window-hint`}>
             Optional. The most tokens this model accepts in one request; check the provider&apos;s
-            documentation.
+            documentation. Commas are optional.
           </span>
           {windowUnset && (
             <span className={styles.fieldHint} id={`${id}-manual-window-unset`}>

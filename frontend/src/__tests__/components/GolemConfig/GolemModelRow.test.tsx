@@ -295,7 +295,7 @@ describe('the picker', () => {
     const details = within(fold).getByRole('button', { name: 'Details of qwen3.6:35b-a3b' });
     const region = document.getElementById(details.getAttribute('aria-controls')!)!;
     const line = within(region).getByText(
-      'Context window not set. Golem chat on this model uses an 8192-token input budget. To set it, add context_window to this model in the configuration file.'
+      'Context window not set. Golem chat on this model uses an 8,192-token input budget. To set it, add context_window to this model in the configuration file.'
     );
     expect(line).not.toBeVisible();
     await userEvent.click(details);
@@ -542,7 +542,7 @@ describe('Codex round 1', () => {
       const strip = within(await openPicker()).getByTestId('model-detail');
       // Not in the file yet, so the line names no file edit.
       const line = within(strip).queryByText(
-        'Context window not set. Golem chat on this model uses an 8192-token input budget.'
+        'Context window not set. Golem chat on this model uses an 8,192-token input budget.'
       );
       if (unset) expect(line).toBeVisible();
       else expect(line).toBeNull();
