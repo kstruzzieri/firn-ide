@@ -192,8 +192,8 @@ func (m *ProjectRunProfileManager) warningsLocked() []string {
 }
 
 // storeWarningsLocked returns a fresh, never-nil slice: the last Load's store
-// warnings, then a notice for each store that has since refused a write because
-// its profiles file changed on disk (#397). That refusal names Reload, and the
+// warnings, then a notice for each store that has refused a write, during that
+// Load or since, because its profiles file changed on disk (#397). That refusal names Reload, and the
 // panel offers Reload only while this list is non-empty. The caller holds m.mu
 // (read or write).
 func (m *ProjectRunProfileManager) storeWarningsLocked() []string {
@@ -527,17 +527,19 @@ type RunProfilesSnapshot struct {
 	Profiles       []RunProfile              `json:"profiles"`
 	ProfileState   map[string]ProfileUIState `json:"profileState"`
 	WorkspaceEpoch uint64                    `json:"workspaceEpoch"`
-	// LoadWarnings are the store-related load issues from the last Load (a
-	// profiles file that could not be read, a migration that could not be
-	// written back, a run-recency sidecar problem, a failed prune), shown in the
-	// panel with Reload. Detector issues are logged, not shown.
+	// LoadWarnings are the store-related issues that Reload can clear: those from
+	// the last Load (a profiles file that could not be read, a migration that
+	// could not be written back, a run-recency sidecar problem, a failed prune),
+	// and a write refused since then because the profiles file changed on disk.
+	// Shown in the panel with Reload. Detector issues are logged, not shown.
 	LoadWarnings []string `json:"loadWarnings"`
 }
 
 // Snapshot returns the merged profile list and the union of every unit's
 // per-profile UI state. IDs are workspace-scoped and globally unique (Phase 1),
 // so a flat merged map is unambiguous. It also carries LoadWarnings, the last
-// Load's store-related issues (never nil, so it marshals as an empty array).
+// Load's store-related issues plus any write refused since because the profiles
+// file changed on disk (never nil, so it marshals as an empty array).
 func (m *ProjectRunProfileManager) Snapshot() RunProfilesSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

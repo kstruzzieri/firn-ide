@@ -194,10 +194,11 @@ export class RunProfilesSnapshot {
     "workspaceEpoch": number;
 
     /**
-     * LoadWarnings are the store-related load issues from the last Load (a
-     * profiles file that could not be read, a migration that could not be
-     * written back, a run-recency sidecar problem, a failed prune), shown in the
-     * panel with Reload. Detector issues are logged, not shown.
+     * LoadWarnings are the store-related issues that Reload can clear: those from
+     * the last Load (a profiles file that could not be read, a migration that
+     * could not be written back, a run-recency sidecar problem, a failed prune),
+     * and a write refused since then because the profiles file changed on disk.
+     * Shown in the panel with Reload. Detector issues are logged, not shown.
      */
     "loadWarnings": string[];
 

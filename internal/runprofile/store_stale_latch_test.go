@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"firn/internal/filesystem"
 	"fmt"
 	"io/fs"
 	"os"
@@ -391,5 +392,49 @@ func TestIssue442EmptySidecarStillRecords(t *testing.T) {
 			}
 			latchAssertRecency(t, root, map[string]int64{detected: 99})
 		})
+	}
+}
+
+// swapAfterFirstRead replaces the profiles file right after it is first read:
+// the gap between Load reading a v1 file and writing its migration back.
+type swapAfterFirstRead struct {
+	filesystem.FileSystem
+	with []byte
+	done bool
+}
+
+func (f *swapAfterFirstRead) ReadFile(path string) ([]byte, error) {
+	data, err := f.FileSystem.ReadFile(path)
+	if !f.done && strings.HasSuffix(path, profilesFileName) {
+		f.done = true
+		if werr := os.WriteFile(path, f.with, 0o644); werr != nil {
+			return nil, werr
+		}
+	}
+	return data, err
+}
+
+// The profiles Load returns are stale once its own migration write was refused,
+// so they must not decide which recency entries to prune: the file on disk now
+// may name profiles this store has never seen.
+func TestIssue397ChangeDuringMigrationKeepsRecencyAndWarnsOnce(t *testing.T) {
+	root := latchRepo(t)
+	path := latchProfilesPath(root)
+	v1 := strings.Replace(latchSavedProfiles, "%d", "1", 1)
+	if err := os.WriteFile(path, []byte(v1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	latchSeedRecency(t, root, map[string]int64{"other-branch": 7})
+
+	m := NewProjectManager(&swapAfterFirstRead{FileSystem: filesystem.NewOS(), with: []byte(staleOtherBranch)}, root)
+	if err := m.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	staleAssertFile(t, path, []byte(staleOtherBranch), "the migration write-back")
+	latchAssertRecency(t, root, map[string]int64{"other-branch": 7})
+	w := m.Snapshot().LoadWarnings
+	if len(w) != 1 || !strings.Contains(w[0], "changed on disk") || !strings.Contains(w[0], "Reload in the Run Profiles panel") {
+		t.Fatalf("want exactly one change notice naming Reload, got %d: %q", len(w), w)
 	}
 }

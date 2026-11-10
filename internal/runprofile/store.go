@@ -144,7 +144,9 @@ func (s *Store) Load() ([]RunProfile, error) {
 			// Persist is best-effort: a successful migration must not be lost
 			// just because the directory is read-only. Keep the migrated data
 			// in memory and record a warning instead of failing the load.
-			if err := s.persist(); err != nil {
+			// A refusal because the file changed since the read above is latched
+			// and reported from the latch (ChangedOnDisk), not repeated here.
+			if err := s.persist(); err != nil && !errors.Is(err, ErrProfilesFileChanged) {
 				s.Warnings = append(s.Warnings, fmt.Sprintf("could not write migrated profiles to %s: %v", path, err))
 			}
 		}
@@ -398,9 +400,11 @@ func (s *Store) RecordRun(id string, ts int64) error {
 func (s *Store) PruneState(validIDs map[string]bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.loadErr != nil || s.recencyErr != nil {
+	if s.loadErr != nil || s.changedErr != nil || s.recencyErr != nil {
 		// The saved IDs and adoption flags are unknown while the profiles file is
 		// latched, so validIDs would wrongly drop every saved profile's recency.
+		// The same holds once the file changed under a v1 migration during Load:
+		// validIDs describe the file that was read, not the one on disk now.
 		// While the sidecar is latched there is nothing safe to rewrite.
 		return nil
 	}
