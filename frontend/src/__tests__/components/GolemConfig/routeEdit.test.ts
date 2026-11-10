@@ -1,6 +1,7 @@
 import {
   abilitiesLine,
   assertedOf,
+  declaredWindow,
   editReachOf,
   noteOf,
   pendingOf,
@@ -94,6 +95,31 @@ const variants: Record<string, Seed> = {
     defined: null,
     manual: { model: 'gpt-5-mini', type: 'dense', caps: ['chat', 'stream', 'tool_call'] },
   }),
+  // [#506] The declare form's Context window: a number, another number, text
+  // that is no number, and the list card the first one repeats.
+  declaredWindow: seed({
+    defined: null,
+    manual: {
+      model: 'gpt-5-mini',
+      type: 'dense',
+      caps: ['chat', 'stream'],
+      contextWindow: '32768',
+    },
+  }),
+  declaredOtherWindow: seed({
+    defined: null,
+    manual: {
+      model: 'gpt-5-mini',
+      type: 'dense',
+      caps: ['chat', 'stream'],
+      contextWindow: '65536',
+    },
+  }),
+  declaredBadWindow: seed({
+    defined: null,
+    manual: { model: 'gpt-5-mini', type: 'dense', caps: ['chat', 'stream'], contextWindow: '32k' },
+  }),
+  listedWindow: seed({ defined: model({ role: 'sized-role', contextWindow: 32768 }) }),
   exposure: seed({ exposed: ['chat', 'stream', 'tool_call'] }),
   thinkOn: seed({ exposed: ['chat', 'stream', 'thinking'], think: 'auto' }),
   thinkOnDefault: seed({ exposed: ['chat', 'stream', 'thinking'] }),
@@ -201,6 +227,55 @@ describe('routeEdit', () => {
     ]);
   });
 
+  it('[#506] reads a declared context window as a model fact, named for its own field', () => {
+    // A declaration repeating a list card's window stages the same facts.
+    expect(snapshotOf(variants.declaredWindow, 'stage')).toBe(
+      snapshotOf(variants.listedWindow, 'row')
+    );
+    expect(pendingOf(variants.declaredWindow, variants.listedWindow)).toEqual([]);
+    // Between two declarations of one model, the field is the only fact.
+    expect(pendingOf(variants.declaredWindow, variants.declaredSameName)).toEqual([
+      'Context window: 32768 (was —)',
+    ]);
+    expect(pendingOf(variants.declaredSameName, variants.declaredWindow)).toEqual([
+      'Context window: — (was 32768)',
+    ]);
+    expect(pendingOf(variants.declaredOtherWindow, variants.declaredWindow)).toEqual([
+      'Context window: 65536 (was 32768)',
+    ]);
+    // Text that is no window is still an edit, so Done is offered and refuses it.
+    expect(pendingOf(variants.declaredBadWindow, variants.declaredSameName)).toEqual([
+      'Context window: 32k (was —)',
+    ]);
+    // The window does not hide what else the declaration changes.
+    const wider = seed({
+      defined: null,
+      manual: {
+        model: 'gpt-5-mini',
+        type: 'dense',
+        caps: ['chat', 'stream', 'tool_call'],
+        contextWindow: '32768',
+      },
+    });
+    expect(pendingOf(wider, variants.declaredSameName)).toEqual([
+      'Context window: 32768 (was —)',
+      'Declares: + tool_call',
+    ]);
+    // Against a list card, the Model clause carries the declared window.
+    expect(pendingOf(variants.declaredWindow, base)).toEqual([
+      'Model: gpt-5-mini declared by hand · 32K ctx (was —)',
+    ]);
+    expect(pendingOf(variants.declaredOtherWindow, variants.listedWindow)).toEqual([
+      'Model: gpt-5-mini declared by hand · 64K ctx (was 32K ctx)',
+    ]);
+    // A blank field is no window: the same as a declaration without the field.
+    const blank = seed({
+      defined: null,
+      manual: { model: 'gpt-5-mini', type: 'dense', caps: ['chat', 'stream'], contextWindow: '  ' },
+    });
+    expect(pendingOf(blank, variants.declaredSameName)).toEqual([]);
+  });
+
   it('lets the Model clause carry another model’s facts and type: no Declares or Type clause for a pick', () => {
     expect(pendingOf(variants.otherModel, base)).toEqual(['Model: gpt-5 (was gpt-5-mini)']);
     expect(pendingOf(variants.declaredMoreCaps, variants.otherModel)).toEqual([
@@ -246,6 +321,29 @@ describe('routeEdit', () => {
     expect(pendingOf(variants.ackDrops, base)).toEqual(['Removal: acknowledged']);
     expect(pendingOf(base, variants.ackDrops)).toEqual(['Removal: not acknowledged']);
   });
+});
+
+describe('declaredWindow', () => {
+  it.each([
+    [undefined, undefined],
+    ['', undefined],
+    ['   ', undefined],
+    ['32768', 32768],
+    [' 32768 ', 32768],
+    ['1', 1],
+    ['2147483647', 2147483647],
+  ])('reads %p as %p', (text, want) => {
+    expect(declaredWindow(text)).toBe(want);
+  });
+
+  // The range the backend accepts (internal/ai/settings_apply.go: 1 to
+  // maxModelFactNumber), as whole digits only: no unit, sign, point or exponent.
+  it.each(['0', '-1', '2.5', '2147483648', '32k', '32,768', '1e5', '+5', '0x10'])(
+    'refuses %p',
+    (text) => {
+      expect(declaredWindow(text)).toBeNull();
+    }
+  );
 });
 
 describe('card helpers', () => {

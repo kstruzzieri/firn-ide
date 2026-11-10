@@ -988,6 +988,105 @@ describe('ModelBand declare readout', () => {
 });
 
 // ---------------------------------------------------------------------------
+// [#506] A model with no context window runs Golem chat on go-llm's 8192-token
+// default input budget. The strip says so wherever the window is unset, and
+// the Declare form can set one.
+// ---------------------------------------------------------------------------
+
+describe('ModelBand context window', () => {
+  const strip = () => screen.getByTestId('model-detail');
+  const UNSET = 'Context window not set. Golem chat on this model uses an 8192-token input budget.';
+  const IN_FILE = 'To set it, add context_window to this model in the configuration file.';
+
+  /** Plain text: neither a live region nor inside one (#506 acceptance). */
+  const expectPlainText = (line: HTMLElement) => {
+    expect(line.closest('[aria-live], [role="status"], [role="alert"], [role="log"]')).toBeNull();
+  };
+
+  it('says a model in the file has no context window, and how to set one', () => {
+    renderBand({ selected: agentModel });
+    const line = within(strip()).getByText(`${UNSET} ${IN_FILE}`);
+    expect(line).toBeVisible();
+    expectPlainText(line);
+  });
+
+  it('says nothing about the window of a model that has one', () => {
+    const sized = model({ ...agentModel, contextWindow: 32768 });
+    renderBand({ models: [model(), sized], selected: sized });
+    expect(within(strip()).queryByText(/Context window not set/)).not.toBeInTheDocument();
+  });
+
+  it('says it for a walked-onto card as well as the selection', async () => {
+    const sized = model({ ...agentModel, contextWindow: 32768 });
+    renderBand({ models: [model(), sized], selected: sized });
+    act(() => cards()[0].focus());
+    await userEvent.keyboard('{ArrowRight}');
+    expect(strip()).toHaveAttribute('data-state', 'previewing');
+    expect(within(strip()).getByText(`${UNSET} ${IN_FILE}`)).toBeVisible();
+  });
+
+  it('offers an optional Context window field in the Declare form, after Type', () => {
+    renderBand({ manual: { model: 'llama-4', type: 'dense', caps: ['chat', 'stream'] } });
+    const form = screen.getByRole('group', { name: 'Enter a model manually' });
+    const field = within(form).getByLabelText('Context window');
+    expect(field).toHaveValue('');
+    expect(field).toHaveAttribute('type', 'text');
+    expect(field).toHaveAttribute('inputmode', 'numeric');
+    expect(field).not.toBeRequired();
+    // Model name, Type, Context window: the order the fields read in.
+    const inputs = within(form).getAllByRole('textbox');
+    expect(inputs.map((input) => input.id)).toEqual([
+      'route-editor-chat-manual-model',
+      'route-editor-chat-manual-window',
+    ]);
+    expect(
+      within(form).getByLabelText('Type').compareDocumentPosition(field) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    // The hint and, while blank, the unset line describe the field.
+    expect(field).toHaveAccessibleDescription(
+      `Optional. The most tokens this model accepts in one request; check the provider's documentation. ${UNSET}`
+    );
+    const line = within(form).getByText(UNSET);
+    expect(line).toBeVisible();
+    expectPlainText(line);
+  });
+
+  it('drops the unset line once the field holds a window', () => {
+    renderBand({
+      manual: { model: 'llama-4', type: 'dense', caps: ['chat', 'stream'], contextWindow: '32768' },
+    });
+    const field = screen.getByLabelText('Context window');
+    expect(field).toHaveValue('32768');
+    expect(screen.queryByText(UNSET)).not.toBeInTheDocument();
+    expect(field).toHaveAccessibleDescription(
+      "Optional. The most tokens this model accepts in one request; check the provider's documentation."
+    );
+  });
+
+  it('reports each keystroke in the field as the declaration it edits', async () => {
+    const { onManual } = renderBand({
+      manual: { model: 'llama-4', type: 'dense', caps: ['chat', 'stream'] },
+    });
+    await userEvent.type(screen.getByLabelText('Context window'), '8');
+    expect(onManual).toHaveBeenLastCalledWith({
+      model: 'llama-4',
+      type: 'dense',
+      caps: ['chat', 'stream'],
+      contextWindow: '8',
+    });
+  });
+
+  it('opens a fresh declaration with the field blank', async () => {
+    const { onManual } = renderBand();
+    await userEvent.type(screen.getByLabelText('Filter models'), 'brand-new');
+    await userEvent.click(screen.getByRole('option', { name: /Declare "brand-new"/ }));
+    const [declared] = onManual.mock.calls.at(-1) as [{ contextWindow?: string }];
+    expect(declared.contextWindow ?? '').toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Preview must not outlive the grid
 // ---------------------------------------------------------------------------
 

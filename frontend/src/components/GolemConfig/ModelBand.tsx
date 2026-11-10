@@ -43,7 +43,10 @@ import { ModelCardPopup, type CardInfo } from './ModelCardPopup';
 import { buildModelRows, canonicalCaps, rowKey, selectorKey, type ModelRow } from './modelRows';
 import {
   TYPE_LABEL,
+  WINDOW_IN_FILE,
+  WINDOW_UNSET,
   abilitiesLine,
+  declaredWindow,
   factsLine,
   noteOf,
   usedByOf,
@@ -623,6 +626,8 @@ export function ModelBand({
           ? 'previewing'
           : 'assigned';
 
+  /** [#506] A declaration with no window yet: blank, not text that is no number. */
+  const windowUnset = manual !== null && declaredWindow(manual.contextWindow) === undefined;
   const declareForm =
     manual === null ? null : (
       <fieldset className={styles.manual}>
@@ -660,6 +665,35 @@ export function ModelBand({
             Required. Golem stores the model type, and no inventory can supply it for a model you
             enter by hand.
           </span>
+        </div>
+        {/* [#506] Optional: a blank field is omitted from the request, never zero. */}
+        <div className={styles.field}>
+          <label className={styles.fieldLabel} htmlFor={`${id}-manual-window`}>
+            Context window
+          </label>
+          <input
+            className={styles.input}
+            id={`${id}-manual-window`}
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            value={manual.contextWindow ?? ''}
+            aria-describedby={
+              windowUnset
+                ? `${id}-manual-window-hint ${id}-manual-window-unset`
+                : `${id}-manual-window-hint`
+            }
+            onChange={(event) => patch({ contextWindow: event.target.value })}
+          />
+          <span className={styles.fieldHint} id={`${id}-manual-window-hint`}>
+            Optional. The most tokens this model accepts in one request; check the provider&apos;s
+            documentation.
+          </span>
+          {windowUnset && (
+            <span className={styles.fieldHint} id={`${id}-manual-window-unset`}>
+              {WINDOW_UNSET}
+            </span>
+          )}
         </div>
         {/* Same chips as the exposure editor, in declaration mode: here they ARE
             the card, so a chip outside it is no assertion to footnote. A
@@ -1105,6 +1139,9 @@ export function ModelBand({
             <p className={styles.fieldHint}>
               Choose a model above, or change this one in Shared configuration.
             </p>
+            {declaredWindow(manual.contextWindow) === undefined && (
+              <p className={styles.fieldHint}>{WINDOW_UNSET}</p>
+            )}
           </>
         ) : manual !== null ? (
           <>
@@ -1192,6 +1229,12 @@ export function ModelBand({
                     {`${detail.modelName}'s card lists: ${abilitiesLine(detail.capabilityFacts.caps)}`}
                   </span>
                 </>
+              )}
+
+              {/* [#506] A model in the file with no window: what that costs, and
+                  where it is set. The picker says it in Details instead. */}
+              {golem === undefined && detail.contextWindow === undefined && (
+                <p className={styles.fieldHint}>{`${WINDOW_UNSET} ${WINDOW_IN_FILE}`}</p>
               )}
 
               {/* The note in full, whichever state the body is in. */}
