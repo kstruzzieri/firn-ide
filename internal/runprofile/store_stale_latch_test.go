@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -405,7 +406,7 @@ type swapAfterFirstRead struct {
 
 func (f *swapAfterFirstRead) ReadFile(path string) ([]byte, error) {
 	data, err := f.FileSystem.ReadFile(path)
-	if !f.done && strings.HasSuffix(path, profilesFileName) {
+	if !f.done && strings.HasSuffix(filepath.ToSlash(path), profilesFileName) {
 		f.done = true
 		if werr := os.WriteFile(path, f.with, 0o644); werr != nil {
 			return nil, werr
