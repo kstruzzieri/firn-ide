@@ -819,7 +819,12 @@
   color: var(--accent);
 }
 
+/* The use-case cell sets `overflow-wrap: anywhere` for long keys, which the tag
+   inherits; nowrap + inline-block keep it whole, so a narrow column drops it to
+   the next line instead of splitting it (EDITIN / G). */
 .editingTag {
+  display: inline-block;
+  white-space: nowrap;
   margin-left: 8px;
   padding: 1px 6px;
   border-radius: 4px;
