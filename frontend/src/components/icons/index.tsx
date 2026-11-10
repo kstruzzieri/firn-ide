@@ -126,11 +126,15 @@ export function MinusIcon(props: IconProps) {
   );
 }
 
-export function EyeIcon(props: IconProps) {
+/**
+ * A folder with a dot: the Show hidden folders toggle (#450). Drawn at 16px,
+ * so its 1.75 stroke keeps the 1.17px line of the header's 14px icons.
+ */
+export function FolderDotIcon(props: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...props}>
-      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-      <circle cx="12" cy="12" r="3" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" {...props}>
+      <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+      <circle cx="12" cy="13" r="2.4" fill="currentColor" stroke="none" />
     </svg>
   );
 }

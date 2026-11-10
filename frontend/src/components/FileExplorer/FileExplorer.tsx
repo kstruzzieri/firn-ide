@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import type { Range } from '@tanstack/react-virtual';
 import { Panel, PanelAction } from '../layout';
-import { EyeIcon, MinusIcon } from '../icons';
+import { FolderDotIcon, MinusIcon } from '../icons';
 import {
   useIDEStore,
   useExpandedPaths,
@@ -473,7 +473,7 @@ export function FileExplorer() {
 
 /**
  * Show hidden folders (#450): on by default, for every project. Off, the tree
- * and search leave out dot-folders such as .github; the tree keeps them.
+ * and search leave out dot-folders such as .github; the stored tree keeps them.
  */
 function HiddenFoldersToggle() {
   const show = useShowHiddenFolders();
@@ -487,7 +487,7 @@ function HiddenFoldersToggle() {
       title="Show hidden folders"
       onClick={() => setShowHiddenFolders(!show)}
     >
-      <EyeIcon aria-hidden="true" />
+      <FolderDotIcon aria-hidden="true" />
     </button>
   );
 }
