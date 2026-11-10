@@ -289,6 +289,39 @@ describe('the picker', () => {
     ).toBeGreaterThan(0);
   });
 
+  it('[#506] says in Details when the model has no context window, and how to set one', async () => {
+    await mount();
+    const fold = await openPicker();
+    const details = within(fold).getByRole('button', { name: 'Details of qwen3.6:35b-a3b' });
+    const region = document.getElementById(details.getAttribute('aria-controls')!)!;
+    const line = within(region).getByText(
+      'Context window not set. Golem chat on this model uses an 8,192-token input budget. To set it, add context_window to this model in the configuration file.'
+    );
+    expect(line).not.toBeVisible();
+    await userEvent.click(details);
+    expect(line).toBeVisible();
+    // Plain text, read when Details is read: no live region announces it.
+    expect(line.closest('[aria-live], [role="status"], [role="alert"], [role="log"]')).toBeNull();
+  });
+
+  it('[#506] says nothing about the window in Details when the model has one', async () => {
+    const reload = hybrid();
+    const models = reload.projection.models as Array<Record<string, unknown>>;
+    reload.projection = {
+      ...reload.projection,
+      models: models.map((model) =>
+        model.role === 'fast' ? { ...model, contextWindow: 32768 } : model
+      ),
+    };
+    await mount(reload);
+    const fold = await openPicker();
+    const details = within(fold).getByRole('button', { name: 'Details of qwen3.6:35b-a3b' });
+    await userEvent.click(details);
+    const region = document.getElementById(details.getAttribute('aria-controls')!)!;
+    expect(within(region).getAllByRole('listitem').length).toBeGreaterThan(0);
+    expect(within(region).queryByText(/Context window not set/)).not.toBeInTheDocument();
+  });
+
   it('offers no type or Kind select', async () => {
     await mount();
     const fold = await openPicker();
@@ -486,6 +519,36 @@ describe('Codex round 1', () => {
     );
     expect(within(fold).queryByRole('button', { name: /Use model|Done/ })).toBeNull();
   });
+
+  it.each([
+    ['', true],
+    ['262144', false],
+  ])(
+    '[#506] says a staged hand declaration with window %p has none set: %p',
+    async (typed, unset) => {
+      await mount();
+      await userEvent.click(sharedToggle());
+      await userEvent.click(screen.getByRole('button', { name: 'Edit route agent' }));
+      const editor = screen.getByRole('group', { name: 'Route agent' });
+      await userEvent.selectOptions(within(editor).getByLabelText('Provider'), 'commandcode');
+      await userEvent.type(within(editor).getByLabelText('Filter models'), 'gpt-9');
+      await userEvent.click(within(editor).getByRole('option', { name: /Declare "gpt-9"/ }));
+      await userEvent.selectOptions(within(editor).getByLabelText('Type'), 'dense');
+      if (typed !== '')
+        await userEvent.type(within(editor).getByLabelText('Context window'), typed);
+      await tickApplyAnywayIfAsked(editor);
+      await userEvent.click(within(editor).getByRole('button', { name: 'Done' }));
+
+      const strip = within(await openPicker()).getByTestId('model-detail');
+      // Not in the file yet, so the line names no file edit.
+      const line = within(strip).queryByText(
+        'Context window not set. Golem chat on this model uses an 8,192-token input budget.'
+      );
+      if (unset) expect(line).toBeVisible();
+      else expect(line).toBeNull();
+      expect(strip.textContent).not.toMatch(/add context_window/);
+    }
+  );
 
   it('hands every pointer request to the agent route editor, open or not', async () => {
     await mount();

@@ -93,11 +93,14 @@ import { ModelBand } from './ModelBand';
 import { canonicalCaps } from './modelRows';
 import {
   abilitiesLine,
+  declaredWindow,
   effectiveThink,
   THINK_LABEL,
   editReachOf,
   pendingOf,
   usedByOf,
+  WINDOW_IN_FILE,
+  WINDOW_UNSET,
   type EditReach,
   type ManualModel,
   type Seed,
@@ -109,6 +112,9 @@ const copy = (code: Parameters<typeof formatSettingsDiagnostic>[0]): string =>
 
 const MODEL_INVALID = copy('model_invalid');
 const INELIGIBLE = copy('eligibility_ineligible');
+/** [#506] The Context window field holds text that is no window. */
+const WINDOW_INVALID =
+  'Enter the context window as a whole number of tokens, from 1 to 2,147,483,647, or leave it blank.';
 /** [W5-1] What an all-unticked checklist would actually persist. */
 const EMPTY_EXPOSURE =
   "Mark at least one capability before staging this route; an empty set falls back to the model type's defaults, not to nothing.";
@@ -353,6 +359,10 @@ function seedFrom(
               model: facts.model,
               type: facts.type,
               caps: canonicalCaps(staged.capabilityFacts.caps),
+              // [#506] Reopening shows the window the change carries.
+              ...(facts.contextWindow === undefined
+                ? {}
+                : { contextWindow: facts.contextWindow.toLocaleString('en-US') }),
             }
           : null,
       exposed: canonicalCaps(staged.exposedCaps),
@@ -507,13 +517,21 @@ export function RouteEditor({
 
   // The facts the picker currently yields. `null` means "not choosable yet";
   // submit() names which half is missing.
+  // [#506] A blank window is omitted, never zero; text that is no window stages
+  // nothing either, and submit() refuses it by name.
+  const manualWindow = manual === null ? undefined : declaredWindow(manual.contextWindow);
   const facts: ModelFacts | null =
     provider === ''
       ? null
       : manual !== null
         ? manual.model === '' || manual.type === ''
           ? null
-          : { provider, model: manual.model, type: manual.type }
+          : {
+              provider,
+              model: manual.model,
+              type: manual.type,
+              ...(typeof manualWindow === 'number' ? { contextWindow: manualWindow } : {}),
+            }
         : defined === null
           ? null
           : modelFactsOf(defined);
@@ -809,8 +827,24 @@ export function RouteEditor({
    * retargets away before this join unlocks the selector even when a deriving
    * sibling (whose `exposedCapabilities` still shows the folded override)
    * remains. Owners on one selector agree (validation), so the lock is one set.
+   *
+   * [#506] A context window conflicts the same way — selectorPairConflict
+   * refuses two different NONZERO windows on one selector, so a blank field
+   * never conflicts — judged by the same staying rule against each sibling's
+   * window, with the order read against THIS join (`runsBeforeJoin`: a window
+   * is per change, so an earlier join of the group keeps no window in place),
+   * and against every other route staged onto the selector, whose plan writes
+   * its window into the document whichever order the two run in — restoring
+   * the applied model included. A declared name joining a selector inherits no
+   * window from it.
    */
   const conflictsByMode = new Map<ThinkMode, Set<string>>();
+  const conflictsByWindow = new Map<number, Set<string>>();
+  const holdsWindow = (tokens: number, names: readonly string[]) => {
+    const held = conflictsByWindow.get(tokens) ?? new Set<string>();
+    for (const name of names) held.add(name);
+    conflictsByWindow.set(tokens, held);
+  };
   const lockedBy = new Set<string>();
   let lockedCaps: CapabilityName[] | undefined;
   if (!isOverride && candidate !== null) {
@@ -844,8 +878,23 @@ export function RouteEditor({
     /** Whether the plan with this id runs before every other mutation of the group. */
     const runsFirst = (id: string): boolean =>
       groupMutations.every((other) => other === id || compareString(id, other) < 0);
-    /** Names holding the applied constraints, or null once those are replaced. */
-    const staying = (sibling: ModelProjection): string[] | null => {
+    /**
+     * [#506] A window is per change, never coalesced: an earlier mutation of
+     * the group meets a sibling's window only with its own, so for a window
+     * what counts is whether a plan runs before THIS join — and this join's
+     * own rewrite of the edited role replaces the old window for it.
+     */
+    const runsBeforeJoin = (id: string): boolean => id === joinId || compareString(id, joinId) < 0;
+    /**
+     * Names holding the applied constraints, or null once those are replaced.
+     * `runsBefore` says when a replacing plan has run: before every mutation of
+     * the group for the selector-scoped Think and capabilities, which coalesce
+     * across it; before this join for a window.
+     */
+    const staying = (
+      sibling: ModelProjection,
+      runsBefore: (id: string) => boolean = runsFirst
+    ): string[] | null => {
       const rewrite =
         sibling.routedUseCases.length === 1 ? staged.get(sibling.routedUseCases[0]) : undefined;
       // A same-selector retarget replaces the old lock — SetRoleModel rewrites
@@ -863,7 +912,7 @@ export function RouteEditor({
         base.routes.some(
           (route) => route.useCase === rewrite.useCase && route.role === sibling.role
         ) &&
-        runsFirst(changeStableID(rewrite))
+        runsBefore(changeStableID(rewrite))
       )
         return null;
       const leaving = leavingRoutes(base, staged, sibling);
@@ -877,8 +926,8 @@ export function RouteEditor({
         sibling.role === role && sharedRole.length === 0 && !isFallbackTarget(base, role);
       const gone =
         sibling.role === role
-          ? rewritten && runsFirst(joinId)
-          : departure !== undefined && runsFirst(changeStableID(departure));
+          ? rewritten && runsBefore(joinId)
+          : departure !== undefined && runsBefore(changeStableID(departure));
       if (gone) return null;
       const names = sibling.routedUseCases.filter(
         (other) =>
@@ -915,6 +964,14 @@ export function RouteEditor({
       const capsDiffer =
         sibling.capabilityOverride !== undefined &&
         !sameCaps(sibling.capabilityOverride, candidate.exposedCaps);
+      const windowDiffers =
+        candidate.modelFacts.contextWindow !== undefined &&
+        sibling.contextWindow !== undefined &&
+        sibling.contextWindow !== candidate.modelFacts.contextWindow;
+      if (windowDiffers && sibling.contextWindow !== undefined) {
+        const holders = staying(sibling, runsBeforeJoin);
+        if (holders !== null) holdsWindow(sibling.contextWindow, holders);
+      }
       if (!thinkDiffers && !capsDiffer) continue;
       const names = staying(sibling);
       if (names === null) continue;
@@ -929,9 +986,38 @@ export function RouteEditor({
       }
     }
   }
+  // Every other route staged onto the selector writes its window whichever
+  // order the plans run in — and so does restoring the applied model, which
+  // drops this row's own departure and leaves its window beside theirs.
+  if (candidate !== null) {
+    const joining = candidate.modelFacts.contextWindow;
+    for (const change of others) {
+      const theirs = change.kind === 'route' ? change.modelFacts.contextWindow : undefined;
+      if (
+        change.kind === 'route' &&
+        change.modelFacts.provider === candidate.modelFacts.provider &&
+        change.modelFacts.model === candidate.modelFacts.model &&
+        joining !== undefined &&
+        theirs !== undefined &&
+        theirs !== joining
+      )
+        holdsWindow(theirs, [change.useCase]);
+    }
+  }
   const thinkConflicts = [...conflictsByMode].map(([mode, names]) => ({ mode, names: [...names] }));
   const thinkConflictLine = ({ mode, names }: { mode: ThinkMode; names: string[] }): string =>
     `${listUseCases(names)} already ${agrees(names, 'sets', 'set')} Think to ${mode} on this model; a route joining it cannot set a different Think mode.`;
+  const windowConflicts = [...conflictsByWindow].map(([tokens, names]) => ({
+    tokens,
+    names: [...names].sort(compareString),
+  }));
+  /** [#506] The field is the declaration's to fix; a list card's window is its own. */
+  const windowRemedy = (tokens: number): string =>
+    manual === null
+      ? ''
+      : ` Enter ${tokens.toLocaleString('en-US')} in Context window, or leave it blank.`;
+  const windowConflictLine = ({ tokens, names }: { tokens: number; names: string[] }): string =>
+    `${listUseCases(names)} already ${agrees(names, 'sets', 'set')} the context window to ${tokens.toLocaleString('en-US')} on this model; a route joining it cannot declare a different one.${windowRemedy(tokens)}`;
   const capsConflict = lockedCaps === undefined ? null : { caps: lockedCaps, names: [...lockedBy] };
   const capsConflictLine = ({ caps, names }: { caps: CapabilityName[]; names: string[] }): string =>
     `${listUseCases(names)} already ${agrees(names, 'exposes', 'expose')} ${caps.join(', ')} on this model; a route joining it cannot expose a different set.`;
@@ -1020,15 +1106,21 @@ export function RouteEditor({
           Details
           <span className={styles.srOnly}>{` of ${model.modelName}`}</span>
         </button>
-        <ul id={`${id}-details`} role="list" className={styles.answers} hidden={!detailsOpen}>
-          {capabilityAnswers(card, cards).map(({ cap, yes, source, agreement }) => (
-            <li key={cap}>
-              <span className={styles.identifier}>{cap}</span>
-              {`: ${yes ? 'yes' : 'no'}, ${source}`}
-              {agreement !== undefined && ` · ${agreement}`}
-            </li>
-          ))}
-        </ul>
+        <div id={`${id}-details`} hidden={!detailsOpen}>
+          <ul role="list" className={styles.answers}>
+            {capabilityAnswers(card, cards).map(({ cap, yes, source, agreement }) => (
+              <li key={cap}>
+                <span className={styles.identifier}>{cap}</span>
+                {`: ${yes ? 'yes' : 'no'}, ${source}`}
+                {agreement !== undefined && ` · ${agreement}`}
+              </li>
+            ))}
+          </ul>
+          {/* [#506] Plain text, read with Details: what a missing window costs chat. */}
+          {card.contextWindow === undefined && (
+            <p className={styles.fieldHint}>{`${WINDOW_UNSET} ${WINDOW_IN_FILE}`}</p>
+          )}
+        </div>
       </>
     );
   };
@@ -1100,6 +1192,10 @@ export function RouteEditor({
         setRefusal('A model type is required before this route can be staged.');
         return;
       }
+      if (manualWindow === null) {
+        setRefusal(WINDOW_INVALID);
+        return;
+      }
     }
     if (candidate === null) {
       setRefusal('Choose a model, or enter one manually.');
@@ -1117,6 +1213,10 @@ export function RouteEditor({
     // floor clause, which names what a floored route is missing.
     if (exposed.length === 0) {
       setRefusal(EMPTY_EXPOSURE);
+      return;
+    }
+    if (windowConflicts.length > 0) {
+      setRefusal(windowConflicts.map(windowConflictLine).join(' '));
       return;
     }
     if (capsConflict !== null) {
@@ -1410,6 +1510,15 @@ export function RouteEditor({
       ) : null}
 
       {/* Staging is refused while any of these stand. */}
+      {windowConflicts.map(({ tokens, names }) => (
+        <div key={tokens} className={styles.disclosure} data-tone="blocking">
+          <p className={styles.disclosureText}>
+            <strong>{listUseCases(names)}</strong> already {agrees(names, 'sets', 'set')} the
+            context window to <strong>{tokens.toLocaleString('en-US')}</strong> on this model; a
+            route joining it cannot declare a different one.{windowRemedy(tokens)}
+          </p>
+        </div>
+      ))}
       {capsConflict !== null && (
         <div className={styles.disclosure} data-tone="blocking">
           <p className={styles.disclosureText}>

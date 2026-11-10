@@ -14,6 +14,7 @@
 import {
   CAPABILITY_NAMES,
   compareString,
+  isOptionalModelNumber,
   type CapabilityName,
   type ModelProjection,
   type ModelType,
@@ -29,7 +30,38 @@ export interface ManualModel {
   /** Required before staging; `''` is "not chosen yet", never a default. */
   type: ModelType | '';
   caps: CapabilityName[];
+  /**
+   * [#506] The Context window field's text, as typed. Absent or blank means
+   * omitted from the request, never zero; `declaredWindow` reads it.
+   */
+  contextWindow?: string;
 }
+
+/**
+ * [#506] The Context window field as the number it stages: undefined while
+ * blank, null when it is not a whole number of tokens in the range the backend
+ * accepts (1 to 2147483647, `isOptionalModelNumber`). Optional commas must
+ * separate groups of three digits; units, signs and exponents are refused.
+ */
+export const declaredWindow = (text: string | undefined): number | undefined | null => {
+  const trimmed = (text ?? '').trim();
+  if (trimmed === '') return undefined;
+  const value = /^(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)$/.test(trimmed)
+    ? Number(trimmed.replaceAll(',', ''))
+    : Number.NaN;
+  return isOptionalModelNumber(value) ? value : null;
+};
+
+/**
+ * [#506] What a model with no context window runs on: Golem chat's input
+ * budget falls back to go-llm v0.5.0's `agent.DefaultInputCeiling` (8192)
+ * when `deriveInputCeiling` (internal/ai/runtime.go) has no window to read.
+ */
+export const WINDOW_UNSET =
+  'Context window not set. Golem chat on this model uses an 8,192-token input budget.';
+/** [#506] A model already in the file has no editor for its window in this release. */
+export const WINDOW_IN_FILE =
+  'To set it, add context_window to this model in the configuration file.';
 
 /** The editor's state: a chosen provider, a model from the list OR a hand declaration, and the rest. */
 export interface Seed {
@@ -182,11 +214,27 @@ interface EditFacets {
   ackDrops: boolean;
 }
 
+/**
+ * [#506] A declaration's window in the place a list model's sits among its
+ * optional facts: the number it stages, or the text itself while that is no
+ * number — still an edit, so Done is offered and names why it refuses.
+ */
+const windowFacet = (manual: ManualModel): number | string | undefined => {
+  const declared = declaredWindow(manual.contextWindow);
+  return declared === null ? (manual.contextWindow ?? '').trim() : declared;
+};
+
 const facetsOf = (seed: Seed, side: Side, arrival: Seed = seed): EditFacets => {
   const facts = seed.defined === null ? null : modelFactsOf(seed.defined);
   // A list model that carries none of the optional facts reads exactly like a
-  // hand declaration of it: both stage {provider, model, type}.
-  const optional = facts === null ? [] : [facts.parameters, facts.contextWindow, facts.dimensions];
+  // hand declaration of it: both stage {provider, model, type}. A declared
+  // window sits where a list model's does, so repeating a card stays clean.
+  const optional =
+    facts !== null
+      ? [facts.parameters, facts.contextWindow, facts.dimensions]
+      : seed.manual !== null
+        ? [undefined, windowFacet(seed.manual), undefined]
+        : [];
   return {
     provider: seed.provider,
     model: facts?.model ?? seed.manual?.model ?? '',
@@ -207,6 +255,12 @@ export const snapshotOf = (seed: Seed, side: Side, arrival: Seed = seed): string
   JSON.stringify(facetsOf(seed, side, arrival));
 
 const shown = (value: string): string => value || '—';
+/** [#506] Format valid counts; retain invalid input so the pending edit stays visible. */
+const windowText = (seed: Seed): string => {
+  const text = (seed.manual?.contextWindow ?? '').trim();
+  const value = declaredWindow(text);
+  return typeof value === 'number' ? value.toLocaleString('en-US') : shown(text);
+};
 /** The declare form's own Type label, or the placeholder while none is chosen. */
 const typeLabel = (type: ModelType | ''): string => (type === '' ? '—' : TYPE_LABEL[type]);
 
@@ -217,13 +271,26 @@ const typeLabel = (type: ModelType | ''): string => (type === '' ? '—' : TYPE_
  */
 const identityText = (seed: Seed, exact: boolean): string => {
   // Only reached with a model on both sides (equal, non-empty names).
-  if (seed.defined === null) return 'declared by hand';
+  if (seed.defined === null) {
+    // [#506] A declaration's one optional fact is its window, read like a card's.
+    const declared = seed.manual === null ? undefined : windowFacet(seed.manual);
+    if (declared === undefined) return 'declared by hand';
+    const text =
+      typeof declared === 'number'
+        ? exact
+          ? declared.toLocaleString('en-US')
+          : formatContextWindow(declared)
+        : declared;
+    return `declared by hand · ${text} ctx`;
+  }
   if (!exact) return shown(factsLine(seed.defined));
   const facts = modelFactsOf(seed.defined);
   return shown(
     [
       facts.parameters,
-      facts.contextWindow === undefined ? undefined : `${facts.contextWindow} ctx`,
+      facts.contextWindow === undefined
+        ? undefined
+        : `${facts.contextWindow.toLocaleString('en-US')} ctx`,
       facts.dimensions === undefined ? undefined : `${facts.dimensions} dim`,
     ]
       .filter((part): part is string => part !== undefined)
@@ -252,8 +319,9 @@ const setDelta = (
  * facts differ), `Control: + a, b` and `Control: − c` for a checklist (one
  * clause per side it gains or loses), `Control: acknowledged` / `not
  * acknowledged` for a tick. In the order Provider, Model (or, for the same
- * model with the same facts, Declares), Type, Capabilities, Think mode, then
- * the acknowledgements. Empty
+ * model with the same facts, Declares; for two declarations of one model,
+ * Context window then Declares), Type, Capabilities, Think mode, then the
+ * acknowledgements. Empty
  * exactly when `snapshotOf(now, 'stage')` equals `snapshotOf(was, 'row')`.
  */
 export const pendingOf = (now: Seed, was: Seed, arrival: Seed = was): string[] => {
@@ -266,15 +334,20 @@ export const pendingOf = (now: Seed, was: Seed, arrival: Seed = was): string[] =
   // its facts, declaration or type differ on their own. Another provider's
   // same-named model is another model, and the Provider clause says so.
   const sameModel = a.provider === b.provider && a.model === b.model;
+  // [#506] Two declarations of one model differ in facts only by the window,
+  // which is a field of its own: named for it, beside what else they declare.
+  const bothDeclared = now.manual !== null && was.manual !== null;
   if (a.model !== b.model) {
     pending.push(`Model: ${shown(a.model)} (was ${shown(b.model)})`);
-  } else if (sameModel && a.facts !== b.facts) {
+  } else if (sameModel && a.facts !== b.facts && !bothDeclared) {
     // The same name, other facts: two list models the picker tells apart, or
     // a hand declaration standing in for one. Exact counts when the lines
     // would read alike.
     const exact = identityText(now, false) === identityText(was, false);
     pending.push(`Model: ${a.model} ${identityText(now, exact)} (was ${identityText(was, exact)})`);
   } else if (sameModel) {
+    if (a.facts !== b.facts)
+      pending.push(`Context window: ${windowText(now)} (was ${windowText(was)})`);
     // The same model, other declared capabilities: a hand declaration edited,
     // or the picker's one card for a selector carrying another role's resolved
     // set. (Another model's capabilities are its own; the Model clause covers them.)

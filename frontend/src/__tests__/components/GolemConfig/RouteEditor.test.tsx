@@ -4901,3 +4901,280 @@ describe('RouteEditor reach sentence (#307, #349)', () => {
     expect([...projected.roleRows.keys()].sort()).toEqual(['agent', 'judge']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// [#506] The Declare form's Context window. A blank field is omitted, never
+// zero; a number carries through staging, reopening and the footer; and a
+// declared name joining a selector that holds another window is refused here,
+// before go-llm's selector_conflict refuses the whole Apply.
+// ---------------------------------------------------------------------------
+
+describe('[#506] the Declare form context window', () => {
+  const windowField = () => screen.getByLabelText('Context window');
+  const CONFLICT =
+    'chat already sets the context window to 32,768 on this model; a route joining it cannot declare a different one. Enter 32,768 in Context window, or leave it blank.';
+
+  /** Declare `name` for analysis on hosted, as a dense model. */
+  async function declareForAnalysis(name: string) {
+    await openRoute('analysis', 'Assign');
+    await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
+    await declareModel('scratch');
+    const input = screen.getByLabelText('Model name');
+    await userEvent.clear(input);
+    await userEvent.type(input, name);
+    await userEvent.tab();
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+  }
+
+  it.each(['65536', '65,536'])(
+    'stages a declared window of %p as a numeric model fact',
+    async (text) => {
+      const { onStage } = renderRouting();
+      await declareForAnalysis('fresh-model');
+      await userEvent.type(windowField(), text);
+      expect(windowField()).toHaveValue(text);
+      await stage();
+      expect(onStage).toHaveBeenCalledTimes(1);
+      expect((onStage.mock.calls[0][0][0] as RouteChange).modelFacts).toStrictEqual({
+        provider: 'hosted',
+        model: 'fresh-model',
+        type: 'dense',
+        contextWindow: 65536,
+      });
+    }
+  );
+
+  it('omits a blank window from the change and the request, never zero', async () => {
+    const { onStage } = renderRouting();
+    await declareForAnalysis('fresh-model');
+    await userEvent.type(windowField(), '   ');
+    await stage();
+    const staged = onStage.mock.calls[0][0][0] as RouteChange;
+    expect(staged.modelFacts).toStrictEqual({
+      provider: 'hosted',
+      model: 'fresh-model',
+      type: 'dense',
+    });
+    const request = buildApplyRequest(
+      { routes: [{ useCase: 'chat', role: 'chat-role' }], models: [model(), other] },
+      draftWith(staged),
+      vault(),
+      'apply'
+    );
+    expect(JSON.stringify(request)).not.toContain('contextWindow');
+  });
+
+  it.each(['32k', '0', '2147483648', '32,76'])(
+    'refuses a window of %p before staging',
+    async (text) => {
+      const { onStage } = renderRouting();
+      await declareForAnalysis('fresh-model');
+      await userEvent.type(windowField(), text);
+      await stage();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Enter the context window as a whole number of tokens, from 1 to 2,147,483,647, or leave it blank.'
+      );
+      expect(onStage).not.toHaveBeenCalled();
+    }
+  );
+
+  it('reopens a staged declaration with its window, nothing pending', async () => {
+    const staged: RouteChange = {
+      kind: 'route',
+      useCase: 'analysis',
+      modelFacts: { provider: 'hosted', model: 'fresh-model', type: 'dense', contextWindow: 65536 },
+      capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    renderRouting({ draft: draftWith(staged) });
+    await openRoute('analysis', 'Assign');
+    expect(windowField()).toHaveValue('65,536');
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+
+    // Editing it is a change the footer names for its field.
+    await userEvent.clear(windowField());
+    await userEvent.type(windowField(), '131072');
+    expect(summary()).toBe('Context window: 131,072 (was 65,536)');
+  });
+
+  it('refuses a window that differs from the one its selector holds in the file', async () => {
+    const sized = model({ contextWindow: 32768 });
+    const { onStage } = renderRouting({ models: [sized, other] });
+    await declareForAnalysis('gpt-5-mini');
+    // Joining does not inherit the window: the field stays as typed.
+    expect(windowField()).toHaveValue('');
+    expect(screen.queryByText(/already sets the context window/)).not.toBeInTheDocument();
+
+    await userEvent.type(windowField(), '65536');
+    const notice = screen.getByText(/already sets the context window/).closest('div');
+    expect(notice).toHaveTextContent(CONFLICT);
+    expect(notice).toHaveAttribute('data-tone', 'blocking');
+    await stage();
+    expect(screen.getByRole('alert')).toHaveTextContent(CONFLICT);
+    expect(onStage).not.toHaveBeenCalled();
+
+    // The same window joins it.
+    await userEvent.clear(windowField());
+    await userEvent.type(windowField(), '32768');
+    expect(screen.queryByText(/already sets the context window/)).not.toBeInTheDocument();
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect((onStage.mock.calls[0][0][0] as RouteChange).modelFacts).toStrictEqual({
+      provider: 'hosted',
+      model: 'gpt-5-mini',
+      type: 'dense',
+      contextWindow: 32768,
+    });
+  });
+
+  it('lets a blank window join a selector that holds one', async () => {
+    const { onStage } = renderRouting({ models: [model({ contextWindow: 32768 }), other] });
+    await declareForAnalysis('gpt-5-mini');
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect((onStage.mock.calls[0][0][0] as RouteChange).modelFacts).toStrictEqual({
+      provider: 'hosted',
+      model: 'gpt-5-mini',
+      type: 'dense',
+    });
+  });
+
+  it('reads a window holder that leaves before this join as gone, even after an earlier blank join', async () => {
+    // Codex review: Apply runs route plans in stable-id order. analysis joins
+    // with no window (no conflict), chat leaves, then planning joins: chat's
+    // window is gone by then. A window is per change, never coalesced, so an
+    // earlier join of the group does not keep chat's window in place the way
+    // it keeps a selector-wide Think or capability set.
+    const toolCaps = ['chat', 'stream', 'tool_call'] as CapabilityName[];
+    const sized = model({
+      contextWindow: 32768,
+      effectiveCapabilities: toolCaps,
+      capabilityFacts: { caps: toolCaps, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: toolCaps,
+    });
+    const leaves: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: other.capabilityFacts,
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const blankJoin: RouteChange = {
+      kind: 'route',
+      useCase: 'analysis',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+      capabilityFacts: { caps: toolCaps, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: toolCaps,
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const { onStage } = renderRouting({
+      models: [sized, other],
+      draft: draftWith(leaves, blankJoin),
+    });
+    await openRoute('planning', 'Assign');
+    await userEvent.selectOptions(screen.getByLabelText('Provider'), 'hosted');
+    await declareModel('scratch');
+    const input = screen.getByLabelText('Model name');
+    await userEvent.clear(input);
+    await userEvent.type(input, 'gpt-5-mini');
+    await userEvent.tab();
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'dense');
+    await userEvent.type(windowField(), '65536');
+    expect(screen.queryByText(/already sets the context window/)).not.toBeInTheDocument();
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect((onStage.mock.calls[0][0][0] as RouteChange).modelFacts.contextWindow).toBe(65536);
+  });
+
+  it('refuses restoring a model whose window a route staged onto it differs from', async () => {
+    // Codex review: agent leaves sized-model, so chat may join it with another
+    // window. Picking agent's own model back drops agent's departure, which
+    // would leave both windows on one selector.
+    const toolCaps = ['chat', 'stream', 'tool_call'] as CapabilityName[];
+    const sized = model({
+      role: 'agent-role',
+      modelName: 'sized-model',
+      routedUseCases: ['agent'],
+      contextWindow: 32768,
+      effectiveCapabilities: toolCaps,
+      capabilityFacts: { caps: toolCaps, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: toolCaps,
+    });
+    const departs: RouteChange = {
+      kind: 'route',
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: other.capabilityFacts,
+      exposedCaps: toolCaps,
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const joins: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'sized-model', type: 'dense', contextWindow: 65536 },
+      capabilityFacts: { caps: toolCaps, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: toolCaps,
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const { onStage } = renderRouting({
+      routes: [{ useCase: 'agent', role: 'agent-role' }],
+      models: [sized, other],
+      draft: draftWith(departs, joins),
+    });
+    await openRoute('agent');
+    await pickModel('sized-model');
+    const restore =
+      'chat already sets the context window to 65,536 on this model; a route joining it cannot declare a different one.';
+    expect(screen.getByText(/already sets the context window/).closest('div')).toHaveTextContent(
+      restore
+    );
+    await stage();
+    expect(screen.getByRole('alert')).toHaveTextContent(restore);
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it('refuses a window that differs from a route staged onto the same model', async () => {
+    const peer: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'fresh-model', type: 'dense', contextWindow: 32768 },
+      capabilityFacts: { caps: ['chat', 'stream'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['chat', 'stream'],
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const { onStage } = renderRouting({ draft: draftWith(peer) });
+    await declareForAnalysis('fresh-model');
+    // Adopting the staged selector's capabilities brings no window with it.
+    expect(windowField()).toHaveValue('');
+
+    await userEvent.type(windowField(), '65536');
+    await stage();
+    expect(screen.getByRole('alert')).toHaveTextContent(CONFLICT);
+    expect(onStage).not.toHaveBeenCalled();
+
+    await userEvent.clear(windowField());
+    await userEvent.type(windowField(), '32768');
+    await stage();
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect((onStage.mock.calls[0][0][0] as RouteChange).modelFacts.contextWindow).toBe(32768);
+  });
+
+  it('says in the strip that the assigned model has no window', async () => {
+    renderRouting();
+    await openRoute('chat');
+    expect(
+      within(screen.getByTestId('model-detail')).getByText(
+        'Context window not set. Golem chat on this model uses an 8,192-token input budget. To set it, add context_window to this model in the configuration file.'
+      )
+    ).toBeVisible();
+  });
+});
