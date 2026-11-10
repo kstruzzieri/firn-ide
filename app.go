@@ -1191,14 +1191,24 @@ func (a *App) mutateAndEmitProfiles(fn func(*runprofile.ProjectRunProfileManager
 		a.profileMu.RUnlock()
 		return fmt.Errorf("no workspace loaded")
 	}
-	if err := fn(a.profileManager); err != nil {
+	err := fn(a.profileManager)
+	if !profileWriteChangedSnapshot(err) {
 		a.profileMu.RUnlock()
 		return err
 	}
 	snap := a.runProfilesSnapshot(a.profileManager)
 	a.profileMu.RUnlock()
 	a.emit("runprofiles:changed", snap)
-	return nil
+	return err
+}
+
+// profileWriteChangedSnapshot reports whether a profile write left a snapshot
+// the frontend has not seen: it succeeded, or it was refused because
+// run-profiles.json changed on disk (#397). That refusal latches a notice into
+// the snapshot, and the panel offers Reload, the remedy the refusal names, only
+// once it has that notice.
+func profileWriteChangedSnapshot(err error) bool {
+	return err == nil || errors.Is(err, runprofile.ErrProfilesFileChanged)
 }
 
 // SaveRunProfile validates and saves a run profile, emitting runprofiles:changed
@@ -1213,7 +1223,7 @@ func (a *App) SaveRunProfile(profile runprofile.RunProfile) (runprofile.Validati
 	}
 	result, err := a.profileManager.SaveProfile(profile)
 	var snap runprofile.RunProfilesSnapshot
-	shouldEmit := err == nil && result.Valid
+	shouldEmit := profileWriteChangedSnapshot(err) && (err != nil || result.Valid)
 	if shouldEmit {
 		snap = a.runProfilesSnapshot(a.profileManager)
 	}
@@ -1233,12 +1243,13 @@ func (a *App) DeleteRunProfile(id string) error {
 		return fmt.Errorf("no workspace loaded")
 	}
 	err := a.profileManager.DeleteProfile(id)
+	shouldEmit := profileWriteChangedSnapshot(err)
 	var snap runprofile.RunProfilesSnapshot
-	if err == nil {
+	if shouldEmit {
 		snap = a.runProfilesSnapshot(a.profileManager)
 	}
 	a.profileMu.RUnlock()
-	if err == nil {
+	if shouldEmit {
 		a.emit("runprofiles:changed", snap)
 	}
 	return err

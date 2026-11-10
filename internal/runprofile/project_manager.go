@@ -13,11 +13,12 @@ import (
 // storeUnit is one detection-target root (a workspace's relDir) with its own
 // saved-profile store, detector, and last detection snapshot.
 type storeUnit struct {
-	relDir   string
-	ownerID  string
-	store    *Store
-	detector *Detector
-	detected []RunProfile
+	relDir    string
+	ownerID   string
+	ownerName string
+	store     *Store
+	detector  *Detector
+	detected  []RunProfile
 }
 
 // ProjectRunProfileManager is the repo-scoped coordinator: it detects run
@@ -134,11 +135,12 @@ func (m *ProjectRunProfileManager) Load() error {
 		}
 
 		units[relDir] = &storeUnit{
-			relDir:   relDir,
-			ownerID:  owner.ID,
-			store:    store,
-			detector: det,
-			detected: detected,
+			relDir:    relDir,
+			ownerID:   owner.ID,
+			ownerName: owner.Name,
+			store:     store,
+			detector:  det,
+			detected:  detected,
 		}
 		order = append(order, relDir)
 	}
@@ -180,11 +182,29 @@ func (m *ProjectRunProfileManager) Warnings() []string {
 // live because HandleFileChange and ReDetect re-run detection (which resets them)
 // without a Load. The caller holds m.mu (read or write).
 func (m *ProjectRunProfileManager) warningsLocked() []string {
-	out := make([]string, len(m.warnings))
-	copy(out, m.warnings)
+	out := m.storeWarningsLocked()
 	for _, relDir := range m.order {
 		if u := m.units[relDir]; u != nil {
 			out = append(out, u.detector.Warnings...)
+		}
+	}
+	return out
+}
+
+// storeWarningsLocked returns a fresh, never-nil slice: the last Load's store
+// warnings, then a notice for each store that has since refused a write because
+// its profiles file changed on disk (#397). That refusal names Reload, and the
+// panel offers Reload only while this list is non-empty. The caller holds m.mu
+// (read or write).
+func (m *ProjectRunProfileManager) storeWarningsLocked() []string {
+	out := append([]string{}, m.warnings...)
+	for _, relDir := range m.order {
+		u := m.units[relDir]
+		if u == nil {
+			continue
+		}
+		if err := u.store.ChangedOnDisk(); err != nil {
+			out = append(out, fmt.Sprintf("workspace %q: %v", u.ownerName, err))
 		}
 	}
 	return out
@@ -536,8 +556,7 @@ func (m *ProjectRunProfileManager) Snapshot() RunProfilesSnapshot {
 	if merged == nil {
 		merged = []RunProfile{}
 	}
-	loadWarnings := append([]string{}, m.warnings...)
-	return RunProfilesSnapshot{Profiles: merged, ProfileState: state, LoadWarnings: loadWarnings}
+	return RunProfilesSnapshot{Profiles: merged, ProfileState: state, LoadWarnings: m.storeWarningsLocked()}
 }
 
 // AdoptProfile marks a profile (by ID) as adopted into the owning workspace's working set.
