@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { cssRule } from '../../helpers/cssRule';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { MergeResolutionState } from '../../../components/Editor/codemirror';
 import type { MergeResolutionEditor } from '../../../components/Editor/codemirror';
 import type { ResolutionRefusalHandler } from '../../../components/Editor/codemirror';
@@ -226,27 +226,33 @@ describe('MergeResolutionView', () => {
       regions: [...textSession.regions, { ...textSession.regions[0], index: 1 }],
     } as MergeSession;
     const { rerender } = render(<MergeResolutionView session={navigableSession} visible />);
+    // Mounted empty before any refusal: a region inserted together with its
+    // text reaches VoiceOver as created, not changed, and is not spoken.
+    const refusal = screen.getByTestId('merge-refusal');
+    expect(refusal).toHaveAttribute('role', 'alert');
+    expect(refusal).toBeEmptyDOMElement();
 
     act(() => onResolutionRefused?.('B', 'ambiguous-eof'));
 
-    expect(screen.getByRole('alert')).toHaveTextContent(/Take Both.*Current or Incoming/i);
+    expect(screen.getByTestId('merge-refusal')).toBe(refusal);
+    expect(refusal).toHaveTextContent(/Take Both.*Current or Incoming/i);
     expect(recordDecision).not.toHaveBeenCalled();
     expect(reopenDecision).not.toHaveBeenCalled();
     expect(markMergeDirty).not.toHaveBeenCalled();
 
     act(() => onStateChange?.({ activeIndex: 1, decisions: {}, order: 'current-first' }));
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(refusal).toBeEmptyDOMElement();
 
     act(() => onResolutionRefused?.('M', 'ambiguous-eof'));
-    expect(screen.getByRole('alert')).toHaveTextContent(/Edit manually.*Current or Incoming/i);
+    expect(refusal).toHaveTextContent(/Edit manually.*Current or Incoming/i);
 
     act(() =>
       onStateChange?.({ activeIndex: null, decisions: { 0: 'C' }, order: 'current-first' })
     );
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(refusal).toBeEmptyDOMElement();
 
     act(() => onResolutionRefused?.('C', 'nonterminal-eof'));
-    expect(screen.getByRole('alert')).toHaveTextContent(/Current.*not at the end.*Reopen/i);
+    expect(refusal).toHaveTextContent(/Current.*not at the end.*Reopen/i);
 
     rerender(
       <MergeResolutionView
@@ -254,7 +260,7 @@ describe('MergeResolutionView', () => {
         visible
       />
     );
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(refusal).toBeEmptyDOMElement();
   });
 
   it('mounts a text Result editor, reflects its decisions, and finalizes only its live document', async () => {
@@ -546,8 +552,8 @@ describe('MergeResolutionView', () => {
 
   it('announces decisions and reopens through the live region', () => {
     render(<MergeResolutionView session={textSession} visible />);
-    const status = screen.getByRole('status');
-    expect(status).toHaveTextContent('1 conflict unresolved.');
+    const status = screen.getByText('1 conflict unresolved.');
+    expect(status).toHaveAttribute('role', 'status');
 
     act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
     expect(status).toHaveTextContent('Conflict 1 resolved: took current. 0 unresolved.');
@@ -558,7 +564,7 @@ describe('MergeResolutionView', () => {
 
   it('resets the announcement to the new file summary when the session advances', () => {
     const { rerender } = render(<MergeResolutionView session={textSession} visible />);
-    const status = screen.getByRole('status');
+    const status = screen.getByText('1 conflict unresolved.');
     act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
     expect(status).toHaveTextContent('Conflict 1 resolved: took current. 0 unresolved.');
 
@@ -868,12 +874,82 @@ describe('MergeResolutionView external-change notice', () => {
       message: 'Could not check src/conflict.ts for outside changes: git exploded.',
     });
 
+  // WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live
+  // region inserted together with its text, and VoiceOver says nothing; the
+  // packaged app recorded that for "a.txt changed outside Firn". jsdom has no
+  // accessibility tree, so this pins the cause: the notice's polite and
+  // assertive regions are mounted before a notice arrives and stay the same
+  // elements, and the class added with a notice never sets display.
+  it.each([
+    ['text', textSession],
+    ['sides', sidesSession],
+  ])(
+    'mounts the notice regions before a notice arrives, under a slot whose display is fixed (%s)',
+    (_renderer, base) => {
+      const { rerender } = render(<MergeResolutionView session={base} visible />);
+      const notice = screen.getByTestId('merge-notice');
+      const slot = notice.parentElement as HTMLElement;
+      const polite = within(notice).getByRole('status');
+      const assertive = within(notice).getByRole('alert');
+      expect(notice.textContent).toBe('');
+      expect(slot).toHaveClass('noticeSlot');
+
+      rerender(
+        <MergeResolutionView
+          session={withExternal(base, {
+            kind: 'changed',
+            hidden: false,
+            scope: 'worktree',
+            observedVersion: 'v1:moved',
+          })}
+          visible
+        />
+      );
+      expect(screen.getByTestId('merge-notice').parentElement).toBe(slot);
+      expect(within(notice).getByRole('status')).toBe(polite);
+      expect(polite).toHaveTextContent('changed outside Firn');
+      expect(slot).toHaveClass('noticeSlot', 'notice');
+
+      rerender(
+        <MergeResolutionView
+          session={withExternal(base, {
+            kind: 'resolved-outside',
+            message: 'src/conflict.ts is no longer conflicted — it was resolved outside Firn.',
+          })}
+          visible
+        />
+      );
+      expect(within(notice).getByRole('alert')).toBe(assertive);
+      expect(assertive).toHaveTextContent('resolved outside Firn');
+      expect(polite.textContent).toBe('');
+      expect(slot).toHaveClass('noticeSlot', 'notice');
+
+      const css = fs.readFileSync(
+        path.resolve(__dirname, '../../../components/Editor/MergeResolutionView.module.css'),
+        'utf8'
+      );
+      expect(cssRule(css, '.noticeSlot')).toMatch(/display:\s*flex/);
+      expect(cssRule(css, '.notice')).not.toMatch(/display/);
+    }
+  );
+
+  // WebKit moves keyboard focus to <body> when the focused button becomes
+  // disabled and does not return it; the packaged app recorded Reload losing
+  // focus as soon as it was pressed. jsdom does not model that blur, so this
+  // pins the cause: Reload is aria-disabled while the reload runs, not disabled.
+  it('keeps Reload focusable while its reload is in flight', () => {
+    render(<MergeResolutionView session={worktreeChange({ reloadPending: true })} visible />);
+
+    const reload = screen.getByRole('button', { name: /reload/i });
+    expect(reload).toBeEnabled();
+    expect(reload).toHaveAttribute('aria-disabled', 'true');
+  });
+
   it('offers Reload and Keep working for a worktree-scoped change as a polite notice', () => {
     render(<MergeResolutionView session={worktreeChange()} visible />);
 
     const notice = screen.getByTestId('merge-notice');
-    expect(notice).toHaveAttribute('role', 'status');
-    expect(notice).toHaveTextContent('changed outside Firn');
+    expect(within(notice).getByRole('status')).toHaveTextContent('changed outside Firn');
     // The actions are siblings of the live region, not read as part of it.
     expect(notice.querySelector('button')).toBeNull();
     expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
@@ -904,7 +980,7 @@ describe('MergeResolutionView external-change notice', () => {
       />
     );
 
-    expect(screen.queryByTestId('merge-notice')).toBeNull();
+    expect(screen.getByTestId('merge-notice').textContent).toBe('');
     expect(screen.getByLabelText(/merge resolution for/i)).toBeInTheDocument();
   });
 
@@ -989,7 +1065,10 @@ describe('MergeResolutionView external-change notice', () => {
     render(<MergeResolutionView session={worktreeChange({ reloadPending: true })} visible />);
 
     expect(controller.setFrozen).toHaveBeenCalledWith(true);
-    expect(screen.getByRole('button', { name: /reload/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /reload/i })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    );
     expect(screen.getByRole('button', { name: /undo/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Write & stage' })).toBeDisabled();
   });
@@ -1035,8 +1114,8 @@ describe('MergeResolutionView external-change notice', () => {
 
   it('renders no notice when the session is in sync', () => {
     render(<MergeResolutionView session={textSession} visible />);
-    expect(screen.queryByTestId('merge-notice')).toBeNull();
-    expect(screen.queryByTestId('merge-notice')).toBeNull();
+    expect(screen.getByTestId('merge-notice').textContent).toBe('');
+    expect(screen.queryByRole('button', { name: /reload|keep working|retry/i })).toBeNull();
   });
 });
 

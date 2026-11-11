@@ -779,6 +779,9 @@ describe('RunProfiles panel — load warnings notice', () => {
     expect(css).not.toMatch(/\.loadNotice:empty/);
   });
 
+  const panelStatus = () =>
+    screen.getAllByRole('status').find((el) => el.hasAttribute('data-run-profiles-status'));
+
   it('keeps the status region and Reload mounted while the profile form replaces the list', () => {
     // Saving from the form is exactly what the load refusal blocks, so the
     // notice must not unmount when the form takes the list's place.
@@ -788,7 +791,8 @@ describe('RunProfiles panel — load warnings notice', () => {
     render(<RunProfiles />);
 
     expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('Saved profiles could not be loaded');
+    // The form has its own status region, for its workspace-mismatch warning.
+    expect(panelStatus()).toHaveTextContent('Saved profiles could not be loaded');
     expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
   });
 
@@ -799,7 +803,7 @@ describe('RunProfiles panel — load warnings notice', () => {
     render(<RunProfiles />);
 
     expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
-    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    expect(panelStatus()).toBeEmptyDOMElement();
   });
 
   it('wraps long paths in a warning instead of overflowing the sidebar', () => {

@@ -8,9 +8,29 @@ beforeEach(() => {
 });
 
 describe('Toast', () => {
-  it('should render nothing when no toast', () => {
-    const { container } = render(<Toast />);
-    expect(container.firstChild).toBeNull();
+  it('should render no toast when there is none', () => {
+    render(<Toast />);
+    expect(screen.getByRole('alert')).toBeEmptyDOMElement();
+    expect(screen.queryByRole('button', { name: /dismiss/i })).not.toBeInTheDocument();
+  });
+
+  // WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live
+  // region inserted together with its text, and VoiceOver says nothing; the
+  // packaged app recorded exactly that for a failed push's toast. jsdom has no
+  // accessibility tree, so this pins the cause: the alert region is in the
+  // document before the toast and is the same unstyled element once it shows.
+  it('keeps the alert region mounted and unstyled while empty, so a toast is announced', () => {
+    render(<Toast />);
+    const region = screen.getByRole('alert');
+
+    act(() => useIDEStore.setState({ toast: { message: 'Git push failed', type: 'error' } }));
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region).toHaveTextContent('Git push failed');
+    expect(region).not.toHaveAttribute('class');
+
+    act(() => useIDEStore.setState({ toast: null }));
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region).toBeEmptyDOMElement();
   });
 
   it('should render error toast message', () => {

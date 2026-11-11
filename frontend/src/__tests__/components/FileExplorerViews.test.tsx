@@ -179,9 +179,39 @@ describe('FileExplorer views', () => {
     render(<FileExplorer />);
     // Scoped hydration runs briefly (loading the relDir chain) then surfaces the
     // error once it determines the path does not exist in the loaded tree.
+    // Once in the panel, once in the status region that announces it.
     await waitFor(() => {
-      expect(screen.getByText(/workspace folder not found/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/workspace folder not found/i)).toHaveLength(2);
     });
+  });
+
+  // WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live
+  // region inserted together with its text, and VoiceOver says nothing; the
+  // packaged app recorded that for "Workspace folder not found". jsdom has no
+  // accessibility tree, so this pins the cause: a status region, mounted
+  // before the tree settles, carries the message once it shows.
+  it('announces a missing workspace folder through a status region mounted before it', async () => {
+    seed('frontend', {
+      workspaces: [
+        defs[0],
+        {
+          id: 'frontend',
+          name: 'Frontend',
+          relDir: 'missing',
+          type: 'frontend',
+          accent: 'frontend',
+        },
+      ] as workspace.WorkspaceDef[],
+    });
+    // The loading skeleton is a busy status too; it carries no message.
+    const announcers = () =>
+      screen.getAllByRole('status').filter((el) => !el.hasAttribute('aria-busy'));
+    render(<FileExplorer />);
+    const [region] = announcers();
+    expect(region).toBeEmptyDOMElement();
+
+    await waitFor(() => expect(region).toHaveTextContent(/workspace folder not found/i));
+    expect(announcers()).toEqual([region]);
   });
 
   it('hydrates a present-but-unloaded scoped node instead of showing empty', async () => {

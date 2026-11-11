@@ -135,14 +135,20 @@ export function GitPanel() {
           </div>
         </div>
         <SyncControls />
-        {buckets.conflicts.length > 0 && (
-          <ConflictBanner branch={status.branch} conflicts={buckets.conflicts} raw={lastError} />
-        )}
-        {lastError && buckets.conflicts.length === 0 && (
-          <div className={styles.errorStrip} data-testid="git-error" role="alert">
-            {lastError}
-          </div>
-        )}
+        {/* Mounted while empty, with a fixed class: a region inserted together
+            with its text reaches VoiceOver as created, not changed, and is
+            not spoken. */}
+        <div role="alert" className={styles.alertRegion}>
+          {buckets.conflicts.length > 0 ? (
+            <ConflictBanner branch={status.branch} conflicts={buckets.conflicts} raw={lastError} />
+          ) : (
+            lastError && (
+              <div className={styles.errorStrip} data-testid="git-error">
+                {lastError}
+              </div>
+            )
+          )}
+        </div>
         {receipt && <CommitReceiptCard />}
         <CommitArea
           key={git.epoch}
@@ -215,8 +221,12 @@ function SyncControls() {
   const hasUpstream = status.upstream !== '';
   // Nothing behind → nothing to pull. A branch with no upstream can still be
   // published, so push stays enabled there even with a zero ahead count.
-  const canPull = status.behind > 0 && !busy;
-  const canPush = (status.ahead > 0 || !hasUpstream) && !busy;
+  // Busy is aria-disabled, not natively disabled: WebKit moves keyboard focus
+  // to <body> when the focused button is disabled and does not return it, so
+  // the user is dropped just as the result is announced. The store ignores a
+  // press while another operation is in flight.
+  const canPull = status.behind > 0;
+  const canPush = status.ahead > 0 || !hasUpstream;
   const pushLabel = !hasUpstream ? 'Publish' : 'Push';
 
   return (
@@ -227,6 +237,7 @@ function SyncControls() {
           className={`${styles.syncBtn} ${status.behind > 0 ? styles.syncActive : ''}`}
           onClick={() => void git.pull()}
           disabled={!canPull}
+          aria-disabled={busy}
           aria-label={
             status.behind > 0 ? `Pull ${status.behind} incoming` : 'Pull (nothing to pull)'
           }
@@ -242,6 +253,7 @@ function SyncControls() {
           className={`${styles.syncBtn} ${status.ahead > 0 || !hasUpstream ? styles.syncActive : ''}`}
           onClick={() => void git.push()}
           disabled={!canPush}
+          aria-disabled={busy}
           aria-label={
             status.ahead > 0 ? `Push ${status.ahead} outgoing` : `${pushLabel} (nothing to push)`
           }
@@ -265,9 +277,12 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
   const [amend, setAmend] = useState(false);
   const [suggestion, setSuggestion] = useState<string | null>(null);
 
-  const canCommit = commitMessage.trim() !== '' && (stagedCount > 0 || amend) && !disabled;
+  // `disabled` (an operation in flight) is aria-disabled on Generate and
+  // Commit, never native, for the focus reason SyncControls gives.
+  const canCommit = commitMessage.trim() !== '' && (stagedCount > 0 || amend);
 
   const handleGenerate = async () => {
+    if (disabled) return;
     const git = useGitStore.getState();
     const epoch = git.epoch;
     setSuggestion(null);
@@ -280,6 +295,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
   };
 
   const handleCommit = async () => {
+    if (disabled) return;
     const git = useGitStore.getState();
     await git.commit(amend);
     const after = useGitStore.getState();
@@ -351,7 +367,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
             type="button"
             className={styles.smallBtn}
             onClick={() => void handleGenerate()}
-            disabled={disabled}
+            aria-disabled={disabled}
             aria-label={generating ? 'Generating commit message' : 'Generate message'}
             title="Generate a commit message with golem"
           >
@@ -362,6 +378,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
           type="button"
           className={styles.commitBtn}
           disabled={!canCommit}
+          aria-disabled={disabled}
           onClick={() => void handleCommit()}
         >
           Commit
@@ -460,7 +477,7 @@ function ConflictBanner({
   const fileQueue = conflicts.map((file) => file.change.path);
 
   return (
-    <div className={styles.conflictBanner} data-testid="conflict-banner" role="alert">
+    <div className={styles.conflictBanner} data-testid="conflict-banner">
       <div className={styles.conflictTitle}>
         Resolve conflicts on {branch} ({conflicts.length} file
         {conflicts.length === 1 ? '' : 's'})

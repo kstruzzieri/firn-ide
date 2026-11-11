@@ -658,6 +658,27 @@ describe('Save as profile', () => {
     await screen.findByText(/could not confirm the write reached disk/i);
   });
 
+  // WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live region
+  // inserted together with its text, and VoiceOver says nothing; the packaged app
+  // recorded that for "That profile name is invalid.". jsdom has no accessibility tree, so this pins the
+  // cause: the region is mounted before the text arrives and keeps its class.
+  it('mounts the naming alert region before a refusal arrives', async () => {
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    const form = screen.getByRole('group', { name: 'Save as profile' });
+    const region = within(form).getByRole('alert');
+    expect(region).toBeEmptyDOMElement();
+    const className = region.className;
+
+    await user.type(screen.getByLabelText('Profile name'), 'Bad Name!');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(within(form).getByRole('alert')).toBe(region);
+    expect(region).toHaveTextContent('That profile name is invalid.');
+    expect(region.className).toBe(className);
+  });
+
   it('refuses an invalid name inline without crossing Wails', async () => {
     await mountReady();
     const user = userEvent.setup();

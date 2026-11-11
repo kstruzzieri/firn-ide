@@ -74,11 +74,28 @@ describe('describeSetup', () => {
 });
 
 describe('LSPSetupCard', () => {
-  it('renders nothing when ready', () => {
-    const { container } = render(
+  it('renders nothing but its empty status region when ready', () => {
+    render(<LSPSetupCard status={status({ setupState: 'ready' })} workspacePath="/proj" />);
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  // WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live region
+  // inserted together with its text, and VoiceOver says nothing; the packaged app
+  // recorded that for "Using a fallback interpreter". jsdom has no accessibility tree, so this pins the
+  // cause: the region is mounted before the text arrives and keeps its class.
+  it('keeps its status region mounted and unstyled while there is no notice', () => {
+    const { rerender } = render(
       <LSPSetupCard status={status({ setupState: 'ready' })} workspacePath="/proj" />
     );
-    expect(container).toBeEmptyDOMElement();
+    const region = screen.getByRole('status');
+    expect(region).toBeEmptyDOMElement();
+
+    rerender(
+      <LSPSetupCard status={status({ setupState: 'missing_interpreter' })} workspacePath="/proj" />
+    );
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region).toHaveTextContent(/no python interpreter/i);
+    expect(region).not.toHaveAttribute('class');
   });
 
   it('renders the message and hint for missing_interpreter', () => {

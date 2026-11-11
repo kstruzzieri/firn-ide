@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   createMergeResolutionEditor,
   type MergeResolutionEditor,
@@ -157,8 +157,7 @@ function MergeExternalNotice({
 }) {
   const actionRef = useRef<HTMLButtonElement>(null);
   const external = session.external;
-  if (!external) return null;
-  if (external.kind === 'changed' && external.hidden) return null;
+  const shown = external && !(external.kind === 'changed' && external.hidden) ? external : null;
 
   const reload = async () => {
     await useGitStore.getState().applyMergeReload();
@@ -171,82 +170,85 @@ function MergeExternalNotice({
     focusResult();
   };
 
-  if (external.kind === 'changed') {
-    const message =
-      external.scope === 'conflict'
+  // Reload and Retry are aria-disabled, not disabled, while their reload runs:
+  // WebKit moves keyboard focus to <body> when the focused button is disabled
+  // and does not return it. The store ignores a second press.
+  let polite = '';
+  let assertive = '';
+  let actions: ReactNode = null;
+  if (shown?.kind === 'changed') {
+    polite =
+      shown.scope === 'conflict'
         ? `The conflict in ${session.path} changed outside Firn: Current and Incoming no longer match what you reviewed. Reload to continue.`
         : `${session.path} changed outside Firn while you were resolving it. Reload to start from the file as it is now, or keep working — writing will then ask you to confirm the overwrite.`;
-    return (
-      <div className={styles.notice}>
-        <span className={styles.noticeMessage} role="status" data-testid="merge-notice">
-          {message}
-        </span>
-        <div className={styles.noticeActions}>
-          <button
-            ref={actionRef}
-            type="button"
-            className={styles.secondaryButton}
-            onClick={() => void reload()}
-            disabled={disabled || session.reloadPending}
-          >
-            Reload (discard decisions)
-          </button>
-          {external.scope === 'worktree' && (
-            <button
-              type="button"
-              className={styles.secondaryButton}
-              onClick={() => {
-                useGitStore.getState().acknowledgeMergeExternal();
-                focusResult();
-              }}
-              disabled={disabled || session.reloadPending}
-            >
-              Keep working
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (external.kind === 'resolved-outside') {
-    return (
-      <div className={styles.notice}>
-        <span className={styles.noticeMessage} role="alert" data-testid="merge-notice">
-          {external.message}
-        </span>
-        <div className={styles.noticeActions}>
-          <button
-            type="button"
-            className={styles.secondaryButton}
-            // Through the same guard as every other close: a touched session
-            // still gets its discard confirmation.
-            onClick={() => useGitStore.getState().requestMergeClose()}
-            disabled={disabled}
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={styles.notice}>
-      <span className={styles.noticeMessage} role="alert" data-testid="merge-notice">
-        {external.message}
-      </span>
-      <div className={styles.noticeActions}>
+    actions = (
+      <>
         <button
           ref={actionRef}
           type="button"
           className={styles.secondaryButton}
           onClick={() => void reload()}
-          disabled={disabled || session.reloadPending}
+          disabled={disabled}
+          aria-disabled={session.reloadPending}
         >
-          Retry
+          Reload (discard decisions)
         </button>
-      </div>
+        {shown.scope === 'worktree' && (
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={() => {
+              useGitStore.getState().acknowledgeMergeExternal();
+              focusResult();
+            }}
+            disabled={disabled || session.reloadPending}
+          >
+            Keep working
+          </button>
+        )}
+      </>
+    );
+  } else if (shown?.kind === 'resolved-outside') {
+    assertive = shown.message;
+    actions = (
+      <button
+        type="button"
+        className={styles.secondaryButton}
+        // Through the same guard as every other close: a touched session
+        // still gets its discard confirmation.
+        onClick={() => useGitStore.getState().requestMergeClose()}
+        disabled={disabled}
+      >
+        Close
+      </button>
+    );
+  } else if (shown) {
+    assertive = shown.message;
+    actions = (
+      <button
+        ref={actionRef}
+        type="button"
+        className={styles.secondaryButton}
+        onClick={() => void reload()}
+        disabled={disabled}
+        aria-disabled={session.reloadPending}
+      >
+        Retry
+      </button>
+    );
+  }
+
+  // Both regions are mounted while empty, under a slot whose display never
+  // changes (`.notice` only decorates it): a region inserted together with its
+  // text, or whose parent changes display type with it, reaches VoiceOver as
+  // created, not changed, and is not spoken.
+  return (
+    <div className={shown ? `${styles.noticeSlot} ${styles.notice}` : styles.noticeSlot}>
+      <span className={styles.noticeMessage} data-testid="merge-notice">
+        <span role="status">{polite}</span>
+        <span role="alert">{assertive}</span>
+      </span>
+      {actions && <div className={styles.noticeActions}>{actions}</div>}
     </div>
   );
 }
@@ -686,13 +688,14 @@ function TextResolutionContent({
         </div>
       </header>
       <MergeExternalNotice session={session} focusResult={focusResult} disabled={finalizing} />
-      {resolutionRefusal && (
-        <div className={styles.notice}>
-          <span className={styles.noticeMessage} role="alert">
-            {resolutionRefusal}
-          </span>
-        </div>
-      )}
+      {/* Mounted while empty, like the external notice's regions. */}
+      <div
+        className={resolutionRefusal ? `${styles.noticeSlot} ${styles.notice}` : styles.noticeSlot}
+      >
+        <span className={styles.noticeMessage} role="alert" data-testid="merge-refusal">
+          {resolutionRefusal}
+        </span>
+      </div>
       {!REGIONS_CARRY_BASE(session) && (
         <div className={styles.baseStrip}>
           <button

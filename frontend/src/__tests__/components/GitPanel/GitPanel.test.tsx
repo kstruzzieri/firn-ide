@@ -560,8 +560,12 @@ describe('GitPanel AI message generation', () => {
       await user.click(generate);
 
       expect(generate).toHaveTextContent('Generating…');
-      expect(generate).toBeDisabled();
-      expect(screen.getByRole('button', { name: /^commit$/i })).toBeDisabled();
+      // aria-disabled, not native: a natively disabled button loses focus.
+      expect(generate).toHaveAttribute('aria-disabled', 'true');
+      expect(screen.getByRole('button', { name: /^commit$/i })).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
       expect(status).toHaveTextContent('Generating commit message…');
       expect(status).toBeVisible();
       expect(input).toHaveAttribute('readonly');
@@ -883,6 +887,33 @@ describe('GitPanel conflicts and errors', () => {
     expect(within(banner).getByRole('button', { name: /open clash\.go/i })).toBeInTheDocument();
   });
 
+  // WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live
+  // region inserted together with its text, and VoiceOver says nothing; the
+  // packaged app recorded that for a failed push's error strip and for a
+  // conflict banner. jsdom has no accessibility tree, so this pins the cause:
+  // one alert region is mounted before either arrives, and it keeps its class.
+  it('announces errors and conflicts through one alert region mounted before them', () => {
+    seed([]);
+    render(<GitPanel />);
+    const region = screen.getByRole('alert');
+    expect(region).toBeEmptyDOMElement();
+    const className = region.className;
+
+    act(() => {
+      useGitStore.setState({ lastError: 'hook rejected: lint failed' });
+    });
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region).toHaveTextContent('hook rejected: lint failed');
+    expect(region.className).toBe(className);
+
+    seed([file('clash.go', 'U', 'U', true)]);
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(within(region).getByTestId('conflict-banner')).toHaveTextContent(
+      /resolve conflicts on main/i
+    );
+    expect(region.className).toBe(className);
+  });
+
   it('shows operation errors inline', () => {
     seed([]);
     act(() => {
@@ -940,6 +971,33 @@ describe('GitPanel branch and sync controls', () => {
     // push is single-flight-blocked while pull is in flight OR queued after;
     // both operations must eventually have been attempted once each.
     expect(GitPull).toHaveBeenCalledTimes(1);
+  });
+
+  // WebKit moves keyboard focus to <body> when the focused button becomes
+  // disabled and does not give it back; the packaged app recorded Push losing
+  // focus the moment it was pressed, just as its failure was announced. jsdom
+  // does not model that blur, so this pins the cause: an operation in flight
+  // leaves Pull, Push, Generate and Commit focusable, only aria-disabled.
+  it('keeps sync and commit buttons focusable while an operation is in flight', () => {
+    seed([file('a.ts', 'M', '.')], { ahead: 1, behind: 1 });
+    act(() => {
+      useGitStore.setState({ aiAvailable: true, commitMessage: 'msg', opInFlight: 'push' });
+    });
+
+    render(<GitPanel />);
+
+    for (const name of [/^pull 1/i, /^push 1/i, /^generate message$/i, /^commit$/i]) {
+      const button = screen.getByRole('button', { name });
+      expect(button).toBeEnabled();
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+    }
+
+    act(() => {
+      useGitStore.setState({ opInFlight: null });
+    });
+    for (const name of [/^pull 1/i, /^push 1/i, /^generate message$/i, /^commit$/i]) {
+      expect(screen.getByRole('button', { name })).toHaveAttribute('aria-disabled', 'false');
+    }
   });
 
   it('disables pull when nothing is behind and push when nothing is ahead', () => {

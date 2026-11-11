@@ -351,6 +351,11 @@ export function FileExplorer() {
     virtualizer.scrollToIndex(idx, { align: 'auto' });
   }, [selectedPath, rows, virtualizer, setActiveKey]);
 
+  // Whether renderContent below shows the scoped error: the branches before it
+  // win. The status region in the body says it, mounted before it shows.
+  const scopedErrorShown =
+    !isLoadingTree && !treeError && workspace && !scopeHydrating && scopedError;
+
   const renderContent = () => {
     if (isLoadingTree) return <FileExplorerSkeleton />;
     if (treeError) return <FileExplorerError message={treeError} onRetry={refetch} />;
@@ -360,7 +365,7 @@ export function FileExplorer() {
     if (scopeHydrating) return <FileExplorerSkeleton />;
     if (scopedError) {
       return (
-        <div className={styles.scopedError} role="status">
+        <div className={styles.scopedError}>
           <p>Workspace folder not found</p>
         </div>
       );
@@ -465,6 +470,12 @@ export function FileExplorer() {
     >
       <div className={styles.explorerBody}>
         {mode === 'workspace' && <WorkspaceTabs />}
+        {/* Mounted before the scoped error replaces the tree: a region inserted
+            together with its text reaches VoiceOver as created, not changed,
+            and is not spoken. */}
+        <div className={styles.srOnly} role="status">
+          {scopedErrorShown ? 'Workspace folder not found' : ''}
+        </div>
         <div className={styles.tree}>{renderContent()}</div>
       </div>
     </Panel>

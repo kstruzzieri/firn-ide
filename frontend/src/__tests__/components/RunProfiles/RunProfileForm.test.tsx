@@ -231,6 +231,24 @@ it('stops auto-selecting the workspace once the user picks one', () => {
   expect(wsSelect.value).toBe('project');
 });
 
+// WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live region
+// inserted together with its text, and VoiceOver says nothing; the packaged app
+// recorded that for the "looks like a Frontend command" warning. jsdom has no accessibility tree, so this pins the
+// cause: the region is mounted before the text arrives and keeps its class.
+it('mounts the mismatch status region before a warning arrives', () => {
+  useIDEStore.setState({ workspaces: defsWithGo, activeWorkspaceId: 'frontend' });
+  render(<RunProfileForm state={{ mode: 'create' }} />);
+  fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'frontend' } });
+  const region = screen.getByRole('status');
+  expect(region).toBeEmptyDOMElement();
+
+  fireEvent.change(screen.getByLabelText(/^command/i), { target: { value: 'go test ./...' } });
+
+  expect(screen.getByRole('status')).toBe(region);
+  expect(region).toHaveTextContent(/looks like a Go command/i);
+  expect(region).not.toHaveAttribute('class');
+});
+
 it('warns (non-blocking) when the command does not match the selected workspace', () => {
   useIDEStore.setState({ workspaces: defsWithGo, activeWorkspaceId: 'frontend' });
   render(<RunProfileForm state={{ mode: 'create' }} />);
