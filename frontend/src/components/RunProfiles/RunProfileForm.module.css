@@ -51,7 +51,8 @@
   cursor: pointer;
   font-size: 11px;
 }
-.save:disabled {
+.save:disabled,
+.save[aria-disabled='true'] {
   background: var(--surface-active);
   color: var(--text-disabled);
   cursor: not-allowed;

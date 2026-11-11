@@ -326,6 +326,38 @@ it('shows a rejected save inline and keeps the form open', async () => {
   expect(useIDEStore.getState().runProfileForm).not.toBeNull();
 });
 
+// PR #546 VoiceOver check: WebKit moves keyboard focus to <body> when the
+// focused button becomes disabled and does not give it back, so a Save that
+// disabled itself in flight dropped focus just as the refusal notice appeared.
+// jsdom does not model that blur, so this pins the cause instead: Save is never
+// natively disabled while a save is in flight.
+it('keeps Save focusable while a save is in flight, and ignores a second press', async () => {
+  let rejectSave!: (err: Error) => void;
+  (SaveRunProfile as jest.Mock).mockImplementation(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectSave = reject;
+      })
+  );
+  useIDEStore.getState().openRunProfileForm({ mode: 'create' });
+  render(<RunProfileForm state={{ mode: 'create' }} />);
+  fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'My Dev' } });
+  fireEvent.change(screen.getByLabelText(/^command/i), { target: { value: 'npm run dev' } });
+  const save = screen.getByRole('button', { name: 'Save' });
+  fireEvent.click(save);
+
+  const inFlight = await screen.findByRole('button', { name: 'Saving' });
+  expect(inFlight).toBe(save);
+  expect(inFlight).not.toHaveAttribute('disabled');
+  expect(inFlight).toHaveAttribute('aria-disabled', 'true');
+  fireEvent.click(inFlight);
+  expect(SaveRunProfile).toHaveBeenCalledTimes(1);
+
+  rejectSave(new Error('refused'));
+  expect(await screen.findByText('refused')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-disabled', 'false');
+});
+
 it('clears copied tags when customizing detected and command changes before save', () => {
   render(<RunProfileForm state={{ mode: 'edit', profile: detected }} />);
   expect(screen.getByText('dev')).toBeInTheDocument();
