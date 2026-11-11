@@ -1,7 +1,16 @@
+// These tests assert macOS/Linux path rules (#510): pin a POSIX host, except
+// where a test loads its own copy of the module as a Windows host.
+let mockPlatform = 'linux';
+jest.mock('../../utils/platform', () => ({
+  ...jest.requireActual('../../utils/platform'),
+  getPlatform: () => mockPlatform,
+}));
+
 import {
   canonicalizeFileURI,
   filePathToURI,
   fileURIToPath,
+  normalizePathForComparison,
   pathsReferToSameFile,
   getFileNameFromPath,
 } from '../../utils/lspUri';
@@ -14,6 +23,13 @@ describe('filePathToURI', () => {
   it('converts a Windows path with lowercase drive letter normalization', () => {
     const uri = filePathToURI('C:\\Users\\dev\\project\\test.ts');
     expect(uri).toBe('file:///c:/Users/dev/project/test.ts');
+  });
+
+  // Matches the backend's FileToURI: filepath.ToSlash keeps a POSIX backslash
+  // and url.PathEscape encodes it, so `a\b` is never sent as the folder `a/b`.
+  it('keeps a POSIX backslash in its segment, encoded (#510)', () => {
+    expect(filePathToURI('/repo/a\\b/x.ts')).toBe('file:///repo/a%5Cb/x.ts');
+    expect(canonicalizeFileURI('file:///repo/a%5Cb/x.ts')).toBe('file:///repo/a%5Cb/x.ts');
   });
 
   it('handles paths with spaces', () => {
@@ -107,6 +123,29 @@ describe('path helpers', () => {
     const diagnosticPath = fileURIToPath(canonicalizeFileURI('file:///C:/Users/dev/test.ts'));
     expect(diagnosticPath).not.toBeNull();
     expect(pathsReferToSameFile(diagnosticPath!, 'c:/Users/dev/test.ts')).toBe(true);
+  });
+
+  it('keeps a POSIX backslash as a name character, not a separator (#510)', () => {
+    expect(pathsReferToSameFile('/repo/a/b/x.ts', '/repo/a\\b/x.ts')).toBe(false);
+    expect(pathsReferToSameFile('/repo/a\\b/x.ts', '/repo/a\\b/x.ts')).toBe(true);
+    expect(normalizePathForComparison('/repo/a\\b/x.ts')).toBe('/repo/a\\b/x.ts');
+  });
+
+  it('still folds separators on Windows UNC paths', () => {
+    expect(pathsReferToSameFile('\\\\server\\share\\x.ts', '//server/share/x.ts')).toBe(true);
+  });
+
+  // A Windows host reads a backslash as a separator in every path, drive or not.
+  it('still folds separators in a relative path on a Windows host', () => {
+    mockPlatform = 'windows';
+    try {
+      jest.isolateModules(() => {
+        const windows = require('../../utils/lspUri') as typeof import('../../utils/lspUri');
+        expect(windows.pathsReferToSameFile('a\\b\\x.ts', 'a/b/x.ts')).toBe(true);
+      });
+    } finally {
+      mockPlatform = 'linux';
+    }
   });
 
   it('extracts the basename from Windows paths', () => {
