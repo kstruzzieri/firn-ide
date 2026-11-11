@@ -591,6 +591,37 @@ describe('GitPanel AI message generation', () => {
     }
   );
 
+  // #515: WebKit moves keyboard focus to <body> when the focused button becomes
+  // disabled, and nothing gave it back when generation ended. jsdom does not
+  // model that blur, so this pins the cause: the pressed Generate button is the
+  // same element throughout, never natively disabled, and still focused after.
+  it('keeps Generate focused and never natively disabled through a generation', async () => {
+    const user = userEvent.setup();
+    let resolve!: (result: git.CommitMessageResult) => void;
+    mockGenerate.mockReturnValueOnce(
+      new Promise<git.CommitMessageResult>((res) => {
+        resolve = res;
+      }) as unknown as ReturnType<typeof GitGenerateCommitMessage>
+    );
+    seed([file('main.go', 'A', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+    render(<GitPanel />);
+    const generate = screen.getByRole('button', { name: /generate message/i });
+
+    await user.click(generate);
+    expect(generate).toHaveAttribute('aria-disabled', 'true');
+    expect(generate).toBeEnabled();
+    expect(generate).toHaveFocus();
+
+    await act(async () => resolve(generated('feat: add main', [])));
+
+    expect(screen.getByRole('button', { name: /generate message/i })).toBe(generate);
+    expect(generate).toHaveAttribute('aria-disabled', 'false');
+    expect(generate).toHaveFocus();
+  });
+
   it('hides the generate button when golem is unavailable', () => {
     seed([file('staged.ts', 'M', '.')]);
     act(() => {
