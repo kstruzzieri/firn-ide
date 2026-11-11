@@ -185,3 +185,25 @@ Write it down next to the generate command or it gets re-litigated as a review f
 - Repeated live announcements: native focus retention and changed React child identity do not prove an accessibility text-change event. When identical alerts are silent on repeat, test an observable empty update before publishing again, keep focus stable, and rerun actual VoiceOver.
 
 - A zero-delay empty→text DOM mutation is not a sufficient repeat-announcement signal in WebKit. Check native upstream live-region settling/deduplication tests and calibrate the repeat gap against those rules; retain immediate visible validation and verify actual speech.
+
+- PR #546: an always-mounted live region is not enough. If the region or any
+  ancestor changes display type (measured: block to flex) in the same
+  update that adds the text, WebKit rebuilds the accessibility object and posts
+  AXLiveRegionCreated then AXLiveRegionChanged, and VoiceOver stays silent. Keep
+  the layout class on permanently and toggle only decoration (padding, border).
+  A class change that leaves display alone posts only AXLiveRegionChanged.
+
+- PR #546: natively disabling the focused button (`disabled` while a request is
+  in flight) moves WebKit's focus to <body>, and re-enabling does not give it
+  back. Use aria-disabled for in-flight state. Native disabled stays fine for
+  states that arise while focus is elsewhere, such as an incomplete form.
+
+- Prove WebKit announcements from AX events, not guesses: an AXObserver on the
+  app pid (WKWebView content notifications arrive on the UI process) registered
+  for AXLiveRegionChanged/AXLiveRegionCreated. An announced region posts only
+  Changed. Drive the app with AXUIElementPerformAction; setting AXValue does not
+  reach React-controlled inputs, so type with CGEvent.postToPid after focusing
+  the field. An offscreen WKWebView host exposes no web content at all; use
+  Safari in the background (`open -g`) for probe pages. jsdom cannot see any of
+  this, so the unit test pins the cause (one declared display with and without
+  text, via cssRule) and VoiceOver confirms speech.
