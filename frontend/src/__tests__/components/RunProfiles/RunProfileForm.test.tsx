@@ -358,6 +358,88 @@ it('keeps Save focusable while a save is in flight, and ignores a second press',
   expect(screen.getByRole('button', { name: 'Save' })).toHaveAttribute('aria-disabled', 'false');
 });
 
+// Delete profile and Confirm delete replace each other in place, so the focused
+// button unmounts on every swap; WebKit then leaves keyboard focus on <body>.
+// fireEvent.click does not focus, so these tests focus the button first, as a
+// keyboard or VoiceOver press does.
+describe('delete row focus', () => {
+  const user: RunProfile = { ...detected, id: 'u1', source: 'user' };
+
+  function pressDelete() {
+    const del = screen.getByRole('button', { name: 'Delete profile' });
+    del.focus();
+    fireEvent.click(del);
+  }
+
+  it('moves focus to Confirm delete, and back to Delete profile on Cancel', () => {
+    render(<RunProfileForm state={{ mode: 'edit', profile: user }} />);
+    pressDelete();
+    expect(screen.getByRole('button', { name: 'Confirm delete' })).toHaveFocus();
+
+    const cancel = screen.getAllByRole('button', { name: 'Cancel' }).at(-1)!;
+    cancel.focus();
+    fireEvent.click(cancel);
+    expect(screen.getByRole('button', { name: 'Delete profile' })).toHaveFocus();
+  });
+
+  it('keeps Confirm delete focusable while deleting, and returns focus to Delete profile when refused', async () => {
+    let rejectDelete!: (err: Error) => void;
+    (DeleteRunProfile as jest.Mock).mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectDelete = reject;
+        })
+    );
+    useIDEStore.getState().openRunProfileForm({ mode: 'edit', profile: user });
+    render(<RunProfileForm state={{ mode: 'edit', profile: user }} />);
+    pressDelete();
+    const confirm = screen.getByRole('button', { name: 'Confirm delete' });
+    confirm.focus();
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(confirm).toHaveAttribute('aria-disabled', 'true'));
+    expect(confirm).not.toHaveAttribute('disabled');
+    fireEvent.click(confirm);
+    expect(DeleteRunProfile).toHaveBeenCalledTimes(1);
+
+    rejectDelete(new Error('run profile changes are not saved'));
+    expect(await screen.findByText('run profile changes are not saved')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete profile' })).toHaveFocus();
+    expect(useIDEStore.getState().runProfileForm).not.toBeNull();
+  });
+
+  it('leaves focus where it is when the delete row did not have it', async () => {
+    let rejectDelete!: (err: Error) => void;
+    (DeleteRunProfile as jest.Mock).mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectDelete = reject;
+        })
+    );
+    render(<RunProfileForm state={{ mode: 'edit', profile: user }} />);
+    const name = screen.getByLabelText(/^name/i);
+
+    // Mouse presses: WebKit does not focus the button, so focus stays on Name.
+    name.focus();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete profile' }));
+    expect(name).toHaveFocus();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Cancel' }).at(-1)!);
+    expect(name).toHaveFocus();
+
+    // Keyboard press on Confirm delete, then the user moves on before the refusal:
+    // where focus is when the delete fails decides, not where it was at the press.
+    pressDelete();
+    const confirm = screen.getByRole('button', { name: 'Confirm delete' });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(confirm).toHaveAttribute('aria-disabled', 'true'));
+    name.focus();
+    rejectDelete(new Error('refused'));
+
+    expect(await screen.findByText('refused')).toBeInTheDocument();
+    expect(name).toHaveFocus();
+  });
+});
+
 it('clears copied tags when customizing detected and command changes before save', () => {
   render(<RunProfileForm state={{ mode: 'edit', profile: detected }} />);
   expect(screen.getByText('dev')).toBeInTheDocument();
