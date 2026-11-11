@@ -34,12 +34,19 @@
   color: var(--status-error);
 }
 
-/* Wraps the warning status region and its sibling Reload button. */
-.loadNotice {
+/* Wraps the warning status region and its sibling Reload button. Always
+   applied, so the wrapper's display type never changes: WebKit rebuilds the
+   live region's accessibility object on a display change, and VoiceOver then
+   does not announce the warning that arrived with it. */
+.loadNoticeSlot {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
+}
+
+/* Added while there are warnings; decoration only, never display. */
+.loadNotice {
   padding: 8px;
   margin: 8px 8px 0;
   border-left: 2px solid var(--status-warning);

@@ -364,7 +364,11 @@ export function RunProfiles() {
       }
     >
       <div className={styles.panelBody}>
-        <div className={showLoadNotice ? styles.loadNotice : undefined}>
+        <div
+          className={
+            showLoadNotice ? `${styles.loadNoticeSlot} ${styles.loadNotice}` : styles.loadNoticeSlot
+          }
+        >
           {/* Always mounted and unstyled, in the form view too, so warnings are
               announced when they appear. Hide stale warnings while loading, but
               keep the empty region in the accessibility tree. Reload is a sibling

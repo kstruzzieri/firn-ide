@@ -45,7 +45,28 @@ type Store struct {
 	// erase every profile the unreadable file still holds; writeProfilesLocked
 	// refuses while this is set. The next successful Load clears it.
 	loadErr error
+	// diskProfiles is run-profiles.json as this store last read or wrote it (nil
+	// when absent). Every durable write re-reads the file and compares it with
+	// this before replacing it, so a rewrite made outside Firn after Load (a
+	// branch checkout, a merge, a hand edit) is never overwritten from memory
+	// (#397).
+	diskProfiles []byte
+	// changedErr latches the refusal once a write finds the file differs from
+	// diskProfiles. In-memory profiles are stale from then on, so every durable
+	// write is refused until the next Load reads the file again and clears it.
+	changedErr error
+	// recencyErr latches a run-recency sidecar that exists but could not be read
+	// or parsed (#442). Its recency never reached memory, so writing the sidecar
+	// from memory would drop it; writeRecencyLocked refuses while this is set.
+	// The next Load that reads the sidecar clears it.
+	recencyErr error
 }
+
+// ErrProfilesFileChanged marks a durable write refused because
+// run-profiles.json changed on disk after this store loaded it. The refusal
+// latches, so the caller's snapshot gains a notice it must show (see
+// ProjectRunProfileManager.Snapshot).
+var ErrProfilesFileChanged = errors.New("changed on disk")
 
 // errNewerProfilesVersion marks a profiles file written by a newer Firn, whose
 // remedy differs from a corrupt file's: it is live data, not damage.
@@ -74,12 +95,18 @@ func (s *Store) Load() ([]RunProfile, error) {
 
 	s.Warnings = nil
 	s.loadErr = nil
+	s.changedErr = nil
 
 	path := filepath.Join(s.workspaceRoot, profilesFileName)
 	data, err := s.fs.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, s.latchLoadErr(fmt.Errorf("reading profiles file %s: %w", path, err))
 	}
+	if err != nil {
+		data = nil
+	}
+	// The baseline is what was read, before any migration below rewrites it.
+	s.diskProfiles = data
 	// A missing file, or one with zero bytes (a crash after the non-fsynced
 	// rename, a touch), holds no profiles to preserve: treat both as absent, as
 	// the workspace store does (#332). A recency sidecar may still exist on its
@@ -117,7 +144,9 @@ func (s *Store) Load() ([]RunProfile, error) {
 			// Persist is best-effort: a successful migration must not be lost
 			// just because the directory is read-only. Keep the migrated data
 			// in memory and record a warning instead of failing the load.
-			if err := s.persist(); err != nil {
+			// A refusal because the file changed since the read above is latched
+			// and reported from the latch (ChangedOnDisk), not repeated here.
+			if err := s.persist(); err != nil && !errors.Is(err, ErrProfilesFileChanged) {
 				s.Warnings = append(s.Warnings, fmt.Sprintf("could not write migrated profiles to %s: %v", path, err))
 			}
 		}
@@ -175,30 +204,49 @@ func loadRefusal(err error) error {
 	return fmt.Errorf("run profile changes are not saved, to preserve a profiles file that could not be loaded (%w); %s", err, loadRemedy(err))
 }
 
+// recencyRefusal is the single source of the wording shared by the sidecar
+// write refusal and the load warning the panel shows: what is not happening,
+// why (the wrapped error names the file), and the remedy.
+func recencyRefusal(err error) error {
+	return fmt.Errorf("last-run times are not being recorded, to preserve a run-recency sidecar that could not be loaded (%w); %s", err, loadRemedy(err))
+}
+
+// latchRecencyErr records a sidecar read or parse failure so no write replaces
+// the sidecar this store could not read, and surfaces it as a load warning.
+// Caller holds s.mu.
+func (s *Store) latchRecencyErr(err error) {
+	s.recencyErr = err
+	s.Warnings = append(s.Warnings, recencyRefusal(err).Error())
+}
+
 // loadRecencyLocked merges run recency from the sidecar into s.state. If the
 // sidecar is absent but the profiles file carried legacy recency (pre-split
 // v3), it migrates that recency into the sidecar once so it survives the
-// profiles file dropping recency on its next write. Best-effort: a read/parse
-// failure degrades to a warning, never a failed load. Caller holds s.mu.
+// profiles file dropping recency on its next write. A read/parse failure
+// degrades to a warning, never a failed load, and latches sidecar writes off
+// (#442). Caller holds s.mu.
 func (s *Store) loadRecencyLocked() {
+	s.recencyErr = nil
 	path := filepath.Join(s.workspaceRoot, recencyFileName)
 	data, err := s.fs.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			if hasRecency(s.state) {
-				if werr := s.writeRecencyLocked(s.state); werr != nil {
-					s.Warnings = append(s.Warnings, fmt.Sprintf("could not migrate recency to %s: %v", path, werr))
-				}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		s.latchRecencyErr(fmt.Errorf("reading recency sidecar %s: %w", path, err))
+		return
+	}
+	// A missing sidecar, or one with zero bytes, holds no recency to preserve:
+	// treat both as absent, as Load does for the profiles file (#332).
+	if err != nil || len(bytes.TrimSpace(data)) == 0 {
+		if hasRecency(s.state) {
+			if werr := s.writeRecencyLocked(s.state); werr != nil {
+				s.Warnings = append(s.Warnings, fmt.Sprintf("could not migrate recency to %s: %v", path, werr))
 			}
-			return
 		}
-		s.Warnings = append(s.Warnings, fmt.Sprintf("could not read recency sidecar %s: %v", path, err))
 		return
 	}
 
 	var rf RecencyFile
 	if err := json.Unmarshal(data, &rf); err != nil {
-		s.Warnings = append(s.Warnings, fmt.Sprintf("could not parse recency sidecar %s: %v", path, err))
+		s.latchRecencyErr(fmt.Errorf("parsing recency sidecar %s: %w", path, err))
 		return
 	}
 
@@ -352,9 +400,12 @@ func (s *Store) RecordRun(id string, ts int64) error {
 func (s *Store) PruneState(validIDs map[string]bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.loadErr != nil {
-		// The saved IDs and adoption flags are unknown while latched, so
-		// validIDs would wrongly drop every saved profile's recency.
+	if s.loadErr != nil || s.changedErr != nil || s.recencyErr != nil {
+		// The saved IDs and adoption flags are unknown while the profiles file is
+		// latched, so validIDs would wrongly drop every saved profile's recency.
+		// The same holds once the file changed under a v1 migration during Load:
+		// validIDs describe the file that was read, not the one on disk now.
+		// While the sidecar is latched there is nothing safe to rewrite.
 		return nil
 	}
 	next := copyProfileState(s.state)
@@ -419,6 +470,9 @@ func (s *Store) writeProfilesLocked(state map[string]ProfileUIState) error {
 	if s.loadErr != nil {
 		return loadRefusal(s.loadErr)
 	}
+	if err := s.refuseIfChangedLocked(); err != nil {
+		return err
+	}
 	profiles := s.profiles
 	if profiles == nil {
 		profiles = []RunProfile{}
@@ -432,13 +486,65 @@ func (s *Store) writeProfilesLocked(state map[string]ProfileUIState) error {
 	if err != nil {
 		return fmt.Errorf("marshaling profiles: %w", err)
 	}
-	return s.atomicWriteLocked(profilesFileName, data)
+	if err := s.atomicWriteLocked(profilesFileName, data); err != nil {
+		return err
+	}
+	s.diskProfiles = data
+	return nil
+}
+
+// sameProfilesFile reports whether the profiles file on disk now (nil when
+// absent) is the one this store last read or wrote.
+func sameProfilesFile(known, onDisk []byte) bool {
+	return bytes.Equal(known, onDisk)
+}
+
+// refuseIfChangedLocked re-reads run-profiles.json and refuses the write when
+// it is not the file this store last read or wrote (#397). A difference
+// latches: memory is stale until a Load. A failed re-read refuses this write
+// only, since nothing is known to have changed. Caller holds s.mu.
+//
+// ponytail: check-then-rename leaves a window of a few microseconds in which
+// an external write can still be lost; closing it needs a lock every writer
+// honours, which git and editors do not.
+func (s *Store) refuseIfChangedLocked() error {
+	if s.changedErr != nil {
+		return s.changedErr
+	}
+	path := filepath.Join(s.workspaceRoot, profilesFileName)
+	onDisk, err := s.fs.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		remedy := "Check the file, then try again"
+		if errors.Is(err, fs.ErrPermission) {
+			remedy = "Restore read access to the file and its .firn directory, then try again"
+		}
+		return fmt.Errorf("run profile changes are not saved, because the profiles file could not be re-read to confirm it is unchanged (reading profiles file %s: %w); %s", path, err, remedy)
+	}
+	if err != nil {
+		onDisk = nil
+	}
+	if sameProfilesFile(s.diskProfiles, onDisk) {
+		return nil
+	}
+	s.changedErr = fmt.Errorf("run profile changes are not saved, to preserve a profiles file that %w after Firn loaded it (%s); Choose Reload in the Run Profiles panel to read the file as it is now", ErrProfilesFileChanged, path)
+	return s.changedErr
+}
+
+// ChangedOnDisk returns the latched refusal when a write found run-profiles.json
+// changed on disk after Load, or nil.
+func (s *Store) ChangedOnDisk() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.changedErr
 }
 
 // writeRecencyLocked atomically writes the run-recency sidecar. This is the hot
 // path (one write per run); it is deliberately tiny and never rewrites profile
 // definitions. Caller holds s.mu.
 func (s *Store) writeRecencyLocked(state map[string]ProfileUIState) error {
+	if s.recencyErr != nil {
+		return recencyRefusal(s.recencyErr)
+	}
 	rf := RecencyFile{
 		Version: recencyFileVersion,
 		Recency: recencyMap(state),

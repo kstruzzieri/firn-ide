@@ -97,8 +97,9 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
   }, [allProfiles, workspaces, values.workspaceId]);
 
   const dupKeys = duplicateEnvKeys(values.envRows);
-  const canSave =
-    values.name.trim() !== '' && values.command.trim() !== '' && dupKeys.length === 0 && !saving;
+  const formComplete =
+    values.name.trim() !== '' && values.command.trim() !== '' && dupKeys.length === 0;
+  const canSave = formComplete && !saving;
 
   const patch = (p: Partial<RunProfileFormValues>) => setValues((v) => ({ ...v, ...p }));
 
@@ -275,7 +276,12 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
           type="button"
           className={styles.save}
           onClick={onSave}
-          disabled={!canSave}
+          // Saving alone makes Save aria-disabled, not natively disabled: WebKit moves
+          // keyboard focus to <body> when the focused button is disabled and does
+          // not return it, which drops a keyboard or screen-reader user just as a
+          // refusal appears. onSave ignores a press while saving.
+          disabled={!formComplete}
+          aria-disabled={saving}
           aria-label={saving ? 'Saving' : 'Save'}
         >
           {saving ? 'Saving…' : 'Save'}
