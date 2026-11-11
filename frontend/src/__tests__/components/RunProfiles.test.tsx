@@ -520,6 +520,46 @@ describe('RunProfiles panel — load warnings notice', () => {
     expect(useIDEStore.getState().runEventsPaused).toBe(false);
   });
 
+  // PR #546 VoiceOver check 9: WebKit rebuilds an element's accessibility
+  // object when its display type changes. The live region's wrapper flipped
+  // from block to flex as the first warning arrived, so WebKit posted
+  // AXLiveRegionCreated for a region that already held the text, and VoiceOver
+  // said nothing. jsdom has no accessibility tree, so this pins the cause: the
+  // wrapper's declared display is the same with and without warnings.
+  it('keeps the live region wrapper display unchanged when warnings appear and clear', () => {
+    const css = readFileSync(
+      resolve(__dirname, '../../components/RunProfiles/RunProfiles.module.css'),
+      'utf8'
+    );
+    const displayOf = (el: HTMLElement) => {
+      let display = 'block';
+      for (const cls of Array.from(el.classList)) {
+        let rule = '';
+        try {
+          rule = cssRule(css, `.${cls}`);
+        } catch {
+          continue;
+        }
+        const declared = rule.match(/display:\s*([a-z-]+)/)?.[1];
+        if (declared) display = declared;
+      }
+      return display;
+    };
+    useIDEStore.setState({ profilesLoadWarnings: [], runEventsPaused: false });
+    render(<RunProfiles />);
+    const region = screen.getByRole('status');
+    const wrapper = region.parentElement as HTMLElement;
+    const clean = displayOf(wrapper);
+
+    act(() => useIDEStore.setState({ profilesLoadWarnings: ['changed on disk'] }));
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region.parentElement).toBe(wrapper);
+    expect(displayOf(wrapper)).toBe(clean);
+
+    act(() => useIDEStore.setState({ profilesLoadWarnings: [] }));
+    expect(displayOf(wrapper)).toBe(clean);
+  });
+
   it('does not change the warning live region while Reload starts and finishes', async () => {
     const user = userEvent.setup();
     const pending = deferred<unknown>();
