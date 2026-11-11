@@ -409,12 +409,31 @@ describe('delete row focus', () => {
   });
 
   it('leaves focus where it is when the delete row did not have it', async () => {
-    (DeleteRunProfile as jest.Mock).mockRejectedValue(new Error('refused'));
+    let rejectDelete!: (err: Error) => void;
+    (DeleteRunProfile as jest.Mock).mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectDelete = reject;
+        })
+    );
     render(<RunProfileForm state={{ mode: 'edit', profile: user }} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Delete profile' }));
     const name = screen.getByLabelText(/^name/i);
+
+    // Mouse presses: WebKit does not focus the button, so focus stays on Name.
     name.focus();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete profile' }));
+    expect(name).toHaveFocus();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Cancel' }).at(-1)!);
+    expect(name).toHaveFocus();
+
+    // Keyboard press on Confirm delete, then the user moves on before the refusal:
+    // where focus is when the delete fails decides, not where it was at the press.
+    pressDelete();
+    const confirm = screen.getByRole('button', { name: 'Confirm delete' });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(confirm).toHaveAttribute('aria-disabled', 'true'));
+    name.focus();
+    rejectDelete(new Error('refused'));
 
     expect(await screen.findByText('refused')).toBeInTheDocument();
     expect(name).toHaveFocus();

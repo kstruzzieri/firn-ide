@@ -74,9 +74,10 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   // Delete profile and Confirm delete replace each other in place, so each swap
   // unmounts the focused button and WebKit leaves keyboard focus on <body>. If
-  // focus was in the delete row, hand it to the button that replaced it; a mouse
-  // press does not focus a button in WebKit, so pointer users are left alone.
-  // Both buttons share deleteRowButton: only one is mounted at a time.
+  // focus is in the delete row at the swap, hand it to the button that replaced
+  // it; focus anywhere else (where a mouse press leaves it, since WebKit does not
+  // focus a clicked button) is left alone. Both buttons share deleteRowButton:
+  // only one is mounted at a time.
   const deleteRow = useRef<HTMLDivElement>(null);
   const deleteRowButton = useRef<HTMLButtonElement>(null);
   const refocusDeleteRow = useRef(false);
