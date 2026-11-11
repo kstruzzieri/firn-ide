@@ -11,6 +11,10 @@ import { cssRule } from '../helpers/cssRule';
 const mockStartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockStopProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
 const mockRestartProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+const mockDeleteProfile = jest.fn<Promise<void>, [string]>(() => Promise.resolve());
+const mockSaveProfile = jest.fn<Promise<unknown>, [unknown]>(() =>
+  Promise.resolve({ valid: true, errors: [] })
+);
 // ReloadRunProfiles resolves the snapshot it also emitted; loadWarnings tells the
 // panel whether a load problem remains.
 const reloadSnapshot = (loadWarnings: string[]) => ({
@@ -35,6 +39,8 @@ jest.mock('../../wails/bindings', () => ({
   StartRunProfile: (id: string) => mockStartProfile(id),
   StopRunProfile: (id: string) => mockStopProfile(id),
   RestartRunProfile: (id: string) => mockRestartProfile(id),
+  DeleteRunProfile: (id: string) => mockDeleteProfile(id),
+  SaveRunProfile: (profile: unknown) => mockSaveProfile(profile),
   PinRunProfile: jest.fn(() => Promise.resolve()),
   UnpinRunProfile: jest.fn(() => Promise.resolve()),
   SetActiveVariant: jest.fn(() => Promise.resolve()),
@@ -994,5 +1000,74 @@ describe('RunProfiles panel — view toggle', () => {
     // setTreeViewMode('project') sets activeWorkspaceId to 'project'
     expect(useIDEStore.getState().activeWorkspaceId).toBe('project');
     expect(screen.getByRole('button', { name: 'Project' })).toHaveAttribute('aria-pressed', 'true');
+  });
+});
+
+// #552: the form replaces the list and New profile while it is open, so every way
+// of closing it unmounts the focused control, and WebKit leaves focus on <body>.
+describe('RunProfiles panel — focus after the profile form closes', () => {
+  beforeEach(() => {
+    useIDEStore.setState({ runProfileForm: null });
+  });
+
+  const newProfile = () => screen.getByRole('button', { name: 'New profile' });
+
+  it('returns focus to New profile when a create form is cancelled', async () => {
+    const user = userEvent.setup();
+    render(<RunProfiles />);
+    expect(newProfile()).not.toHaveFocus();
+    await user.click(newProfile());
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(newProfile()).toHaveFocus();
+  });
+
+  // Not to the profile's card: a save, reassignment or delete is followed by
+  // runprofiles:changed, which can remove or remount the card after it was
+  // focused, and Back can close the form while such a write is still in flight.
+  it('returns focus to New profile when an edit form goes back', async () => {
+    const user = userEvent.setup();
+    render(<RunProfiles />);
+    act(() => useIDEStore.getState().openRunProfileForm({ mode: 'edit', profile: pinnedProfile }));
+    await user.click(screen.getByRole('button', { name: 'Back to profiles' }));
+
+    expect(newProfile()).toHaveFocus();
+  });
+
+  it('returns focus to New profile after a save', async () => {
+    const user = userEvent.setup();
+    render(<RunProfiles />);
+    act(() => useIDEStore.getState().openRunProfileForm({ mode: 'edit', profile: pinnedProfile }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(useIDEStore.getState().runProfileForm).toBeNull());
+    expect(newProfile()).toHaveFocus();
+  });
+
+  it('returns focus to New profile after a delete', async () => {
+    const user = userEvent.setup();
+    render(<RunProfiles />);
+    act(() => useIDEStore.getState().openRunProfileForm({ mode: 'edit', profile: pinnedProfile }));
+    await user.click(screen.getByRole('button', { name: 'Delete profile' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm delete' }));
+
+    await waitFor(() => expect(useIDEStore.getState().runProfileForm).toBeNull());
+    expect(newProfile()).toHaveFocus();
+  });
+
+  it('leaves focus alone when the form closes while focus is elsewhere', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <button type="button">Outside</button>
+        <RunProfiles />
+      </>
+    );
+    await user.click(newProfile());
+    const outside = screen.getByRole('button', { name: 'Outside' });
+    outside.focus();
+    act(() => useIDEStore.getState().closeRunProfileForm());
+
+    expect(outside).toHaveFocus();
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEffectiveRunTarget } from '../../hooks/useEffectiveRunTarget';
 import { Panel } from '../layout';
 import { RunProfileCard } from './RunProfileCard';
@@ -64,6 +64,24 @@ export function RunProfiles() {
   const activeWorkspaceId = useActiveWorkspaceId();
   const workspaces = useWorkspaces();
   const effectiveTargetId = useEffectiveRunTarget();
+
+  // The form replaces the list and New profile while it is open, so closing it
+  // unmounts whatever had focus and WebKit leaves focus on <body>. If focus is
+  // lost when the form closes, put it on New profile; focus the user moved
+  // elsewhere is left alone. Not on the edited profile's card: a save,
+  // reassignment or delete is followed by runprofiles:changed, which can remove
+  // the card or remount it in another section after it was focused, and Cancel
+  // or Back can close the form while such a write is still in flight.
+  const newProfileButton = useRef<HTMLButtonElement>(null);
+  const formWasOpen = useRef(runProfileForm != null);
+  useEffect(() => {
+    const closed = formWasOpen.current && runProfileForm == null;
+    formWasOpen.current = runProfileForm != null;
+    const active = document.activeElement;
+    if (closed && (active == null || active === document.body)) {
+      newProfileButton.current?.focus();
+    }
+  }, [runProfileForm]);
   const currentRun = useCallback(
     (profileId: string) => {
       const ordinaryRunInstanceId = representativeRunInstanceId(
@@ -351,6 +369,7 @@ export function RunProfiles() {
           <>
             <TreeViewToggle ariaLabel="Run profiles view" />
             <button
+              ref={newProfileButton}
               type="button"
               className={styles.createButton}
               onClick={() => openRunProfileForm({ mode: 'create' })}
