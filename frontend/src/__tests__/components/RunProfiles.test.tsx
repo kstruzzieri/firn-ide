@@ -761,7 +761,7 @@ describe('RunProfiles panel — load warnings notice', () => {
   it('leaves the live region itself unstyled so it stays in the accessibility tree while empty', () => {
     // display: none on an empty region removes it from the accessibility tree,
     // so a screen reader sees the region and its content appear in one step and
-    // may not announce it. The notice wrapper is styled only with warnings;
+    // may not announce it. The notice wrapper is decorated only with warnings;
     // jsdom resolves no module CSS, so the stylesheet is read too.
     useIDEStore.setState({ profilesLoadWarnings: [] });
     const { unmount } = render(<RunProfiles />);

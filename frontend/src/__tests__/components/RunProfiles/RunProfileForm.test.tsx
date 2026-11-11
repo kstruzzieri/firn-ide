@@ -330,7 +330,7 @@ it('shows a rejected save inline and keeps the form open', async () => {
 // focused button becomes disabled and does not give it back, so a Save that
 // disabled itself in flight dropped focus just as the refusal notice appeared.
 // jsdom does not model that blur, so this pins the cause instead: Save is never
-// natively disabled while a save is in flight.
+// natively disabled just because a save is in flight.
 it('keeps Save focusable while a save is in flight, and ignores a second press', async () => {
   let rejectSave!: (err: Error) => void;
   (SaveRunProfile as jest.Mock).mockImplementation(

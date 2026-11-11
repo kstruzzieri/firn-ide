@@ -276,7 +276,7 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
           type="button"
           className={styles.save}
           onClick={onSave}
-          // In flight Save is aria-disabled, never natively disabled: WebKit moves
+          // Saving alone makes Save aria-disabled, not natively disabled: WebKit moves
           // keyboard focus to <body> when the focused button is disabled and does
           // not return it, which drops a keyboard or screen-reader user just as a
           // refusal appears. onSave ignores a press while saving.
