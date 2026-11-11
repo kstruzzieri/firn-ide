@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { SaveRunProfile, DeleteRunProfile, OpenFolderDialog } from '../../wails/bindings';
 import type { runprofile } from '../../wails/bindings';
 import {
@@ -72,6 +72,23 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
   const [dirError, setDirError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Delete profile and Confirm delete replace each other in place, so each swap
+  // unmounts the focused button and WebKit leaves keyboard focus on <body>. If
+  // focus was in the delete row, hand it to the button that replaced it; a mouse
+  // press does not focus a button in WebKit, so pointer users are left alone.
+  // Both buttons share deleteRowButton: only one is mounted at a time.
+  const deleteRow = useRef<HTMLDivElement>(null);
+  const deleteRowButton = useRef<HTMLButtonElement>(null);
+  const refocusDeleteRow = useRef(false);
+  const swapDeleteRow = (confirming: boolean) => {
+    refocusDeleteRow.current = deleteRow.current?.contains(document.activeElement) ?? false;
+    setConfirmingDelete(confirming);
+  };
+  useEffect(() => {
+    if (!refocusDeleteRow.current) return;
+    refocusDeleteRow.current = false;
+    deleteRowButton.current?.focus();
+  }, [confirmingDelete]);
   // While creating, the workspace auto-follows the command's toolchain until the
   // user picks a workspace themselves.
   const [workspaceTouched, setWorkspaceTouched] = useState(false);
@@ -242,7 +259,8 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
   };
 
   const onDelete = async () => {
-    if (state.mode !== 'edit') return;
+    // Confirm delete stays pressable while deleting (see below), so ignore a second press.
+    if (state.mode !== 'edit' || saving) return;
     setSaving(true);
     setFormError(null);
     try {
@@ -251,7 +269,7 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
     } catch (err) {
       setFormError(err instanceof Error ? err.message : String(err));
       setSaving(false);
-      setConfirmingDelete(false);
+      swapDeleteRow(false);
     }
   };
 
@@ -443,15 +461,18 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
       </div>
 
       {(isUserProfile || variantCount > 0) && (
-        <div className={styles.deleteRow}>
+        <div className={styles.deleteRow} ref={deleteRow}>
           {isUserProfile &&
             (confirmingDelete ? (
               <>
                 <button
+                  ref={deleteRowButton}
                   type="button"
                   className={styles.deleteConfirm}
                   onClick={onDelete}
-                  disabled={saving}
+                  // aria-disabled, not disabled, for the same reason as Save: a
+                  // natively disabled focused button sends WebKit focus to <body>.
+                  aria-disabled={saving}
                   aria-label="Confirm delete"
                 >
                   Confirm delete
@@ -459,16 +480,17 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
                 <button
                   type="button"
                   className={styles.cancel}
-                  onClick={() => setConfirmingDelete(false)}
+                  onClick={() => swapDeleteRow(false)}
                 >
                   Cancel
                 </button>
               </>
             ) : (
               <button
+                ref={deleteRowButton}
                 type="button"
                 className={styles.delete}
-                onClick={() => setConfirmingDelete(true)}
+                onClick={() => swapDeleteRow(true)}
                 aria-label="Delete profile"
               >
                 Delete profile
