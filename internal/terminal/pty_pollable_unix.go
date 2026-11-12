@@ -12,11 +12,12 @@ import (
 // and closes ptmx. If it cannot, it returns ptmx as it was.
 //
 // Close cannot interrupt a Read on a blocking file: Go puts the real close(2)
-// off until that read returns. ReadLoop is always in such a read, so the
-// master stayed open, the kernel never hung the shell up, and Session.Close
-// ran out its grace period and killed the shell (#558). creack/pty returns a
-// blocking master everywhere: on macOS by design (golang/go#22099), on other
-// systems because its ioctl helper calls Fd().
+// off until that read returns. ReadLoop sits in such a read whenever the shell
+// is quiet, so the master stayed open, the kernel never hung the shell up, and
+// Session.Close ran out its grace period and killed the shell (#558).
+// creack/pty returns a blocking master on both platforms Firn runs a terminal
+// on: on macOS by design (golang/go#22099), on Linux because its ioctl helper
+// calls Fd().
 //
 // A descriptor that is already non-blocking when os.NewFile receives it joins
 // the poller and stays there. Unlike a file Go made non-blocking itself, Fd()

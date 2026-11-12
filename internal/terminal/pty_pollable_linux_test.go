@@ -2,8 +2,9 @@ package terminal
 
 import (
 	"os"
-	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // TestPollableMasterKeepsOriginalWhenPollerRefuses: a non-blocking file the
@@ -26,11 +27,11 @@ func TestPollableMasterKeepsOriginalWhenPollerRefuses(t *testing.T) {
 		t.Fatal("pollableMaster returned a new file for a descriptor the poller refused")
 	}
 
-	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, regular.Fd(), syscall.F_GETFL, 0)
-	if errno != 0 {
-		t.Fatalf("fcntl(F_GETFL) on the original file failed, so it was closed: %v", errno)
+	flags, err := unix.FcntlInt(regular.Fd(), unix.F_GETFL, 0)
+	if err != nil {
+		t.Fatalf("fcntl(F_GETFL) on the original file failed, so it was closed: %v", err)
 	}
-	if flags&syscall.O_NONBLOCK != 0 {
+	if flags&unix.O_NONBLOCK != 0 {
 		t.Error("the original file was left non-blocking")
 	}
 }

@@ -3,6 +3,8 @@ package terminal
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -119,10 +121,26 @@ func TestSessionCloseHangsUpShellWhileReaderIsBlocked(t *testing.T) {
 func TestSessionCloseReleasesReaderWhileBackgroundJobHoldsTerminal(t *testing.T) {
 	session, out, readerDone := startStreamingSession(t)
 
-	if _, err := session.Write([]byte(`sleep 5 & echo re""ady` + "\n")); err != nil {
+	// The job holds the terminal from the moment the shell forks it, which is
+	// before the shell goes on to the echo. A space follows $! because an
+	// interactive bash reads "!;" as a history reference.
+	if _, err := session.Write([]byte(`sleep 5 & echo job=$! re""ady` + "\n")); err != nil {
 		t.Fatalf("Write() returned error: %v", err)
 	}
 	out.waitFor(t, "ready")
+	// The echoed command line reads "job=$!", so only the shell's answer matches.
+	job := regexp.MustCompile(`job=(\d+) ready`).FindStringSubmatch(out.String())
+	if job == nil {
+		t.Fatalf("the shell did not report its background job, got %q", out.String())
+	}
+	t.Cleanup(func() {
+		// The job is meant to outlive the shell; do not leave it behind.
+		if pid, err := strconv.Atoi(job[1]); err == nil {
+			if process, err := os.FindProcess(pid); err == nil {
+				_ = process.Kill()
+			}
+		}
+	})
 
 	closed := make(chan error, 1)
 	go func() { closed <- session.Close() }()
@@ -130,8 +148,9 @@ func TestSessionCloseReleasesReaderWhileBackgroundJobHoldsTerminal(t *testing.T)
 	select {
 	case <-readerDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("ReadLoop was still blocked 2s after Close() started")
+		t.Error("ReadLoop was still blocked 2s after Close() started")
 	}
+	// Always wait for this Close, so the cleanup's Close never runs beside it.
 	if err := <-closed; err != nil {
 		t.Fatalf("Close() returned error: %v", err)
 	}
