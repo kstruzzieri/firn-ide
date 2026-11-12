@@ -242,19 +242,24 @@ func TestIntegratedZshLeavesAppleTerminalSessionsOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pty.Start: %v", err)
 	}
-	defer func() { _ = ptmx.Close() }()
+	// One waiter, and a cleanup registered before anything can fail, so every
+	// way out of the test ends the shell and reaps it.
+	exited := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(exited) }()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill() // already gone on the normal path
+		<-exited
+		_ = ptmx.Close()
+	})
 	go func() { _, _ = io.Copy(io.Discard, ptmx) }() // or the shell blocks on a full terminal
 
 	// Typed at the first prompt, so every first-prompt hook has run by then.
 	if _, err := ptmx.Write([]byte(printHistfile + ` > "$HOME/seen"` + "\nexit\n")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
 	select {
 	case <-exited:
 	case <-time.After(10 * time.Second):
-		_ = cmd.Process.Kill()
 		t.Fatal("zsh did not exit")
 	}
 
