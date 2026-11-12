@@ -9,7 +9,9 @@ import (
 )
 
 // pollableMaster returns the PTY master as a file that Go's poller manages,
-// and closes ptmx. If it cannot, it returns ptmx as it was.
+// and closes ptmx. If it cannot, because the descriptor cannot be duplicated
+// or the poller will not take it, it returns ptmx as it was, and Session.Close
+// keeps the old behavior described next.
 //
 // Close cannot interrupt a Read on a blocking file: Go puts the real close(2)
 // off until that read returns. ReadLoop sits in such a read whenever the shell
@@ -19,9 +21,10 @@ import (
 // on: on macOS by design (golang/go#22099), on Linux because its ioctl helper
 // calls Fd().
 //
-// A descriptor that is already non-blocking when os.NewFile receives it joins
-// the poller and stays there. Unlike a file Go made non-blocking itself, Fd()
-// leaves it alone, and pty.Setsize calls Fd() on every resize.
+// A descriptor that is already non-blocking when os.NewFile receives it is
+// offered to the poller and, once accepted, stays there. Unlike a file Go made
+// non-blocking itself, Fd() leaves it alone, and pty.Setsize calls Fd() on
+// every resize.
 func pollableMaster(ptmx *os.File) *os.File {
 	// ForkLock stops a concurrent fork from inheriting the duplicate before it
 	// is close-on-exec; a copy in another process would hold the PTY open.
