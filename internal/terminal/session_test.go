@@ -1,6 +1,8 @@
 package terminal
 
 import (
+	"bytes"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -148,4 +150,80 @@ func TestSessionCloseTerminatesStubbornProcess(t *testing.T) {
 	if elapsed > 5*time.Second {
 		t.Fatalf("Close() with stubborn process took too long: %v", elapsed)
 	}
+}
+
+// TestNewSession_ZshBackspaceErasesWithoutParentTERM: an app launched by
+// launchd (Finder, the Dock, `open`) has no TERM, and without one zsh treats
+// the PTY as dumb and echoes Backspace as a space instead of "\b \b" (#556).
+// The session must give the shell a TERM itself. zsh only: bash and sh echo
+// "\b" with or without TERM.
+func TestNewSession_ZshBackspaceErasesWithoutParentTERM(t *testing.T) {
+	requirePTY(t)
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed")
+	}
+	// Hermetic: no user rc files, no inherited TERM, as under launchd.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("SHELL", zsh)
+	unsetenv(t, "TERM", "COLORTERM", "ZDOTDIR", "USER_ZDOTDIR", "XDG_CACHE_HOME")
+
+	session, err := NewSession("")
+	if err != nil {
+		t.Fatalf("NewSession() returned error: %v", err)
+	}
+	defer func() { _ = session.Close() }()
+
+	chunks := make(chan []byte, 64)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := session.Read(buf)
+			if n > 0 {
+				chunks <- append([]byte(nil), buf[:n]...)
+			}
+			if err != nil {
+				close(chunks)
+				return
+			}
+		}
+	}()
+	var seen []byte
+	// waitFor reads until want appears after offset from, returning the
+	// offset just past it.
+	waitFor := func(want string, from int) int {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for {
+			if i := bytes.Index(seen[from:], []byte(want)); i >= 0 {
+				return from + i + len(want)
+			}
+			select {
+			case c, ok := <-chunks:
+				if !ok {
+					t.Fatalf("shell exited before %q; output after offset: %q", want, seen[from:])
+				}
+				seen = append(seen, c...)
+			case <-deadline:
+				t.Fatalf("timed out waiting for %q; output after offset: %q", want, seen[from:])
+			}
+		}
+	}
+
+	// zsh enables bracketed paste once its line editor owns the tty. Input sent
+	// earlier is echoed by the kernel's line discipline, which erases with
+	// "\b \b" whatever TERM says, so the test would pass for the wrong reason.
+	ready := waitFor("\x1b[?2004h", 0)
+	if _, err := session.Write([]byte("a")); err != nil {
+		t.Fatalf("Write(a): %v", err)
+	}
+	typed := waitFor("a", ready)
+	if _, err := session.Write([]byte("\x7f")); err != nil {
+		t.Fatalf("Write(DEL): %v", err)
+	}
+	waitFor("\b", typed)
+
+	// Let zsh exit on its own: Close cannot hang up a PTY that the reader
+	// goroutine is still blocked on, and would wait out its 3s grace period.
+	_, _ = session.Write([]byte("exit\n"))
 }

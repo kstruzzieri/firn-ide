@@ -142,6 +142,18 @@ func hasArg(args []string, want string) bool {
 	return false
 }
 
+// unsetenv removes keys from the process env for the test's duration and
+// restores them afterwards (t.Setenv records the original for cleanup).
+func unsetenv(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, k := range keys {
+		t.Setenv(k, "")
+		if err := os.Unsetenv(k); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func envValue(env []string, key string) (string, bool) {
 	for i := len(env) - 1; i >= 0; i-- {
 		e := env[i]
@@ -178,14 +190,64 @@ func TestIntegratedCommandBash(t *testing.T) {
 }
 
 func TestIntegratedCommandUnsupportedIsPlain(t *testing.T) {
+	unsetenv(t, "ZDOTDIR", "USER_ZDOTDIR") // tests may run inside a Firn terminal
 	root := t.TempDir()
 	for _, sh := range []string{"/bin/sh", "/usr/bin/fish"} {
 		cmd := integratedCommand(sh, root)
 		if len(cmd.Args) != 1 {
 			t.Errorf("%s: expected plain command, got args %v", sh, cmd.Args)
 		}
-		if cmd.Env != nil {
-			t.Errorf("%s: plain command should not set Env, got %v", sh, cmd.Env)
+		if _, ok := envValue(cmd.Env, "ZDOTDIR"); ok {
+			t.Errorf("%s: plain command should not set ZDOTDIR, got %v", sh, cmd.Env)
+		}
+	}
+}
+
+// TestIntegratedCommandSetsTerminalEnv: every shell Firn starts must describe
+// xterm.js, the real emulator, whatever terminal (or none, under launchd) Firn
+// itself was started from. Without TERM, zsh treats the PTY as dumb and draws
+// Backspace as a space (#556). Covers every exit of integratedCommand,
+// including the fail-open ones.
+func TestIntegratedCommandSetsTerminalEnv(t *testing.T) {
+	notADir := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shells := []struct{ name, shell, root string }{
+		{"zsh", "/bin/zsh", t.TempDir()},
+		{"bash", "/usr/bin/bash", t.TempDir()},
+		{"unsupported", "/bin/sh", t.TempDir()},
+		{"no cache root", "/bin/zsh", ""},
+		{"setup failure", "/bin/zsh", notADir},
+	}
+	parents := []struct{ name, term, colorterm string }{
+		{"parent unset", "", ""},
+		{"parent differs", "screen", "24bit"},
+	}
+	for _, p := range parents {
+		for _, s := range shells {
+			t.Run(s.name+"/"+p.name, func(t *testing.T) {
+				t.Setenv("FIRN_TEST_SENTINEL", "kept")
+				if p.term == "" {
+					unsetenv(t, "TERM", "COLORTERM")
+				} else {
+					t.Setenv("TERM", p.term)
+					t.Setenv("COLORTERM", p.colorterm)
+				}
+
+				cmd := integratedCommand(s.shell, s.root)
+
+				if got, ok := envValue(cmd.Env, "TERM"); got != "xterm-256color" {
+					t.Errorf("TERM = %q (set=%v), want xterm-256color", got, ok)
+				}
+				if got, ok := envValue(cmd.Env, "COLORTERM"); got != "truecolor" {
+					t.Errorf("COLORTERM = %q (set=%v), want truecolor", got, ok)
+				}
+				// The rest of the parent environment (PATH, HOME, ...) must survive.
+				if got, _ := envValue(cmd.Env, "FIRN_TEST_SENTINEL"); got != "kept" {
+					t.Errorf("FIRN_TEST_SENTINEL = %q, want parent env inherited", got)
+				}
+			})
 		}
 	}
 }
@@ -193,6 +255,7 @@ func TestIntegratedCommandUnsupportedIsPlain(t *testing.T) {
 func TestIntegratedCommandFailsOpen(t *testing.T) {
 	// A root that cannot be created (a file, not a dir) forces ensureWrapperFiles
 	// to fail; integratedCommand must still return a usable plain zsh command.
+	unsetenv(t, "ZDOTDIR", "USER_ZDOTDIR") // tests may run inside a Firn terminal
 	f := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -201,8 +264,8 @@ func TestIntegratedCommandFailsOpen(t *testing.T) {
 	if cmd == nil || cmd.Path == "" {
 		t.Fatal("expected plain command on setup failure")
 	}
-	if cmd.Env != nil {
-		t.Fatalf("fail-open should return plain command with nil Env, got %v", cmd.Env)
+	if _, ok := envValue(cmd.Env, "ZDOTDIR"); ok {
+		t.Fatalf("fail-open should return a plain command without ZDOTDIR, got %v", cmd.Env)
 	}
 }
 
