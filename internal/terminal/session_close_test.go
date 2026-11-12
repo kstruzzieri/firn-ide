@@ -44,10 +44,13 @@ func (o *terminalOutput) waitFor(t *testing.T, want string) {
 // goroutine sits in ReadLoop for the terminal's whole life, and the frontend
 // sizes the terminal as soon as it mounts. The returned channel closes when
 // ReadLoop returns.
+//
+// The tests type sh commands into the shell. A path those commands need goes
+// in through the environment, set before this call, and is used as "$NAME",
+// so nothing in a temporary directory's name is ever read as shell text.
 func startStreamingSession(t *testing.T) (*Session, *terminalOutput, <-chan struct{}) {
 	t.Helper()
 	requirePTY(t)
-	// Any POSIX sh: the tests below type trap commands into it.
 	t.Setenv("SHELL", "/bin/sh")
 
 	session, err := NewSession("")
@@ -76,14 +79,15 @@ func startStreamingSession(t *testing.T) (*Session, *terminalOutput, <-chan stru
 // so the shell runs its exit hooks and writes its history, instead of waiting
 // out the grace period and killing it (#558).
 func TestSessionCloseHangsUpShellWhileReaderIsBlocked(t *testing.T) {
+	hookRan := filepath.Join(t.TempDir(), "exit-hook-ran")
+	t.Setenv("FIRN_TEST_HOOK_RAN", hookRan)
 	session, out, _ := startStreamingSession(t)
 
 	// A hung-up shell leaves either on the SIGHUP itself or on the end-of-file
 	// its terminal now returns; which one wins depends on the shell and the
 	// kernel. Both are a clean exit, so the hook is installed for both.
 	// The "" splits the word so the echoed command line cannot match it.
-	hookRan := filepath.Join(t.TempDir(), "exit-hook-ran")
-	command := `trap 'echo ran > "` + hookRan + `"; exit 0' HUP EXIT; echo re""ady` + "\n"
+	command := `trap 'echo ran > "$FIRN_TEST_HOOK_RAN"; exit 0' HUP EXIT; echo re""ady` + "\n"
 	if _, err := session.Write([]byte(command)); err != nil {
 		t.Fatalf("Write() returned error: %v", err)
 	}
@@ -113,26 +117,34 @@ func TestSessionCloseHangsUpShellWhileReaderIsBlocked(t *testing.T) {
 }
 
 // TestSessionCloseReleasesReaderWhileBackgroundJobHoldsTerminal: a background
-// job that outlives the shell keeps the terminal's other end open. Close must
-// release the reader and the PTY regardless, not leave them waiting on that
-// job (#558).
+// job can outlive the shell. Close must release the reader and the PTY
+// regardless, not leave them waiting on that job (#558).
+//
+// On Linux such a job keeps the terminal's other end open, and without the fix
+// the reader stayed blocked until the job itself ended. macOS takes the
+// terminal away from the job when the shell exits, so there this test covers
+// the same ground as the one above, with a job still running.
 func TestSessionCloseReleasesReaderWhileBackgroundJobHoldsTerminal(t *testing.T) {
-	session, out, readerDone := startStreamingSession(t)
-
-	// The job ignores the hangup, so it outlives the shell under every sh
-	// (bash would otherwise pass its own SIGHUP on to it), and it says "ready"
-	// only once that is arranged. It runs while keepRunning exists, for 10s at
-	// most, and leaves jobExited behind when it goes. Nothing is killed by
-	// process id: removing the file, or the test's temporary directory, ends it.
 	dir := t.TempDir()
 	keepRunning := filepath.Join(dir, "keep-running")
 	jobExited := filepath.Join(dir, "job-exited")
 	if err := os.WriteFile(keepRunning, nil, 0o600); err != nil {
 		t.Fatalf("WriteFile() returned error: %v", err)
 	}
+	t.Setenv("FIRN_TEST_KEEP_RUNNING", keepRunning)
+	t.Setenv("FIRN_TEST_JOB_EXITED", jobExited)
+	session, out, readerDone := startStreamingSession(t)
+
+	// The job ignores the hangup, so it outlives the shell under every sh
+	// (bash would otherwise pass its own SIGHUP on to it), and it says "ready"
+	// only once that is arranged. It runs while keepRunning exists, for 100
+	// turns of a 0.1s sleep at most (about ten seconds), and leaves jobExited
+	// behind when it goes. Nothing is killed by process id: removing the file,
+	// or the test's temporary directory, ends it. The sleep has to accept a
+	// fraction of a second, as macOS, GNU and stock busybox sleep do.
 	command := `(trap '' HUP; echo re""ady; i=0; ` +
-		`while [ -e "` + keepRunning + `" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done; ` +
-		`echo gone > "` + jobExited + `") &` + "\n"
+		`while [ -e "$FIRN_TEST_KEEP_RUNNING" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done; ` +
+		`echo gone > "$FIRN_TEST_JOB_EXITED") &` + "\n"
 	if _, err := session.Write([]byte(command)); err != nil {
 		t.Fatalf("Write() returned error: %v", err)
 	}
