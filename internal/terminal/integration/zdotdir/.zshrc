@@ -4,9 +4,11 @@
 # Stock macOS and the grml config set HISTFILE from ZDOTDIR there, which would
 # keep the history of Firn terminals in Firn's cache directory, apart from every
 # other terminal's. Move it under the user's directory, before their .zshrc so
-# that a HISTFILE of their own still wins. The prefix is cut by length because a
-# pattern would be globbed under GLOB_SUBST, which the user's .zshenv may set.
-if [[ -n "$ZDOTDIR" && "$HISTFILE" == "$ZDOTDIR"/* ]]; then
+# that a HISTFILE of their own still wins. The user's .zshenv has already run and
+# may have set options: the prefix is cut by length because a pattern would be
+# globbed under GLOB_SUBST, and the tests use ${name-} because a bare $HISTFILE,
+# unset on Ubuntu and Alpine, is an error under NO_UNSET.
+if [[ -n "${ZDOTDIR-}" && "${HISTFILE-}" == "$ZDOTDIR"/* ]]; then
   HISTFILE="${USER_ZDOTDIR:-$HOME}${HISTFILE:${#ZDOTDIR}}"
 fi
 ZDOTDIR="${USER_ZDOTDIR:-$HOME}"

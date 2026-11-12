@@ -1,11 +1,15 @@
 package terminal
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/creack/pty"
 )
 
 // printHistfile is the zsh command the tests below end on.
@@ -64,6 +68,10 @@ func TestIntegratedZshUsesSameHistfileAsPlainZsh(t *testing.T) {
 	}{
 		{name: "user sets nothing"},
 		{name: "ZDOTDIR in the environment", envZdotdir: true},
+		// Whether a .zshenv value survives is the system zshrc's call, not
+		// Firn's: stock macOS replaces it in a plain zsh too, Ubuntu and
+		// Alpine keep it. Either way Firn must agree with the plain shell.
+		// TestZshWrapperMovesHistfileOutOfWrapperDir pins the "kept" half.
 		{name: "HISTFILE in the user's .zshenv", zshenv: `HISTFILE="$HOME/from_zshenv"`},
 		{name: "HISTFILE in the user's .zshrc", zshrc: `HISTFILE="$HOME/from_zshrc"`},
 	}
@@ -149,7 +157,7 @@ func TestZshWrapperMovesHistfileOutOfWrapperDir(t *testing.T) {
 			want:     "{home}/saw_default",
 		},
 		{
-			name:     "set outside the wrapper directory",
+			name:     "set by the user's .zshenv and left alone by the system zshrc",
 			systemRC: `HISTFILE="$HOME/elsewhere/.zsh_history"`,
 			want:     "{home}/elsewhere/.zsh_history",
 		},
@@ -164,6 +172,16 @@ func TestZshWrapperMovesHistfileOutOfWrapperDir(t *testing.T) {
 			want:     "<unset>",
 		},
 		{
+			// NO_UNSET makes a bare $HISTFILE an error that would end the
+			// wrapper before it reaches the user's .zshrc. That .zshrc turns
+			// the option off again because the hook block further down still
+			// trips over it, which is older than this test.
+			name:     "unset, with NO_UNSET from the user's .zshenv",
+			systemRC: `setopt NO_UNSET; unset HISTFILE`,
+			zshrc:    `unsetopt NO_UNSET; HISTFILE="$HOME/from_zshrc"`,
+			want:     "{home}/from_zshrc",
+		},
+		{
 			name:     "wrapper sourced by hand, without ZDOTDIR",
 			systemRC: `unset ZDOTDIR; HISTFILE="$HOME/.zsh_history"`,
 			want:     "{home}/.zsh_history",
@@ -175,7 +193,8 @@ func TestZshWrapperMovesHistfileOutOfWrapperDir(t *testing.T) {
 			writeRC(t, home, ".zshrc", c.zshrc+"\n")
 			want := strings.NewReplacer("{home}", home, "{wrapper}", wrapper).Replace(c.want)
 
-			// -f: no startup files at all; the script is the startup sequence.
+			// -f: of the startup files only the system zshenv is read; the
+			// script is the rest of the startup sequence.
 			cmd := exec.Command(zsh, "-f", "-c",
 				c.systemRC+`; source "$WRAPPER/.zshrc"; `+printHistfile)
 			cmd.Env = zshEnv(home, "ZDOTDIR="+wrapper, "USER_ZDOTDIR="+home, "WRAPPER="+wrapper)
@@ -184,5 +203,72 @@ func TestZshWrapperMovesHistfileOutOfWrapperDir(t *testing.T) {
 				t.Errorf("HISTFILE = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+// TestIntegratedZshLeavesAppleTerminalSessionsOff: a Firn started from a shell
+// inside Apple's Terminal hands its own shells TERM_PROGRAM and TERM_SESSION_ID.
+// /etc/zshrc then loads Terminal's per-tab session support, which copies
+// HISTFILE and builds its .zsh_sessions paths while ZDOTDIR is still the
+// wrapper directory, and switches HISTFILE to them at the first prompt, after
+// the wrapper .zshrc has repaired it (#560). The shell has to reach a prompt
+// for that to show, so this one needs a terminal. On other systems the two
+// variables mean nothing and the test passes on the default alone.
+func TestIntegratedZshLeavesAppleTerminalSessionsOff(t *testing.T) {
+	requirePTY(t)
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed")
+	}
+	home := t.TempDir()
+	writeRC(t, home, ".zshrc", "\n")
+	t.Setenv("HOME", home)
+	t.Setenv("ZDOTDIR", "")
+
+	// What a terminal that is not Apple's gives a plain zsh.
+	plain := exec.Command(zsh, "-ic", printHistfile)
+	plain.Env = zshEnv(home)
+	want := reportedHistfile(t, plain)
+
+	cmd := integratedCommand(zsh, t.TempDir())
+	wrapper, _ := envValue(cmd.Env, "ZDOTDIR")
+	if wrapper == "" || wrapper == home {
+		t.Fatalf("integratedCommand did not point ZDOTDIR at a wrapper directory: %q", wrapper)
+	}
+	cmd.Env = zshEnv(home, "ZDOTDIR="+wrapper, "USER_ZDOTDIR="+home, "TERM=xterm-256color",
+		"TERM_PROGRAM=Apple_Terminal", "TERM_SESSION_ID=firn-560-test")
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatalf("pty.Start: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+	go func() { _, _ = io.Copy(io.Discard, ptmx) }() // or the shell blocks on a full terminal
+
+	// Typed at the first prompt, so every first-prompt hook has run by then.
+	if _, err := ptmx.Write([]byte(printHistfile + ` > "$HOME/seen"` + "\nexit\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("zsh did not exit")
+	}
+
+	seen, err := os.ReadFile(filepath.Join(home, "seen"))
+	if err != nil {
+		t.Fatalf("the shell never ran the typed command: %v", err)
+	}
+	if got := strings.TrimSpace(strings.TrimPrefix(string(seen), "HISTFILE=")); got != want {
+		t.Errorf("HISTFILE after the first prompt = %q, want %q", got, want)
+	}
+	// Nothing of the session may be left behind in Firn's cache either.
+	for _, name := range []string{".zsh_history", ".zsh_sessions"} {
+		if _, err := os.Lstat(filepath.Join(wrapper, name)); err == nil {
+			t.Errorf("%s was written to the wrapper directory", name)
+		}
 	}
 }
