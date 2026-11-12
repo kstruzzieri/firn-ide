@@ -3,8 +3,6 @@ package terminal
 import (
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -121,26 +119,24 @@ func TestSessionCloseHangsUpShellWhileReaderIsBlocked(t *testing.T) {
 func TestSessionCloseReleasesReaderWhileBackgroundJobHoldsTerminal(t *testing.T) {
 	session, out, readerDone := startStreamingSession(t)
 
-	// The job holds the terminal from the moment the shell forks it, which is
-	// before the shell goes on to the echo. A space follows $! because an
-	// interactive bash reads "!;" as a history reference.
-	if _, err := session.Write([]byte(`sleep 5 & echo job=$! re""ady` + "\n")); err != nil {
+	// The job ignores the hangup, so it outlives the shell under every sh
+	// (bash would otherwise pass its own SIGHUP on to it), and it says "ready"
+	// only once that is arranged. It runs while keepRunning exists, for 10s at
+	// most, and leaves jobExited behind when it goes. Nothing is killed by
+	// process id: removing the file, or the test's temporary directory, ends it.
+	dir := t.TempDir()
+	keepRunning := filepath.Join(dir, "keep-running")
+	jobExited := filepath.Join(dir, "job-exited")
+	if err := os.WriteFile(keepRunning, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile() returned error: %v", err)
+	}
+	command := `(trap '' HUP; echo re""ady; i=0; ` +
+		`while [ -e "` + keepRunning + `" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done; ` +
+		`echo gone > "` + jobExited + `") &` + "\n"
+	if _, err := session.Write([]byte(command)); err != nil {
 		t.Fatalf("Write() returned error: %v", err)
 	}
 	out.waitFor(t, "ready")
-	// The echoed command line reads "job=$!", so only the shell's answer matches.
-	job := regexp.MustCompile(`job=(\d+) ready`).FindStringSubmatch(out.String())
-	if job == nil {
-		t.Fatalf("the shell did not report its background job, got %q", out.String())
-	}
-	t.Cleanup(func() {
-		// The job is meant to outlive the shell; do not leave it behind.
-		if pid, err := strconv.Atoi(job[1]); err == nil {
-			if process, err := os.FindProcess(pid); err == nil {
-				_ = process.Kill()
-			}
-		}
-	})
 
 	closed := make(chan error, 1)
 	go func() { closed <- session.Close() }()
@@ -153,5 +149,26 @@ func TestSessionCloseReleasesReaderWhileBackgroundJobHoldsTerminal(t *testing.T)
 	// Always wait for this Close, so the cleanup's Close never runs beside it.
 	if err := <-closed; err != nil {
 		t.Fatalf("Close() returned error: %v", err)
+	}
+
+	// The job must have been there the whole time, or the reader may simply
+	// have been released by the terminal's last holder going away. It was if
+	// it has not left yet and does leave once told to; a job the hangup had
+	// killed would never write jobExited.
+	if _, err := os.Stat(jobExited); err == nil {
+		t.Fatal("the background job ended before it was told to")
+	}
+	if err := os.Remove(keepRunning); err != nil {
+		t.Fatalf("Remove() returned error: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(jobExited); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the background job did not outlive the shell: it never reported leaving")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
