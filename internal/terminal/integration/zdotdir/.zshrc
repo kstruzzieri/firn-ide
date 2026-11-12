@@ -1,4 +1,14 @@
 # Firn IDE shell integration (OSC 133)
+
+# The system-wide zshrc ran while ZDOTDIR was still this wrapper directory.
+# Stock macOS and the grml config set HISTFILE from ZDOTDIR there, which would
+# keep the history of Firn terminals in Firn's cache directory, apart from every
+# other terminal's. Move it under the user's directory, before their .zshrc so
+# that a HISTFILE of their own still wins. The prefix is cut by length because a
+# pattern would be globbed under GLOB_SUBST, which the user's .zshenv may set.
+if [[ -n "$ZDOTDIR" && "$HISTFILE" == "$ZDOTDIR"/* ]]; then
+  HISTFILE="${USER_ZDOTDIR:-$HOME}${HISTFILE:${#ZDOTDIR}}"
+fi
 ZDOTDIR="${USER_ZDOTDIR:-$HOME}"
 [[ -f "$ZDOTDIR/.zshrc" ]] && source "$ZDOTDIR/.zshrc"
 
