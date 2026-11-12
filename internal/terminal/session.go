@@ -57,7 +57,7 @@ func NewSession(dir string) (*Session, error) {
 		}
 		return nil, fmt.Errorf("starting shell %q: %w", shell, err)
 	}
-	return &Session{cmd: cmd, running: true, pty: ptmx}, nil
+	return &Session{cmd: cmd, running: true, pty: pollableMaster(ptmx)}, nil
 }
 
 // Read reads output from the shell.
@@ -70,7 +70,9 @@ func (s *Session) Read(buf []byte) (int, error) {
 func (s *Session) Write(data []byte) (int, error) { return s.pty.Write(data) }
 
 // Close terminates the PTY session gracefully. Closing the PTY master fd
-// causes the kernel to send SIGHUP to the shell process group. We wait
+// causes the kernel to send SIGHUP to the shell process group; the close
+// reaches the kernel even while ReadLoop is reading because the master is
+// pollable (see pollableMaster). We wait
 // briefly for the process to exit, then force-kill as a fallback. A failed
 // pty close is reported but never skips the kill/wait — the manager has
 // already dropped its handle, so bailing here would leak the shell process
