@@ -337,7 +337,8 @@
   white-space: nowrap;
 }
 
-.finalizeButton:disabled {
+.finalizeButton:disabled,
+.finalizeButton[aria-disabled='true'] {
   border-color: var(--surface-border);
   color: var(--text-disabled);
   cursor: default;

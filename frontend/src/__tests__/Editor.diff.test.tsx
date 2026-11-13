@@ -745,4 +745,32 @@ describe('Editor merge queue hand-off', () => {
       'Now resolving next.go. 1 conflicted file remaining.'
     );
   });
+
+  // With no other tab open, the gap between two queued files is the welcome
+  // screen. The packaged app recorded the announcer unmounted there and back
+  // with the next file's text, and WebKit posted nothing VoiceOver speaks.
+  // jsdom has no accessibility tree, so this pins the cause: the announcer is
+  // one element across the welcome screen, and the text arrives in it.
+  it('keeps the announcer mounted across the welcome screen between queued files', () => {
+    useGitStore.setState({ mergeSession, mergeFocused: true, mergeQueueAnnouncement: '' });
+    render(<Editor />);
+    const region = screen.getByTestId('merge-queue-announcement');
+
+    act(() => {
+      useGitStore.setState({ mergeSession: null, mergeFocused: false, mergeAdvancePending: true });
+    });
+    expect(screen.getByRole('img', { name: 'Firn IDE' })).toBeInTheDocument();
+    expect(screen.getByTestId('merge-queue-announcement')).toBe(region);
+
+    act(() => {
+      useGitStore.setState({
+        mergeSession: { ...mergeSession, path: 'next.go' },
+        mergeFocused: true,
+        mergeAdvancePending: false,
+        mergeQueueAnnouncement: 'Now resolving next.go. 1 conflicted file remaining.',
+      });
+    });
+    expect(screen.getByTestId('merge-queue-announcement')).toBe(region);
+    expect(region).toHaveTextContent('Now resolving next.go. 1 conflicted file remaining.');
+  });
 });

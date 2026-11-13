@@ -612,8 +612,13 @@ function TextResolutionContent({
   // conflict, a resolution outside Firn, a failed check — stays unwritable.
   const overwritable =
     session.external?.kind === 'changed' && session.external.scope === 'worktree';
-  const disabled =
-    unresolved !== 0 || session.readOnly || blocked || (Boolean(session.external) && !overwritable);
+  // Write & stage is natively disabled only while there is nothing it could
+  // write. A write or reload in flight makes it aria-disabled instead, for the
+  // focus reason the external notice's Reload gives: a failed write leaves the
+  // user on the button that reported it.
+  const unwritable =
+    unresolved !== 0 || session.readOnly || (Boolean(session.external) && !overwritable);
+  const disabled = unwritable || blocked;
   const baseStatus =
     base.status === 'loading'
       ? 'Loading base…'
@@ -776,7 +781,8 @@ function TextResolutionContent({
         <button
           type="button"
           className={styles.finalizeButton}
-          disabled={disabled}
+          disabled={unwritable}
+          aria-disabled={blocked}
           onClick={() => void finalize()}
         >
           Write &amp; stage
@@ -810,7 +816,8 @@ function SidesResolutionContent({
   const blocked = finalizing || session.reloadPending;
   const overwritable =
     session.external?.kind === 'changed' && session.external.scope === 'worktree';
-  const finalizeBlocked = blocked || (Boolean(session.external) && !overwritable);
+  const unwritable = Boolean(session.external) && !overwritable;
+  const finalizeBlocked = blocked || unwritable;
   const finalize = async () => {
     if (!session.selectedSide || finalizeBlocked) return;
     if (overwritable) {
@@ -863,7 +870,9 @@ function SidesResolutionContent({
         <button
           type="button"
           className={styles.finalizeButton}
-          disabled={!session.selectedSide || finalizeBlocked}
+          // aria-disabled while blocked, for the same focus reason as the text view.
+          disabled={!session.selectedSide || unwritable}
+          aria-disabled={blocked}
           onClick={() => void finalize()}
         >
           Write &amp; stage

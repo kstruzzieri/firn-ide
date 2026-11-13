@@ -142,6 +142,9 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+/** Visible text only: the panel's sr-only status region repeats each message. */
+const onScreen = { ignore: '[data-testid="run-output-announcement"], script, style' };
+
 function setPhase2CState(patch: Partial<ReturnType<typeof useIDEStore.getState>>) {
   useIDEStore.setState({
     ...useIDEStore.getInitialState(),
@@ -279,10 +282,24 @@ it('shows selected archive read failure and retries the demanded record', async 
   });
 
   render(<RunOutputPanel />);
-  expect(screen.getByText('Loading run output…')).toBeInTheDocument();
+  expect(screen.getByText('Loading run output…', onScreen)).toBeInTheDocument();
   expect(screen.queryByTestId('merged-entries')).not.toBeInTheDocument();
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('record unreadable');
+  // The packaged app recorded the failure's region mounting together with its
+  // text, which WebKit reports as created and VoiceOver does not speak, and the
+  // message swapped role="status" for role="alert" on one element as its text
+  // changed, which WebKit announces not at all. jsdom has no accessibility
+  // tree, so this pins the cause: one status region says both, and it is the
+  // same element before and after the failure.
+  const region = screen.getByTestId('run-output-announcement');
+  expect(region).toHaveAttribute('role', 'status');
+  expect(region).toHaveTextContent('Loading run output…');
+  await waitFor(() =>
+    expect(region).toHaveTextContent('Could not load run output: record unreadable')
+  );
+  expect(screen.getByTestId('run-output-announcement')).toBe(region);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByText('Could not load run output: record unreadable', onScreen)).toBeVisible();
   expect(useIDEStore.getState().toast).toEqual({
     message: 'Failed to load run output: record unreadable',
     type: 'error',
@@ -400,10 +417,17 @@ it('blocks archived Diff while its readable predecessor load has failed', async 
   });
 
   render(<RunOutputPanel />);
-  expect(screen.getByText('Loading previous run output…')).toBeInTheDocument();
+  expect(screen.getByText('Loading previous run output…', onScreen)).toBeInTheDocument();
   expect(screen.queryByTestId('diff-props')).not.toBeInTheDocument();
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('predecessor unreadable');
+  await waitFor(() =>
+    expect(screen.getByTestId('run-output-announcement')).toHaveTextContent(
+      'Could not load run output: predecessor unreadable'
+    )
+  );
+  expect(
+    screen.getByText('Could not load run output: predecessor unreadable', onScreen)
+  ).toBeVisible();
   expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   expect(screen.queryByTestId('diff-props')).not.toBeInTheDocument();
   expect(useIDEStore.getState().toast).toEqual({
@@ -965,6 +989,37 @@ it('still reports a structurally malformed archived record as an error', async (
   expect(useIDEStore.getState().runHistorySummaries[archived.historyId].outputAvailable).toBe(true);
 });
 
+// The packaged app recorded a live run passing the saved-output limit while
+// Output showed it: the notice's region mounted together with its text, which
+// WebKit reports as created and VoiceOver does not speak. Pin the cause: the
+// status region is in the panel before the run turns partial, the notice
+// arrives in that same element, and the visible notice is not a second region.
+it('announces a live run turning partial through a status region mounted before it', () => {
+  setPhase2CState({
+    runOutputs: { live: liveOutput() },
+    runInstanceIdsByProfile: { build: ['live'] },
+    latestRunInstanceIdByProfile: { build: 'live' },
+    runLaunchSeqByInstance: { live: 1 },
+    activeRunOutputId: 'live',
+    runOutputViewMode: 'merged',
+  });
+
+  render(<RunOutputPanel />);
+  const region = screen.getByTestId('run-output-announcement');
+  expect(region).toBeEmptyDOMElement();
+
+  act(() => {
+    const live = useIDEStore.getState().runOutputs.live;
+    useIDEStore.setState({ runOutputs: { live: { ...live, truncated: true } } });
+  });
+
+  expect(screen.getByTestId('run-output-announcement')).toBe(region);
+  expect(region).toHaveTextContent(/this log is partial/i);
+  expect(
+    screen.getAllByRole('status').filter((el) => /log is partial/i.test(el.textContent ?? ''))
+  ).toEqual([region]);
+});
+
 it('warns that an archived run is partial, and says so in Diff terms', async () => {
   const archived = summary(olderId, 'build', 100);
   setPhase2CState({
@@ -983,7 +1038,9 @@ it('warns that an archived run is partial, and says so in Diff terms', async () 
   );
 
   render(<RunOutputPanel />);
-  await waitFor(() => expect(screen.getByText(/this log is partial/i)).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getByText(/this log is partial/i, onScreen)).toBeInTheDocument()
+  );
 
   // In Diff the consequence is different: the missing head invents differences.
   act(() => {
@@ -991,7 +1048,7 @@ it('warns that an archived run is partial, and says so in Diff terms', async () 
   });
   await waitFor(() =>
     expect(
-      screen.getByText(/differences near the start of the output may not be real/i)
+      screen.getByText(/differences near the start of the output may not be real/i, onScreen)
     ).toBeInTheDocument()
   );
 });

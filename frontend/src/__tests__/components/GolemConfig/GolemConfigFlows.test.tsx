@@ -813,7 +813,8 @@ describe('nonterminal apply results', () => {
     await stageKey();
     await clickApply();
 
-    const consent = await screen.findByRole('alert');
+    const consent = screen.getByTestId('golem-grant-alert');
+    await waitFor(() => expect(consent).not.toBeEmptyDOMElement());
     expect(within(consent).getByText(/hosted/)).toBeVisible();
     expect(within(consent).getByText(/gpt-5-mini/)).toBeVisible();
     expect(within(consent).getByText(/https:\/\/api\.example\.com\/v1/)).toBeVisible();
@@ -1168,9 +1169,17 @@ describe('grant-only destination approval', () => {
     prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
     (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'granted' });
     await mountWorkspace();
+    // The packaged app recorded this prompt's alert region mounting together
+    // with the prompt (WebKit: created, which VoiceOver does not speak). Pin
+    // the cause: the region is waiting, empty, before the destination check.
+    const waiting = screen.getByTestId('golem-grant-alert');
+    expect(waiting).toHaveAttribute('role', 'alert');
+    expect(waiting).toBeEmptyDOMElement();
     await approve();
 
-    const consent = await screen.findByRole('alert');
+    const consent = screen.getByTestId('golem-grant-alert');
+    expect(consent).toBe(waiting);
+    await waitFor(() => expect(consent).not.toBeEmptyDOMElement());
     // The grant-only explainer (no write is pending) and the destination-check
     // rationale — not the old "Approve these N remote destinations" lead.
     // [X13] Visible, not merely present: this explainer replaced one that was asserted
@@ -1687,6 +1696,48 @@ describe('notice announcements (#314)', () => {
 
     expect(screen.getByText('Configuration applied.', { selector: 'p' })).toBeVisible();
     expect(region.firstElementChild).toBe(applied);
+  });
+});
+
+// WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live region
+// inserted together with its text, and VoiceOver says nothing; the packaged app
+// recorded that for this view's conflict panel. An unknown outcome is reachable
+// only while the Golem service shuts down, so the app could not record it. jsdom
+// has no accessibility tree, so these pin the cause: each alert region is in the
+// document, empty, before its panel, and the panel arrives in that same element.
+describe('alert regions mounted before their panels', () => {
+  it('announces a conflict in the alert region that was waiting for it', async () => {
+    applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'recorded' });
+    await mountWorkspace();
+    await stageEndpoint();
+    const region = screen.getByTestId('golem-conflict-alert');
+    expect(region).toHaveAttribute('role', 'alert');
+    expect(region).toBeEmptyDOMElement();
+
+    await clickApply();
+
+    await waitFor(() =>
+      expect(region).toHaveTextContent(/configuration moved while this draft was open/)
+    );
+    expect(screen.getByTestId('golem-conflict-alert')).toBe(region);
+  });
+
+  it('announces an unknown Apply outcome in the alert region that was waiting for it', async () => {
+    (ApplyGolemSettings as jest.Mock).mockRejectedValue('connection lost');
+    await mountWorkspace();
+    await stageEndpoint();
+    const region = screen.getByTestId('golem-config-blocking-alert');
+    expect(region).toHaveAttribute('role', 'alert');
+    expect(region).toBeEmptyDOMElement();
+
+    await clickApply();
+
+    await waitFor(() =>
+      expect(region).toHaveTextContent(
+        'The Apply result is unknown. Refresh before making more changes.'
+      )
+    );
+    expect(screen.getByTestId('golem-config-blocking-alert')).toBe(region);
   });
 });
 

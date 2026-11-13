@@ -1588,71 +1588,81 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
        * scrolled page, so every outcome — applied, busy, conflict, or a
        * local refusal — landed out of view and Apply read as doing nothing.
        */}
-      {outcome.challenge !== null && (
-        // [C27] No data-tone here: `.panel[data-tone='caution']` (0,2,0) would beat `.grant`
-        // (0,1,0) whatever the source order, and the approved prompt is accent-outlined.
-        <div className={`${styles.panel} ${styles.grant}`} role="alert">
-          <div className={styles.grantHead}>
-            <h3 className={styles.grantTitle}>
-              {outcome.intent === 'grant-only' ? 'Approve destinations' : 'Approve before writing'}
-            </h3>
-            <Countdown expiresAt={outcome.challenge.expiresAt} />
-          </div>
-          <p className={styles.panelText}>
-            {outcome.intent === 'grant-only'
-              ? GRANT_PROMPT_EXPLAINER
-              : `${promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a settings approval, separate from run approval.`}
-          </p>
-          {/* One row per destination in the digest order the backend sent:
+      {/*
+       * [#550] The alert regions here and below are mounted while empty: a
+       * region inserted together with its text reaches VoiceOver as created,
+       * not changed, and is not spoken. Unstyled but for `.alertSlot`, which
+       * only cancels the flex gap an empty one would add.
+       */}
+      <div role="alert" className={styles.alertSlot} data-testid="golem-grant-alert">
+        {outcome.challenge !== null && (
+          // [C27] No data-tone here: `.panel[data-tone='caution']` (0,2,0) would beat `.grant`
+          // (0,1,0) whatever the source order, and the approved prompt is accent-outlined.
+          <div className={`${styles.panel} ${styles.grant}`}>
+            <div className={styles.grantHead}>
+              <h3 className={styles.grantTitle}>
+                {outcome.intent === 'grant-only'
+                  ? 'Approve destinations'
+                  : 'Approve before writing'}
+              </h3>
+              <Countdown expiresAt={outcome.challenge.expiresAt} />
+            </div>
+            <p className={styles.panelText}>
+              {outcome.intent === 'grant-only'
+                ? GRANT_PROMPT_EXPLAINER
+                : `${promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a settings approval, separate from run approval.`}
+            </p>
+            {/* One row per destination in the digest order the backend sent:
             provider · model · endpoint · class, the class as the row's
             fourth cell rather than a repeated sentence. [C1] It reads the
             parsed `classification` rather than repeating the word: the
             parser refuses any other value (`readApplyDestination`), so the
             cell now says so by construction instead of by coincidence. */}
-          <ul className={styles.grantList}>
-            {outcome.challenge.destinations.map((destination) => (
-              // [C29] The shipped key, verbatim: NUL-separated, because spaces are legal in identifiers.
-              <li
-                key={`${destination.endpoint}\u0000${destination.provider}\u0000${destination.model}`}
+            <ul className={styles.grantList}>
+              {outcome.challenge.destinations.map((destination) => (
+                // [C29] The shipped key, verbatim: NUL-separated, because spaces are legal in identifiers.
+                <li
+                  key={`${destination.endpoint}\u0000${destination.provider}\u0000${destination.model}`}
+                >
+                  <span className={styles.grantProvider}>{destination.provider}</span>
+                  <span className={styles.identifier}>
+                    {destination.model !== '' ? (
+                      destination.model
+                    ) : (
+                      <span className={styles.absent}>—</span>
+                    )}
+                  </span>
+                  <span className={styles.grantEndpoint}>{destination.endpoint}</span>
+                  <span className={styles.grantClass}>{destination.classification}</span>
+                  <span
+                    className={styles.metaSub}
+                  >{`Reached by ${destination.provenance.join(', ')}`}</span>
+                </li>
+              ))}
+            </ul>
+            <div className={`${styles.panelActions} ${styles.grantActions}`}>
+              <button
+                type="button"
+                className={`${styles.button} ${styles.quiet}`}
+                disabled={inFlight || sourceLoading || sending}
+                onClick={() => void cancelDestination()}
               >
-                <span className={styles.grantProvider}>{destination.provider}</span>
-                <span className={styles.identifier}>
-                  {destination.model !== '' ? (
-                    destination.model
-                  ) : (
-                    <span className={styles.absent}>—</span>
-                  )}
-                </span>
-                <span className={styles.grantEndpoint}>{destination.endpoint}</span>
-                <span className={styles.grantClass}>{destination.classification}</span>
-                <span
-                  className={styles.metaSub}
-                >{`Reached by ${destination.provenance.join(', ')}`}</span>
-              </li>
-            ))}
-          </ul>
-          <div className={`${styles.panelActions} ${styles.grantActions}`}>
-            <button
-              type="button"
-              className={`${styles.button} ${styles.quiet}`}
-              disabled={inFlight || sourceLoading || sending}
-              onClick={() => void cancelDestination()}
-            >
-              {outcome.intent === 'grant-only' ? 'Cancel' : 'Cancel approval'}
-            </button>
-            <button
-              type="button"
-              className={`${styles.button} ${styles.primary}`}
-              disabled={inFlight || sourceLoading || sending}
-              onClick={confirmDestination}
-            >
-              {outcome.intent === 'grant-only'
-                ? `Approve ${outcome.challenge.destinations.length} destination${outcome.challenge.destinations.length === 1 ? '' : 's'}`
-                : 'Confirm destination'}
-            </button>
+                {outcome.intent === 'grant-only' ? 'Cancel' : 'Cancel approval'}
+              </button>
+              <button
+                type="button"
+                className={`${styles.button} ${styles.primary}`}
+                disabled={inFlight || sourceLoading || sending}
+                onClick={confirmDestination}
+              >
+                {outcome.intent === 'grant-only'
+                  ? `Approve ${outcome.challenge.destinations.length} destination${outcome.challenge.destinations.length === 1 ? '' : 's'}`
+                  : 'Confirm destination'}
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {outcome.drops !== null && (
         <div className={styles.panel} data-tone="caution">
@@ -1686,31 +1696,33 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      {outcome.conflict !== null && (
-        <div className={styles.panel} data-tone="blocking" role="alert">
-          <p className={styles.panelText}>
-            {outcome.conflict === 'challenge' ? CHALLENGE_CONFLICT : DOCUMENT_CONFLICT}
-          </p>
-          <div className={styles.panelActions}>
-            <button
-              type="button"
-              className={styles.button}
-              disabled={sending || inFlight || sourceLoading}
-              onClick={() => void reviewConflict()}
-            >
-              {outcome.conflict === 'challenge' ? 'Return to draft' : 'Reload & review draft'}
-            </button>
-            <button
-              type="button"
-              className={`${styles.button} ${styles.quiet}`}
-              disabled={sending || inFlight || sourceLoading}
-              onClick={() => void discardConflict()}
-            >
-              Discard draft
-            </button>
+      <div role="alert" className={styles.alertSlot} data-testid="golem-conflict-alert">
+        {outcome.conflict !== null && (
+          <div className={styles.panel} data-tone="blocking">
+            <p className={styles.panelText}>
+              {outcome.conflict === 'challenge' ? CHALLENGE_CONFLICT : DOCUMENT_CONFLICT}
+            </p>
+            <div className={styles.panelActions}>
+              <button
+                type="button"
+                className={styles.button}
+                disabled={sending || inFlight || sourceLoading}
+                onClick={() => void reviewConflict()}
+              >
+                {outcome.conflict === 'challenge' ? 'Return to draft' : 'Reload & review draft'}
+              </button>
+              <button
+                type="button"
+                className={`${styles.button} ${styles.quiet}`}
+                disabled={sending || inFlight || sourceLoading}
+                onClick={() => void discardConflict()}
+              >
+                Discard draft
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {outcome.notice !== '' && <p className={styles.notice}>{outcome.notice}</p>}
 
@@ -1972,19 +1984,22 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
         {phase.kind === 'loading' && <p className={styles.loading}>Loading configuration…</p>}
 
-        {phase.kind === 'error' && (
-          <div className={styles.error} role="alert">
-            <p className={styles.errorText}>{phase.message}</p>
-            <button
-              type="button"
-              className={styles.button}
-              disabled={inFlight}
-              onClick={() => void load()}
-            >
-              Retry
-            </button>
-          </div>
-        )}
+        {/* [#550] Mounted while the configuration loads, before any failure. */}
+        <div role="alert" data-testid="golem-config-load-alert">
+          {phase.kind === 'error' && (
+            <div className={styles.error}>
+              <p className={styles.errorText}>{phase.message}</p>
+              <button
+                type="button"
+                className={styles.button}
+                disabled={inFlight}
+                onClick={() => void load()}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
 
         {projection && body && (
           <div className={styles.body}>
@@ -2007,21 +2022,28 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               </p>
             )}
 
-            {sourceError !== '' && (
-              <p className={styles.notice} data-tone="blocking" role="alert">
-                {sourceError}
-              </p>
-            )}
-
-            {recovery && (
-              <div className={styles.panel} data-tone="blocking" role="alert">
-                <p className={styles.panelText}>{OUTCOME_UNKNOWN}</p>
-                <p className={styles.panelText}>
-                  Every retained change is waiting for review. Recover state reloads the active
-                  configuration; re-stage what you still want before applying anything.
+            {/* [#550] Mounted with the body, before either notice. */}
+            <div
+              role="alert"
+              className={`${styles.alertSlot} ${styles.blockingAlerts}`}
+              data-testid="golem-config-blocking-alert"
+            >
+              {sourceError !== '' && (
+                <p className={styles.notice} data-tone="blocking">
+                  {sourceError}
                 </p>
-              </div>
-            )}
+              )}
+
+              {recovery && (
+                <div className={styles.panel} data-tone="blocking">
+                  <p className={styles.panelText}>{OUTCOME_UNKNOWN}</p>
+                  <p className={styles.panelText}>
+                    Every retained change is waiting for review. Recover state reloads the active
+                    configuration; re-stage what you still want before applying anything.
+                  </p>
+                </div>
+              )}
+            </div>
 
             {pageDiagnostics.length > 0 && (
               <ul className={styles.diagnostics} aria-label="Configuration diagnostics">

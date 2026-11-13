@@ -388,9 +388,18 @@ describe('MergeResolutionView', () => {
       onStateChange?.({ activeIndex: null, decisions: { 0: 'C' }, order: 'current-first' })
     );
 
+    // WebKit moves keyboard focus to <body> when the focused button becomes
+    // disabled and does not give it back; the packaged app recorded a failed
+    // Write & stage leaving focus on nothing. jsdom does not model that blur,
+    // so this pins the cause: the pressed button stays focusable and focused,
+    // aria-disabled while the write runs, and a second press does nothing.
     const finalize = screen.getByRole('button', { name: 'Write & stage' });
+    finalize.focus();
     fireEvent.click(finalize);
-    expect(finalize).toBeDisabled();
+    expect(finalize).toBeEnabled();
+    expect(finalize).toHaveAttribute('aria-disabled', 'true');
+    expect(finalize).toHaveFocus();
+    fireEvent.click(finalize);
     expect(mergeFinalizeAndStage).toHaveBeenCalledTimes(1);
     expect(controller.setFrozen).toHaveBeenCalledWith(true);
     const undo = screen.getByRole('button', { name: 'Undo' });
@@ -413,7 +422,9 @@ describe('MergeResolutionView', () => {
       await Promise.resolve();
     });
     expect(controller.setFrozen).toHaveBeenLastCalledWith(false);
-    expect(screen.getByRole('button', { name: 'Write & stage' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Write & stage' })).toBe(finalize);
+    expect(finalize).not.toHaveAttribute('aria-disabled', 'true');
+    expect(finalize).toHaveFocus();
     expect(undo).toBeEnabled();
     expect(next).toBeEnabled();
     expect(rail).toBeEnabled();
@@ -437,9 +448,17 @@ describe('MergeResolutionView', () => {
     const incoming = screen.getByRole('button', {
       name: 'INCOMING — incoming deletes this file',
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Write & stage' }));
+    const finalize = screen.getByRole('button', { name: 'Write & stage' });
+    finalize.focus();
+    fireEvent.click(finalize);
     expect(current).toBeDisabled();
     expect(incoming).toBeDisabled();
+    // Same focus pin as the text view: aria-disabled while the write runs.
+    expect(finalize).toBeEnabled();
+    expect(finalize).toHaveAttribute('aria-disabled', 'true');
+    expect(finalize).toHaveFocus();
+    fireEvent.click(finalize);
+    expect(mergeFinalizeAndStage).toHaveBeenCalledTimes(1);
     fireEvent.click(incoming);
     expect(selectMergeSide).not.toHaveBeenCalled();
 
@@ -447,6 +466,8 @@ describe('MergeResolutionView', () => {
       finish?.(false);
       await Promise.resolve();
     });
+    expect(finalize).not.toHaveAttribute('aria-disabled', 'true');
+    expect(finalize).toHaveFocus();
     expect(incoming).toBeEnabled();
     fireEvent.click(incoming);
     expect(selectMergeSide).toHaveBeenCalledWith('theirs');

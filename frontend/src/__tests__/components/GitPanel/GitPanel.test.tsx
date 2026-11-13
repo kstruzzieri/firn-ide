@@ -235,7 +235,12 @@ describe('GitPanel sections', () => {
     expect(GitUnstage).toHaveBeenCalledWith('/repo', ['docs/new.md']);
   });
 
-  it('disables track and untrack while another git op is in flight', () => {
+  // WebKit moves keyboard focus to <body> when the focused button becomes
+  // disabled and does not give it back; the packaged app recorded Track and
+  // Untrack losing focus the moment they were pressed, as their failure was
+  // announced. jsdom does not model that blur, so this pins the cause: an op in
+  // flight leaves both focusable, only aria-disabled, and a press does nothing.
+  it('keeps track and untrack focusable while another git op is in flight', () => {
     seed([file('new.md', '?', '?'), file('ita.md', '.', 'A')]);
     act(() => {
       useGitStore.setState({ opInFlight: 'pull' });
@@ -243,8 +248,26 @@ describe('GitPanel sections', () => {
 
     render(<GitPanel />);
 
-    expect(screen.getByRole('button', { name: 'Track new.md without staging' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Untrack ita.md' })).toBeDisabled();
+    for (const name of ['Track new.md without staging', 'Untrack ita.md']) {
+      const button = screen.getByRole('button', { name });
+      expect(button).toBeEnabled();
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(button);
+    }
+    expect(GitIntentToAdd).not.toHaveBeenCalled();
+    expect(GitUnstage).not.toHaveBeenCalled();
+
+    act(() => {
+      useGitStore.setState({ opInFlight: null });
+    });
+    expect(screen.getByRole('button', { name: 'Track new.md without staging' })).toHaveAttribute(
+      'aria-disabled',
+      'false'
+    );
+    expect(screen.getByRole('button', { name: 'Untrack ita.md' })).toHaveAttribute(
+      'aria-disabled',
+      'false'
+    );
   });
 
   it('conflict rows have no include checkbox until resolved', () => {
@@ -945,6 +968,35 @@ describe('GitPanel conflicts and errors', () => {
     expect(region.className).toBe(className);
   });
 
+  // The packaged app recorded a repository that opens already in conflict:
+  // Source Control showed "Loading git status…", then mounted the alert region
+  // together with the banner, which WebKit reported as created and VoiceOver did
+  // not speak. Pin the cause: the region, and the parent whose display type it
+  // inherits, are in the document while the status loads, and the banner
+  // arrives inside those same elements.
+  it('mounts the alert region while the status loads, so a repository already in conflict is announced', () => {
+    act(() => {
+      useGitStore.getState().resetForWorkspace('/repo');
+    });
+    render(<GitPanel />);
+    expect(screen.getByText(/loading git status/i)).toBeInTheDocument();
+    const region = screen.getByRole('alert');
+    expect(region).toBeEmptyDOMElement();
+    const parent = region.parentElement!;
+    const parentClass = parent.className;
+
+    act(() => {
+      useGitStore.setState({ status: repoStatus([file('clash.go', 'U', 'U', true)]) });
+    });
+
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region.parentElement).toBe(parent);
+    expect(parent.className).toBe(parentClass);
+    expect(within(region).getByTestId('conflict-banner')).toHaveTextContent(
+      /resolve conflicts on main/i
+    );
+  });
+
   it('shows operation errors inline', () => {
     seed([]);
     act(() => {
@@ -1029,6 +1081,27 @@ describe('GitPanel branch and sync controls', () => {
     for (const name of [/^pull 1/i, /^push 1/i, /^generate message$/i, /^commit$/i]) {
       expect(screen.getByRole('button', { name })).toHaveAttribute('aria-disabled', 'false');
     }
+  });
+
+  // Same WebKit focus loss: the packaged app recorded Refresh focused before
+  // the press and focus on nothing once the refresh it started had finished.
+  it('keeps Refresh focusable while a refresh is in flight, and ignores a press', () => {
+    seed([]);
+    act(() => {
+      useGitStore.setState({ isRefreshing: true });
+    });
+
+    render(<GitPanel />);
+    const refresh = screen.getByRole('button', { name: /refresh git status/i });
+    expect(refresh).toBeEnabled();
+    expect(refresh).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(refresh);
+    expect(mockGitStatus).not.toHaveBeenCalled();
+
+    act(() => {
+      useGitStore.setState({ isRefreshing: false });
+    });
+    expect(refresh).toHaveAttribute('aria-disabled', 'false');
   });
 
   it('disables pull when nothing is behind and push when nothing is ahead', () => {

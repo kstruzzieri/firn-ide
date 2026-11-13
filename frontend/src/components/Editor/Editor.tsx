@@ -300,6 +300,22 @@ export function Editor() {
     });
   };
 
+  // The first child of the editor root in both returns below, so the welcome
+  // screen between two queued conflicted files keeps it the same element: a
+  // region mounted together with its text reaches VoiceOver as created, not
+  // changed, and is not spoken.
+  const queueAnnouncer = (
+    <div
+      key="merge-queue-announcement"
+      data-testid="merge-queue-announcement"
+      role="status"
+      aria-live="polite"
+      className={styles.srOnly}
+    >
+      {queueAnnouncement}
+    </div>
+  );
+
   // Welcome screen when no editor surface at all is open
   if (openFiles.length === 0 && !diffSession && !mergeSession && !configTabOpen) {
     // Filter out the currently open workspace from recent list
@@ -307,6 +323,7 @@ export function Editor() {
 
     return (
       <div ref={editorRef} className={styles.editor} tabIndex={-1}>
+        {queueAnnouncer}
         <div className={styles.welcome}>
           <img src={firnLogo} alt="Firn IDE" className={styles.welcomeLogo} />
           <div className={styles.shortcuts}>
@@ -353,15 +370,8 @@ export function Editor() {
 
   return (
     <div ref={editorRef} className={styles.editor} tabIndex={-1}>
+      {queueAnnouncer}
       {/* Tab bar */}
-      <div
-        data-testid="merge-queue-announcement"
-        role="status"
-        aria-live="polite"
-        className={styles.srOnly}
-      >
-        {queueAnnouncement}
-      </div>
       <div className={styles.tabStrip}>
         <div
           ref={setTabBar}

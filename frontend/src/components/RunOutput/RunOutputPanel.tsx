@@ -171,6 +171,15 @@ function requestHistoryRecord(
     });
 }
 
+const LOADING_OUTPUT = 'Loading run output…';
+const LOADING_PREVIOUS_OUTPUT = 'Loading previous run output…';
+
+/** What a saved run's read says, on screen and in the panel's status region. */
+function historyReadText(label: string, state: HistoryReadState | undefined): string {
+  return state?.status === 'error' ? `Could not load run output: ${state.message}` : label;
+}
+
+/** Not a live region: the panel's status region says this message. */
 function HistoryReadMessage({
   label,
   state,
@@ -182,8 +191,8 @@ function HistoryReadMessage({
 }) {
   const failed = state?.status === 'error';
   return (
-    <div className={styles.emptyState} role={failed ? 'alert' : 'status'}>
-      <p>{failed ? `Could not load run output: ${state.message}` : label}</p>
+    <div className={styles.emptyState}>
+      <p>{historyReadText(label, state)}</p>
       {failed && (
         <button type="button" className={styles.viewModeBtn} onClick={onRetry}>
           Retry
@@ -438,11 +447,38 @@ export function RunOutputPanel() {
     });
   }, []);
 
+  // What the body below shows in place of the log, or above it. The messages
+  // replace one another in place, and WebKit announced neither one mounted
+  // with its text nor one whose live role was swapped as its text changed, so
+  // one status region says them all. It is keyed into the same slot of both
+  // returns below, so it is the same element whatever the panel shows.
+  const announcement =
+    activeCompound || viewMode === 'timeline'
+      ? ''
+      : selectedHistoryNeedsRecord
+        ? historyReadText(LOADING_OUTPUT, selectedHistoryReadState)
+        : diffPredecessorNeedsRecord
+          ? historyReadText(LOADING_PREVIOUS_OUTPUT, archivePredecessorReadState)
+          : activeOutput
+            ? (truncationNotice ?? '')
+            : '';
+  const statusRegion = (
+    <div
+      key="run-output-announcement"
+      data-testid="run-output-announcement"
+      role="status"
+      className={styles.srOnly}
+    >
+      {announcement}
+    </div>
+  );
+
   // A compound run owns the entire output surface (it has its own internal
   // tabs/views), so it takes precedence over the ordinary view modes.
   if (activeCompound) {
     return (
       <div className={styles.panelContainer}>
+        {statusRegion}
         <RunOutputTabs />
         <RunOutputToolbar />
         <CompoundExecutionView key={activeCompound.compoundId} compound={activeCompound} />
@@ -452,6 +488,7 @@ export function RunOutputPanel() {
 
   return (
     <div className={styles.panelContainer}>
+      {statusRegion}
       <RunOutputTabs />
       <RunOutputToolbar />
       {viewMode === 'timeline' ? (
@@ -462,23 +499,20 @@ export function RunOutputPanel() {
         />
       ) : selectedHistoryNeedsRecord ? (
         <HistoryReadMessage
-          label="Loading run output…"
+          label={LOADING_OUTPUT}
           state={selectedHistoryReadState}
           onRetry={loadSelectedHistory}
         />
       ) : diffPredecessorNeedsRecord ? (
         <HistoryReadMessage
-          label="Loading previous run output…"
+          label={LOADING_PREVIOUS_OUTPUT}
           state={archivePredecessorReadState}
           onRetry={loadArchivePredecessor}
         />
       ) : activeOutput ? (
         <>
-          {truncationNotice && (
-            <div className={styles.truncationNotice} role="status">
-              {truncationNotice}
-            </div>
-          )}
+          {/* Not a live region: the panel's status region says it. */}
+          {truncationNotice && <div className={styles.truncationNotice}>{truncationNotice}</div>}
           {viewMode === 'merged' && (
             <MergedView
               entries={activeOutput.entries}

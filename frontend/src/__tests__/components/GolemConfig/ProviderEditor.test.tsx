@@ -390,9 +390,16 @@ describe('ProviderEditor', () => {
   it('refuses removal while a model still uses the provider', async () => {
     const { onStage } = renderCard({ usedProviders: ['llama-swap'] });
     await openEditor();
+    // The packaged app recorded this refusal's region mounting together with
+    // its text, which WebKit reports as created and VoiceOver does not speak.
+    // jsdom has no accessibility tree, so this pins the cause: the alert region
+    // is in the editor, empty, before the press, and the refusal arrives in it.
+    const region = screen.getByRole('alert');
+    expect(region).toBeEmptyDOMElement();
 
     await userEvent.click(screen.getByRole('button', { name: 'Remove provider' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('This provider is still used by a model.');
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region).toHaveTextContent('This provider is still used by a model.');
     expect(onStage).not.toHaveBeenCalled();
   });
 
