@@ -86,8 +86,17 @@ func (w *FSNotifyWatcher) Watch(ctx context.Context, path string, callback func(
 	return nil
 }
 
+// addRecursive watches root and every directory beneath it. WalkDir does not
+// follow a symlinked root, so it walks the resolved target and adds each
+// directory under root's own spelling: event paths then match the paths the
+// file tree and open tabs hold. Symlinked subdirectories stay unwatched (the
+// explorer does not expand them, and following them risks cycles).
 func (w *FSNotifyWatcher) addRecursive(fw *fsnotify.Watcher, root string) error {
-	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		resolved = root
+	}
+	return filepath.WalkDir(resolved, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			// Skip inaccessible paths
 			return nil
@@ -97,7 +106,11 @@ func (w *FSNotifyWatcher) addRecursive(fw *fsnotify.Watcher, root string) error 
 			if w.shouldExclude(d.Name()) {
 				return filepath.SkipDir
 			}
-			return fw.Add(path)
+			rel, err := filepath.Rel(resolved, path)
+			if err != nil {
+				return nil
+			}
+			return fw.Add(filepath.Join(root, rel))
 		}
 		return nil
 	})
