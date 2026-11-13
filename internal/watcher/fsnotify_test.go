@@ -352,16 +352,34 @@ func TestFSNotifyWatcher_DebounceRapidEvents(t *testing.T) {
 }
 
 // A workspace opened through a symlinked root must be watched, and its events
-// must keep the link spelling the file tree and open tabs use (#564).
+// must keep the link spelling the file tree and open tabs use (#564). The
+// two-hop chain matters on macOS: fsnotify's kqueue Add follows one link only.
 func TestFSNotifyWatcher_WatchesSymlinkedRoot(t *testing.T) {
+	for name, chain := range map[string][]string{
+		"one hop":  {"link"},
+		"two hops": {"hop", "link"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			testWatchesSymlinkedRoot(t, chain)
+		})
+	}
+}
+
+// testWatchesSymlinkedRoot links each name in chain to the one before it,
+// starting from a real directory, and watches the last link.
+func testWatchesSymlinkedRoot(t *testing.T, chain []string) {
 	tmpDir := t.TempDir()
 	target := filepath.Join(tmpDir, "target")
 	if err := os.MkdirAll(filepath.Join(target, "sub"), 0755); err != nil {
 		t.Fatalf("Failed to create target: %v", err)
 	}
-	link := filepath.Join(tmpDir, "link")
-	if err := os.Symlink(target, link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
+	link := target
+	for _, name := range chain {
+		next := filepath.Join(tmpDir, name)
+		if err := os.Symlink(link, next); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		link = next
 	}
 
 	w, err := NewFSNotifyWatcher(WatcherConfig{DebounceMs: 50})
