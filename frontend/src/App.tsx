@@ -65,6 +65,9 @@ function App() {
   // Per-directory debounce timers so concurrent changes in different dirs don't
   // collapse into one mis-scoped refetch.
   const reconcileTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // The newest reload of each open file: an older read that finishes after a
+  // newer one would put the file's previous contents back in a clean tab.
+  const reloadTicketRef = useRef({ next: 0, latest: new Map<string, number>() });
 
   // The app-close handshake (§5.5) asks the configuration surface first: it may
   // hold a dirty draft, an open editor, or a pending settings challenge that the
@@ -177,8 +180,12 @@ function App() {
         openFile &&
         !openFile.isModified
       ) {
+        const tickets = reloadTicketRef.current;
+        const ticket = ++tickets.next;
+        tickets.latest.set(event.path, ticket);
         ReadFile(event.path)
           .then((result) => {
+            if (tickets.latest.get(event.path) !== ticket) return;
             if (result === null) {
               throw new Error(`ReadFile returned no content for ${event.path}`);
             }
@@ -191,6 +198,9 @@ function App() {
           })
           .catch((err) => {
             console.error(`Failed to reload ${event.path}:`, err);
+          })
+          .finally(() => {
+            if (tickets.latest.get(event.path) === ticket) tickets.latest.delete(event.path);
           });
       }
 

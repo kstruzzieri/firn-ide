@@ -365,7 +365,7 @@ describe('App Component', () => {
   // which is `created` whenever its watch on the new file misses the write
   // (#563).
   describe('when something outside Firn replaces an open file', () => {
-    const fireOnMain = async (isModified: boolean, type: FileEvent['type']) => {
+    const openMain = async (isModified: boolean) => {
       useIDEStore.setState({
         workspace: { name: 'workspace', path: '/test/workspace' },
         directoryTree: [],
@@ -390,18 +390,73 @@ describe('App Component', () => {
         | ((event: FileEvent) => void)
         | undefined;
       expect(watcherCallback).toBeDefined();
-      await act(async () => {
-        watcherCallback!({
-          type,
-          path: '/test/workspace/main.py',
-          isDir: false,
-          time: new Date().toISOString(),
+      return async (type: FileEvent['type']) => {
+        await act(async () => {
+          watcherCallback!({
+            type,
+            path: '/test/workspace/main.py',
+            isDir: false,
+            time: new Date().toISOString(),
+          });
+          jest.advanceTimersByTime(100);
+          await Promise.resolve();
+          await Promise.resolve();
         });
-        jest.advanceTimersByTime(100);
-        await Promise.resolve();
-        await Promise.resolve();
-      });
+      };
     };
+
+    const fireOnMain = async (isModified: boolean, type: FileEvent['type']) =>
+      (await openMain(isModified))(type);
+
+    const deferredRead = () => {
+      let resolve!: (content: string) => void;
+      const promise = new Promise<string>((r) => (resolve = r)).then((content) => ({
+        content,
+        encoding: 'utf-8',
+        lineEndings: 'LF',
+      }));
+      return { promise, resolve };
+    };
+
+    it('keeps the newest contents when two reloads finish out of order', async () => {
+      const first = deferredRead();
+      const second = deferredRead();
+      mockReadFile.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+      const fire = await openMain(false);
+      await fire('created');
+      await fire('modified');
+      await act(async () => {
+        second.resolve('newest\n');
+        await second.promise;
+      });
+      await act(async () => {
+        first.resolve('older\n');
+        await first.promise;
+      });
+
+      expect(useIDEStore.getState().openFiles[0]).toEqual(
+        expect.objectContaining({ content: 'newest\n', isModified: false })
+      );
+    });
+
+    it('keeps edits typed while a reload is in flight', async () => {
+      const read = deferredRead();
+      mockReadFile.mockReturnValueOnce(read.promise);
+
+      await fireOnMain(false, 'created');
+      act(() => {
+        useIDEStore.getState().updateFileContent('/test/workspace/main.py', 'typed\n');
+      });
+      await act(async () => {
+        read.resolve('1\n2\n3\n');
+        await read.promise;
+      });
+
+      expect(useIDEStore.getState().openFiles[0]).toEqual(
+        expect.objectContaining({ content: 'typed\n', isModified: true })
+      );
+    });
 
     it('reloads an unmodified tab on a created event and still refreshes its folder', async () => {
       mockReadFile.mockResolvedValueOnce({
