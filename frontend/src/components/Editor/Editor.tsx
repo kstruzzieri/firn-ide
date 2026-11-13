@@ -38,6 +38,7 @@ import { GitDiffView } from './GitDiffView';
 import { MergeResolutionView } from './MergeResolutionView';
 import { useGitStore } from '../../stores/gitStore';
 import { useGitBaseline } from '../../hooks/useGitBaseline';
+import { useLiveAnnouncement } from '../../hooks/useLiveAnnouncement';
 import { getLanguageName } from './codemirror';
 import { createWorkspacePathResolver } from '../../utils/workspaceRegions';
 import { accentVar } from '../../utils/accent';
@@ -211,6 +212,17 @@ export function Editor() {
   const diffOwner = diffSession ? resolveWorkspace(diffSession.absPath) : null;
   const mergeOwner = mergeSession ? resolveWorkspace(mergeSession.absPath) : null;
 
+  const queueText = mergeSession && !mergeAdvancePending ? queueAnnouncement : '';
+  const queueAnnouncementRequest = useMemo(() => ({ text: queueText }), [queueText]);
+  const publishedQueueAnnouncement = useLiveAnnouncement(queueAnnouncementRequest, true);
+  useLayoutEffect(() => {
+    if (!queueAnnouncementRequest.text || !showMerge || document.activeElement !== document.body) {
+      return;
+    }
+    // Recover the removed merge control before VoiceOver receives the next-file announcement.
+    editorRef.current?.querySelector<HTMLElement>('#tab-merge-resolution')?.focus();
+  }, [queueAnnouncementRequest, showMerge]);
+
   // Any close of the merge surface — Escape, the tab X, the resolved-outside
   // notice, or a confirmed discard — ends with the session becoming null. One
   // effect observing that transition restores focus for all of them. A queue
@@ -312,7 +324,7 @@ export function Editor() {
       aria-live="polite"
       className={styles.srOnly}
     >
-      {queueAnnouncement}
+      {publishedQueueAnnouncement}
     </div>
   );
 

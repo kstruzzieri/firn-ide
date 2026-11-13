@@ -144,6 +144,8 @@ beforeEach(() => {
     diffFocused: false,
     mergeSession: null,
     mergeFocused: false,
+    mergeAdvancePending: false,
+    mergeQueueAnnouncement: '',
   });
 });
 
@@ -664,6 +666,8 @@ describe('Editor workspace tab accents', () => {
 });
 
 describe('Editor merge queue hand-off', () => {
+  afterEach(() => jest.useRealTimers());
+
   it('does not restore fallback focus during the gap between queued files', async () => {
     useIDEStore.setState({ openFiles: [openFile('f1', 'other.ts')], activeFileId: 'f1' });
     useGitStore.setState({ mergeSession, mergeFocused: true });
@@ -717,33 +721,49 @@ describe('Editor merge queue hand-off', () => {
     expect(fileTab).toHaveFocus();
   });
 
-  it('keeps a polite announcement region mounted outside the merge view', () => {
-    useGitStore.setState({
-      mergeSession,
-      mergeFocused: true,
-      mergeQueueAnnouncement: 'Now resolving next.go. 2 conflicted files remaining.',
-    });
-    render(<Editor />);
-
-    const region = screen.getByTestId('merge-queue-announcement');
-    expect(region).toHaveAttribute('aria-live', 'polite');
-    expect(region).toHaveTextContent('Now resolving next.go. 2 conflicted files remaining.');
-  });
-
-  it('still shows the announcement while the next surface is opening', () => {
+  it('keeps an empty polite region mounted while the next surface is opening', () => {
     useGitStore.setState({
       mergeSession: null,
       mergeFocused: false,
       mergeAdvancePending: true,
       mergeQueueAnnouncement: 'Now resolving next.go. 1 conflicted file remaining.',
     });
-    useIDEStore.setState({ openFiles: [openFile('f1', 'other.ts')], activeFileId: 'f1' });
     render(<Editor />);
 
-    // The region does not live inside the merge view, so the gap cannot hide it.
-    expect(screen.getByTestId('merge-queue-announcement')).toHaveTextContent(
-      'Now resolving next.go. 1 conflicted file remaining.'
+    const region = screen.getByTestId('merge-queue-announcement');
+    expect(region).toHaveAttribute('aria-live', 'polite');
+    expect(region).toBeEmptyDOMElement();
+  });
+
+  it('keeps focus on another control when the queue advances', async () => {
+    useGitStore.setState({ mergeSession, mergeFocused: true });
+    render(
+      <>
+        <button>Refresh git status</button>
+        <Editor />
+      </>
     );
+    const refresh = screen.getByRole('button', { name: 'Refresh git status' });
+    refresh.focus();
+
+    act(() => {
+      useGitStore.setState({ mergeSession: null, mergeFocused: false, mergeAdvancePending: true });
+    });
+    act(() => {
+      useGitStore.setState({
+        mergeSession: { ...mergeSession, path: 'next.go' },
+        mergeFocused: true,
+        mergeAdvancePending: false,
+        mergeQueueAnnouncement: 'Now resolving next.go. 1 conflicted file remaining.',
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('merge-queue-announcement')).toHaveTextContent(
+        'Now resolving next.go. 1 conflicted file remaining.'
+      );
+    });
+    expect(refresh).toHaveFocus();
   });
 
   // With no other tab open, the gap between two queued files is the welcome
@@ -751,11 +771,13 @@ describe('Editor merge queue hand-off', () => {
   // with the next file's text, and WebKit posted nothing VoiceOver speaks.
   // jsdom has no accessibility tree, so this pins the cause: the announcer is
   // one element across the welcome screen, and the text arrives in it.
-  it('keeps the announcer mounted across the welcome screen between queued files', () => {
+  it('restores focus before announcing the next file across the welcome screen', () => {
+    jest.useFakeTimers();
     useGitStore.setState({ mergeSession, mergeFocused: true, mergeQueueAnnouncement: '' });
     render(<Editor />);
     const region = screen.getByTestId('merge-queue-announcement');
     expect(region).toBeEmptyDOMElement();
+    screen.getByRole('tab', { name: /clash\.go.*merge/i }).focus();
 
     act(() => {
       useGitStore.setState({ mergeSession: null, mergeFocused: false, mergeAdvancePending: true });
@@ -772,6 +794,25 @@ describe('Editor merge queue hand-off', () => {
       });
     });
     expect(screen.getByTestId('merge-queue-announcement')).toBe(region);
+    expect(screen.getByRole('tab', { name: /next\.go.*merge/i })).toHaveFocus();
+    act(() => jest.advanceTimersByTime(399));
+    expect(region).toBeEmptyDOMElement();
+    act(() => jest.advanceTimersByTime(1));
     expect(region).toHaveTextContent('Now resolving next.go. 1 conflicted file remaining.');
+  });
+
+  it('cancels a delayed queue announcement when the last merge closes', () => {
+    jest.useFakeTimers();
+    useGitStore.setState({
+      mergeSession,
+      mergeFocused: true,
+      mergeQueueAnnouncement: 'Now resolving clash.go. 1 conflicted file remaining.',
+    });
+    render(<Editor />);
+    act(() => {
+      useGitStore.setState({ mergeSession: null, mergeFocused: false });
+    });
+    act(() => jest.advanceTimersByTime(400));
+    expect(screen.getByTestId('merge-queue-announcement')).toBeEmptyDOMElement();
   });
 });
