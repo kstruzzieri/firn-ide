@@ -55,9 +55,15 @@
   white-space: nowrap;
 }
 
-.viewModeBtn:hover {
+.viewModeBtn:hover:not([aria-disabled='true']) {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* A history Retry while its read runs (#550): focusable, so not :disabled. */
+.viewModeBtn[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .viewModeBtn.active {

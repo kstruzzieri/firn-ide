@@ -389,7 +389,7 @@
   cursor: pointer;
 }
 
-.button:hover:not(:disabled) {
+.button:hover:not(:disabled, [aria-disabled='true']) {
   border-color: var(--accent);
 }
 
@@ -398,7 +398,8 @@
   outline-offset: 2px;
 }
 
-.button:disabled {
+.button:disabled,
+.button[aria-disabled='true'] {
   opacity: 0.4;
   cursor: default;
 }
@@ -442,7 +443,7 @@
   color: var(--status-warning);
 }
 
-.warn:hover:not(:disabled) {
+.warn:hover:not(:disabled, [aria-disabled='true']) {
   border-color: var(--status-warning);
   background-color: rgba(245, 158, 11, 0.08);
 }
