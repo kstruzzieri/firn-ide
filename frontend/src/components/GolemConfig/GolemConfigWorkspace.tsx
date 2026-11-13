@@ -486,13 +486,19 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
   /**
    * [#550] The control focused when the current operation began: the button the
-   * user pressed. An approval it opens takes focus from it, and gives it back.
+   * user pressed. An approval it opens takes focus from it, and gives it back
+   * when the operation that closes it began inside the prompt (its own Cancel or
+   * Approve) — not when a source switch or Discard cancelled it from outside.
    */
   const operationInvokerRef = useRef<Element | null>(null);
+  const operationFromPromptRef = useRef(false);
+  const grantAlertRef = useRef<HTMLDivElement>(null);
   const beginOperation = (): boolean => {
     if (sendingRef.current) return false;
     sendingRef.current = true;
     operationInvokerRef.current = document.activeElement;
+    operationFromPromptRef.current =
+      grantAlertRef.current?.contains(document.activeElement) ?? false;
     setSending(true);
     // [K5][N4] Every operation flips `locked`, which REMOUNTS both cards — and a
     // fresh card replays whatever `focusRequest` still stands, reopening an editor
@@ -1389,8 +1395,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   /**
    * [#550] An approval opened by a press makes that button impossible (natively
    * disabled again), so focus moves to the prompt holding the decision; when the
-   * prompt closes, the button that opened it takes focus back. Neither takes
-   * focus from a user who moved elsewhere in the meantime.
+   * prompt's own Cancel or Approve closes it, the button that opened it takes
+   * focus back. Neither takes focus from a user who moved elsewhere meanwhile,
+   * nor from the Source handoff a cancelling source switch runs.
    */
   const promptHeadingRef = useRef<HTMLHeadingElement>(null);
   const promptInvokerRef = useRef<Element | null>(null);
@@ -1410,6 +1417,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       promptInvokerRef.current = null;
       if (
         nowhere &&
+        operationFromPromptRef.current &&
         invoker instanceof HTMLButtonElement &&
         invoker.isConnected &&
         !invoker.disabled
@@ -1642,7 +1650,12 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
        * for Use model is not remounted under it. Unstyled but for
        * `.alertSlot`, which only cancels the flex gap an empty one would add.
        */}
-      <div role="alert" className={styles.alertSlot} data-testid="golem-grant-alert">
+      <div
+        ref={grantAlertRef}
+        role="alert"
+        className={styles.alertSlot}
+        data-testid="golem-grant-alert"
+      >
         {outcome.challenge !== null && (
           // [C27] No data-tone here: `.panel[data-tone='caution']` (0,2,0) would beat `.grant`
           // (0,1,0) whatever the source order, and the approved prompt is accent-outlined.

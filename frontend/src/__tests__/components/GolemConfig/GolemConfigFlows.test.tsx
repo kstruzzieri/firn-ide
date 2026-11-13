@@ -2871,6 +2871,45 @@ describe('busy buttons keep keyboard focus (#550)', () => {
     expect(screen.getByRole('button', { name: 'Check destinations…' })).toHaveFocus();
   });
 
+  // A Source switch that cancels an open approval hands focus to Source once
+  // the profile lands. WebKit blurs Source while the cancellation and the load
+  // disable it, so the prompt closing must not claim that empty focus for
+  // Check destinations: the Source handoff only fires while nothing holds
+  // focus. Giving focus back to the opener is for a prompt closed from its own
+  // Cancel or Approve.
+  it('leaves focus to the Source handoff when a source switch cancels the approval', async () => {
+    prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+    const cancelCall = pending();
+    (CancelGolemSettingsApply as jest.Mock).mockReturnValueOnce(cancelCall.promise);
+    (LoadGolemProfile as jest.Mock).mockResolvedValueOnce(loadedProfile);
+    await mountWorkspace();
+    await approve();
+    await screen.findByRole('button', { name: 'Approve 2 destinations' });
+
+    await pickSource(/mine/, 'Yours');
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Cancel approval',
+      })
+    );
+    await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
+    // WebKit's blur of the Source trigger the cancellation disabled. jsdom keeps
+    // focus on a disabled control and will not blur it, so focus leaves through
+    // a stand-in that is then removed.
+    expect(sourceTrigger()).toHaveFocus();
+    act(() => {
+      const standIn = document.body.appendChild(document.createElement('button'));
+      standIn.focus();
+      standIn.remove();
+    });
+    expect(document.activeElement).toBe(document.body);
+
+    await act(async () => cancelCall.settle({ status: 'cancelled' }));
+    await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(sourceTrigger()).toHaveFocus());
+    expect(screen.getByRole('button', { name: 'Check destinations…' })).not.toHaveFocus();
+  });
+
   it('keeps Apply focusable while it writes, focuses the approval it returns, and gets focus back on Cancel approval', async () => {
     const write = pending();
     (ApplyGolemSettings as jest.Mock).mockReturnValueOnce(write.promise);

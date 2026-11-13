@@ -2448,6 +2448,12 @@ select.input {
   color: var(--accent);
 }
 
+/* [#550] Focus lands here when a press opens an approval: the masthead title's ring. */
+.grantTitle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
 .grantTtl {
   margin-left: auto;
   font-family: var(--font-mono);
