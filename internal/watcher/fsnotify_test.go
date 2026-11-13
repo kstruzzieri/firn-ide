@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -408,6 +409,9 @@ func testWatchesSymlinkedRoot(t *testing.T, chain []string) {
 		for {
 			select {
 			case event := <-eventCh:
+				if event.Path != link && !strings.HasPrefix(event.Path, link+string(filepath.Separator)) {
+					t.Fatalf("Event at %q is not spelled under %q", event.Path, link)
+				}
 				if event.Path == want {
 					break wait
 				}
