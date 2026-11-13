@@ -1072,6 +1072,57 @@ describe('MergeResolutionView external-change notice', () => {
     expect(controller.view.focus).toHaveBeenCalled();
   });
 
+  it.each([
+    { rebuild: false, decideBeforeCompletion: false },
+    { rebuild: true, decideBeforeCompletion: false },
+    { rebuild: true, decideBeforeCompletion: true },
+  ])(
+    'settles Reload after final focus without replacing a newer decision (%j)',
+    async ({ rebuild, decideBeforeCompletion }) => {
+      jest.useFakeTimers();
+      try {
+        storeSession = worktreeChange();
+        let finish!: () => void;
+        applyMergeReload.mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+        const { rerender } = render(<MergeResolutionView session={storeSession} visible />);
+        const status = screen.getByText('1 conflict unresolved.');
+        fireEvent.click(screen.getByRole('button', { name: /reload/i }));
+        // The store installs its replacement before awaiting its final read.
+        storeSession = {
+          ...textSession,
+          requestRevision: rebuild ? 2 : textSession.requestRevision,
+        };
+        rerender(<MergeResolutionView session={storeSession} visible />);
+        act(() => jest.advanceTimersByTime(1000));
+        expect(status).toBeEmptyDOMElement();
+
+        const decision = 'Conflict 1 resolved: took current. 0 unresolved.';
+        if (decideBeforeCompletion) {
+          act(() =>
+            onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' })
+          );
+          storeSession = { ...storeSession, decisions: { 0: 'C' } };
+          expect(status).toHaveTextContent(decision);
+        }
+
+        await act(async () => finish());
+        expect(controller.view.focus).toHaveBeenCalled();
+        if (decideBeforeCompletion) {
+          act(() => jest.advanceTimersByTime(400));
+          expect(status).toHaveTextContent(decision);
+          return;
+        }
+        expect(status).toBeEmptyDOMElement();
+        act(() => jest.advanceTimersByTime(399));
+        expect(status).toBeEmptyDOMElement();
+        act(() => jest.advanceTimersByTime(1));
+        expect(status).toHaveTextContent('1 conflict unresolved.');
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  );
+
   it('keeps focus on the action when a reload leaves a notice behind', async () => {
     storeSession = worktreeChange();
     render(<MergeResolutionView session={worktreeChange()} visible />);
