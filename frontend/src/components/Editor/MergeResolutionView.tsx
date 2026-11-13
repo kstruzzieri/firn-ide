@@ -151,24 +151,31 @@ function MergeExternalNotice({
   session,
   focusResult,
   disabled,
+  onReloadChange,
 }: {
   session: MergeSession;
   focusResult: FocusResult;
   disabled: boolean;
+  onReloadChange?: (pending: boolean) => void;
 }) {
   const actionRef = useRef<HTMLButtonElement>(null);
   const external = session.external;
   const shown = external && !(external.kind === 'changed' && external.hidden) ? external : null;
 
   const reload = async () => {
-    await useGitStore.getState().applyMergeReload();
-    // A notice that survived the read means the user still has something to
-    // act on, so focus stays on that action rather than jumping away.
-    if (useGitStore.getState().mergeSession?.external) {
-      actionRef.current?.focus();
-      return;
+    if (session.reloadPending) return;
+    onReloadChange?.(true);
+    try {
+      await useGitStore.getState().applyMergeReload();
+      // A notice that survived the read still needs the user's attention.
+      if (useGitStore.getState().mergeSession?.external) {
+        actionRef.current?.focus();
+        return;
+      }
+      focusResult();
+    } finally {
+      onReloadChange?.(false);
     }
-    focusResult();
   };
 
   // Reload and Retry are aria-disabled, not disabled, while their reload runs:
@@ -434,6 +441,7 @@ function TextResolutionContent({
   const editorRef = useRef<MergeResolutionEditor | null>(null);
   const sessionRef = useRef(session);
   const openedSessionRef = useRef(session);
+  const reloadAnnouncementPendingRef = useRef(false);
   const decisionsRef = useRef(session.decisions);
   const activeIndexRef = useRef<number | null>(null);
   const hadSurfaceFocusRef = useRef(false);
@@ -460,6 +468,22 @@ function TextResolutionContent({
   const liveReloadAnnouncement = useLiveAnnouncement(reloadAnnouncement, true);
   sessionRef.current = session;
   focusResultRef.current = () => editorRef.current?.view.focus();
+
+  const handleReloadChange = (pending: boolean) => {
+    const announceCompletion = reloadAnnouncementPendingRef.current;
+    reloadAnnouncementPendingRef.current = pending;
+    if (!pending && !announceCompletion) return;
+    const current = useGitStore.getState().mergeSession;
+    const remaining =
+      current?.kind === 'text' ? current.regions.length - Object.keys(current.decisions).length : 0;
+    setAnnouncement({
+      text:
+        !pending && current?.kind === 'text' && !current.external
+          ? `${remaining} conflict${remaining === 1 ? '' : 's'} unresolved.`
+          : '',
+      deferred: true,
+    });
+  };
 
   // Reset the strip whenever the session identity changes — a new file or a
   // fresh openMergeResolution request must not show the previous file's base.
@@ -559,7 +583,10 @@ function TextResolutionContent({
           next.decisions,
           sessionRef.current.regions.length
         );
-        if (message !== null) setAnnouncement({ text: message, deferred: false });
+        if (message !== null) {
+          reloadAnnouncementPendingRef.current = false;
+          setAnnouncement({ text: message, deferred: false });
+        }
         if (message !== null || next.activeIndex !== activeIndexRef.current)
           setResolutionRefusal(null);
         decisionsRef.current = next.decisions;
@@ -588,12 +615,15 @@ function TextResolutionContent({
       session.regions.length - Object.keys(initialEditorState.decisions).length;
     // Reload moves focus; let it settle before speaking even an unchanged count.
     const previousSession = openedSessionRef.current;
-    setAnnouncement({
-      text: `${remainingOnOpen} conflict${remainingOnOpen === 1 ? '' : 's'} unresolved.`,
-      deferred:
-        previousSession.path === session.path &&
-        previousSession.requestRevision !== session.requestRevision,
-    });
+    // The forced reload still has a final backend read and focus call to finish.
+    if (!reloadAnnouncementPendingRef.current) {
+      setAnnouncement({
+        text: `${remainingOnOpen} conflict${remainingOnOpen === 1 ? '' : 's'} unresolved.`,
+        deferred:
+          previousSession.path === session.path &&
+          previousSession.requestRevision !== session.requestRevision,
+      });
+    }
     openedSessionRef.current = session;
     return () => {
       hadSurfaceFocusRef.current = surface?.contains(document.activeElement) ?? false;
@@ -705,7 +735,12 @@ function TextResolutionContent({
           </button>
         </div>
       </header>
-      <MergeExternalNotice session={session} focusResult={focusResult} disabled={finalizing} />
+      <MergeExternalNotice
+        session={session}
+        focusResult={focusResult}
+        disabled={finalizing}
+        onReloadChange={handleReloadChange}
+      />
       {/* Mounted while empty, like the external notice's regions. */}
       <div
         className={resolutionRefusal ? `${styles.noticeSlot} ${styles.notice}` : styles.noticeSlot}
