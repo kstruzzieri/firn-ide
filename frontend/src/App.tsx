@@ -167,9 +167,16 @@ function App() {
       const { openFiles } = useIDEStore.getState();
       const openFile = openFiles.find((f) => f.path === event.path);
 
-      if (event.type === 'modified' && !event.isDir) {
-        if (!openFile || openFile.isModified) return;
-
+      // git restore/checkout/stash/switch and rename-over saves replace a file
+      // by unlinking it and creating a new one. The backend delivers the last
+      // event it saw for the path, `created` or `modified` depending on whether
+      // its watch on the new file caught the write (#563), so both reload.
+      if (
+        (event.type === 'modified' || event.type === 'created') &&
+        !event.isDir &&
+        openFile &&
+        !openFile.isModified
+      ) {
         ReadFile(event.path)
           .then((result) => {
             if (result === null) {
@@ -185,7 +192,6 @@ function App() {
           .catch((err) => {
             console.error(`Failed to reload ${event.path}:`, err);
           });
-        return;
       }
 
       if (

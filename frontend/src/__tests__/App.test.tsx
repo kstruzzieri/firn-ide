@@ -360,6 +360,84 @@ describe('App Component', () => {
     );
   });
 
+  // git restore/checkout/stash/switch and rename-over saves unlink the file and
+  // create a new one. The backend delivers the last event it saw for the path,
+  // which is `created` whenever its watch on the new file misses the write
+  // (#563).
+  describe('when something outside Firn replaces an open file', () => {
+    const fireOnMain = async (isModified: boolean, type: FileEvent['type']) => {
+      useIDEStore.setState({
+        workspace: { name: 'workspace', path: '/test/workspace' },
+        directoryTree: [],
+        isRootExpanded: true,
+      });
+      await act(async () => {
+        render(<App />);
+      });
+      act(() => {
+        useIDEStore.getState().openFile({
+          id: '/test/workspace/main.py',
+          name: 'main.py',
+          path: '/test/workspace/main.py',
+          language: 'python',
+          encoding: 'utf-8',
+          lineEndings: 'LF',
+          content: '1\n2\n3\n4\n',
+          isModified,
+        });
+      });
+      const watcherCallback = mockUseFileWatcher.mock.calls[0]?.[1] as
+        | ((event: FileEvent) => void)
+        | undefined;
+      expect(watcherCallback).toBeDefined();
+      await act(async () => {
+        watcherCallback!({
+          type,
+          path: '/test/workspace/main.py',
+          isDir: false,
+          time: new Date().toISOString(),
+        });
+        jest.advanceTimersByTime(100);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+
+    it('reloads an unmodified tab on a created event and still refreshes its folder', async () => {
+      mockReadFile.mockResolvedValueOnce({
+        content: '1\n2\n3\n',
+        encoding: 'utf-8',
+        lineEndings: 'LF',
+      });
+
+      await fireOnMain(false, 'created');
+
+      expect(mockReadFile).toHaveBeenCalledWith('/test/workspace/main.py');
+      expect(useIDEStore.getState().openFiles[0]).toEqual(
+        expect.objectContaining({ content: '1\n2\n3\n', isModified: false })
+      );
+      expect(mockReadDirectoryShallow).toHaveBeenCalledWith('/test/workspace', '/test/workspace');
+    });
+
+    it.each(['modified', 'created'] as const)(
+      'never overwrites a tab with unsaved edits on a %s event',
+      async (type) => {
+        mockReadFile.mockResolvedValue({
+          content: '1\n2\n3\n',
+          encoding: 'utf-8',
+          lineEndings: 'LF',
+        });
+
+        await fireOnMain(true, type);
+
+        expect(mockReadFile).not.toHaveBeenCalled();
+        expect(useIDEStore.getState().openFiles[0]).toEqual(
+          expect.objectContaining({ content: '1\n2\n3\n4\n', isModified: true })
+        );
+      }
+    );
+  });
+
   it('keeps run capture alive while the bottom panel is collapsed', async () => {
     useIDEStore.setState({
       ...useIDEStore.getInitialState(),
