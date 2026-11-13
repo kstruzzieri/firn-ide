@@ -755,6 +755,7 @@ describe('Editor merge queue hand-off', () => {
     useGitStore.setState({ mergeSession, mergeFocused: true, mergeQueueAnnouncement: '' });
     render(<Editor />);
     const region = screen.getByTestId('merge-queue-announcement');
+    expect(region).toBeEmptyDOMElement();
 
     act(() => {
       useGitStore.setState({ mergeSession: null, mergeFocused: false, mergeAdvancePending: true });

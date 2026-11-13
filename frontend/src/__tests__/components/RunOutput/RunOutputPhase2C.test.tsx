@@ -420,11 +420,12 @@ it('blocks archived Diff while its readable predecessor load has failed', async 
   expect(screen.getByText('Loading previous run output…', onScreen)).toBeInTheDocument();
   expect(screen.queryByTestId('diff-props')).not.toBeInTheDocument();
 
+  const region = screen.getByTestId('run-output-announcement');
+  expect(region).toHaveTextContent('Loading previous run output…');
   await waitFor(() =>
-    expect(screen.getByTestId('run-output-announcement')).toHaveTextContent(
-      'Could not load run output: predecessor unreadable'
-    )
+    expect(region).toHaveTextContent('Could not load run output: predecessor unreadable')
   );
+  expect(screen.getByTestId('run-output-announcement')).toBe(region);
   expect(
     screen.getByText('Could not load run output: predecessor unreadable', onScreen)
   ).toBeVisible();

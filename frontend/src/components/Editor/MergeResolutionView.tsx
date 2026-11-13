@@ -614,8 +614,8 @@ function TextResolutionContent({
     session.external?.kind === 'changed' && session.external.scope === 'worktree';
   // Write & stage is natively disabled only while there is nothing it could
   // write. A write or reload in flight makes it aria-disabled instead, for the
-  // focus reason the external notice's Reload gives: a failed write leaves the
-  // user on the button that reported it.
+  // focus reason the external notice's Reload gives: a failed write that keeps
+  // the session open leaves the user on the button they pressed.
   const unwritable =
     unresolved !== 0 || session.readOnly || (Boolean(session.external) && !overwritable);
   const disabled = unwritable || blocked;

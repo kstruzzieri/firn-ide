@@ -419,10 +419,21 @@ describe('Use model', () => {
       consentOutcome: 'unchanged',
     });
     await tickApplyAnywayIfAsked(fold);
+    // A conflict settles the draft, which remounts this card: an alert region
+    // inside it would be created together with the conflict, which WebKit
+    // reports as created and VoiceOver does not speak. Pin the cause: the
+    // region announcing it is waiting, empty, outside the card, and stays the
+    // same element.
+    const region = screen.getByTestId('golem-conflict-alert');
+    expect(region).toHaveAttribute('role', 'alert');
+    expect(region).toBeEmptyDOMElement();
+    expect(picker()).not.toContainElement(region);
     await userEvent.click(within(fold).getByRole('button', { name: 'Use model' }));
     expect(
       await within(picker()).findByText(/The configuration moved while this draft was open/)
     ).toBeInTheDocument();
+    expect(screen.getByTestId('golem-conflict-alert')).toBe(region);
+    expect(region).toHaveTextContent(/The configuration moved while this draft was open/);
   });
 
   it('keeps a later destination check out of the picker', async () => {

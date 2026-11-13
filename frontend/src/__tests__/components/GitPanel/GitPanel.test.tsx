@@ -971,9 +971,10 @@ describe('GitPanel conflicts and errors', () => {
   // The packaged app recorded a repository that opens already in conflict:
   // Source Control showed "Loading git status…", then mounted the alert region
   // together with the banner, which WebKit reported as created and VoiceOver did
-  // not speak. Pin the cause: the region, and the parent whose display type it
-  // inherits, are in the document while the status loads, and the banner
-  // arrives inside those same elements.
+  // not speak. Pin the cause: the region, and its parent (WebKit also rebuilds a
+  // region whose ancestor changes display type), are in the document while the
+  // status loads, and the banner arrives inside those same elements. A
+  // workspace switch back to loading keeps them too.
   it('mounts the alert region while the status loads, so a repository already in conflict is announced', () => {
     act(() => {
       useGitStore.getState().resetForWorkspace('/repo');
@@ -995,6 +996,14 @@ describe('GitPanel conflicts and errors', () => {
     expect(within(region).getByTestId('conflict-banner')).toHaveTextContent(
       /resolve conflicts on main/i
     );
+
+    act(() => {
+      useGitStore.getState().resetForWorkspace('/repo');
+    });
+    expect(screen.getByText(/loading git status/i)).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region.parentElement).toBe(parent);
+    expect(region).toBeEmptyDOMElement();
   });
 
   it('shows operation errors inline', () => {

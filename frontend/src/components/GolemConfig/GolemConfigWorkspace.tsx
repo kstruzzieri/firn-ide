@@ -1589,10 +1589,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
        * local refusal — landed out of view and Apply read as doing nothing.
        */}
       {/*
-       * [#550] The alert regions here and below are mounted while empty: a
-       * region inserted together with its text reaches VoiceOver as created,
-       * not changed, and is not spoken. Unstyled but for `.alertSlot`, which
-       * only cancels the flex gap an empty one would add.
+       * [#550] Mounted while empty: a region inserted together with its text
+       * reaches VoiceOver as created, not changed, and is not spoken. A
+       * challenge keeps the draft's key refs, so the Golem card holding this
+       * for Use model is not remounted under it. Unstyled but for
+       * `.alertSlot`, which only cancels the flex gap an empty one would add.
        */}
       <div role="alert" className={styles.alertSlot} data-testid="golem-grant-alert">
         {outcome.challenge !== null && (
@@ -1696,33 +1697,32 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      <div role="alert" className={styles.alertSlot} data-testid="golem-conflict-alert">
-        {outcome.conflict !== null && (
-          <div className={styles.panel} data-tone="blocking">
-            <p className={styles.panelText}>
-              {outcome.conflict === 'challenge' ? CHALLENGE_CONFLICT : DOCUMENT_CONFLICT}
-            </p>
-            <div className={styles.panelActions}>
-              <button
-                type="button"
-                className={styles.button}
-                disabled={sending || inFlight || sourceLoading}
-                onClick={() => void reviewConflict()}
-              >
-                {outcome.conflict === 'challenge' ? 'Return to draft' : 'Reload & review draft'}
-              </button>
-              <button
-                type="button"
-                className={`${styles.button} ${styles.quiet}`}
-                disabled={sending || inFlight || sourceLoading}
-                onClick={() => void discardConflict()}
-              >
-                Discard draft
-              </button>
-            </div>
+      {/* Not a live region: the page's conflict alert below says it. */}
+      {outcome.conflict !== null && (
+        <div className={styles.panel} data-tone="blocking">
+          <p className={styles.panelText}>
+            {outcome.conflict === 'challenge' ? CHALLENGE_CONFLICT : DOCUMENT_CONFLICT}
+          </p>
+          <div className={styles.panelActions}>
+            <button
+              type="button"
+              className={styles.button}
+              disabled={sending || inFlight || sourceLoading}
+              onClick={() => void reviewConflict()}
+            >
+              {outcome.conflict === 'challenge' ? 'Return to draft' : 'Reload & review draft'}
+            </button>
+            <button
+              type="button"
+              className={`${styles.button} ${styles.quiet}`}
+              disabled={sending || inFlight || sourceLoading}
+              onClick={() => void discardConflict()}
+            >
+              Discard draft
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {outcome.notice !== '' && <p className={styles.notice}>{outcome.notice}</p>}
 
@@ -1980,6 +1980,17 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
           data-testid="golem-config-notice-announcement"
         >
           {liveAnnouncement !== '' && <span>{liveAnnouncement}</span>}
+        </div>
+
+        {/* [#550] A conflict's alert lives here, outside every card: a Use model
+            conflict settles the draft, which remounts the Golem card the visible
+            panel sits in, and a region remounted with its text is not spoken. */}
+        <div className={styles.srOnly} role="alert" data-testid="golem-conflict-alert">
+          {outcome.conflict === 'challenge'
+            ? CHALLENGE_CONFLICT
+            : outcome.conflict !== null
+              ? DOCUMENT_CONFLICT
+              : ''}
         </div>
 
         {phase.kind === 'loading' && <p className={styles.loading}>Loading configuration…</p>}

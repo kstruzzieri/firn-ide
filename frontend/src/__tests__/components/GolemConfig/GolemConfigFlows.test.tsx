@@ -693,7 +693,9 @@ describe('terminal apply results', () => {
     await clickApply();
 
     expect(
-      await screen.findByText(/destination approval no longer matches this request/)
+      await screen.findByText(/destination approval no longer matches this request/, {
+        selector: 'p',
+      })
     ).toBeVisible();
     expect(screen.queryByText(/The configuration moved/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Reload & review draft' })).not.toBeInTheDocument();
@@ -1704,8 +1706,8 @@ describe('notice announcements (#314)', () => {
 // recorded that for this view's conflict panel. An unknown outcome is reachable
 // only while the Golem service shuts down, so the app could not record it. jsdom
 // has no accessibility tree, so these pin the cause: each alert region is in the
-// document, empty, before its panel, and the panel arrives in that same element.
-describe('alert regions mounted before their panels', () => {
+// document, empty, before its message, and the message arrives in that same element.
+describe('alert regions mounted before their messages', () => {
   it('announces a conflict in the alert region that was waiting for it', async () => {
     applyReturns({ status: 'conflict', conflict: 'target', consentOutcome: 'recorded' });
     await mountWorkspace();
