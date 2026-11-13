@@ -214,6 +214,67 @@ describe('FileExplorer views', () => {
     expect(announcers()).toEqual([region]);
   });
 
+  it.each(['missing', 'unloaded'] as const)(
+    'keeps a transient %s scope error out of the live region while hydration decides',
+    async (state) => {
+      const restoreVirtualLayout = installVirtualLayout(400);
+      let finish!: (children: FileEntry[]) => void;
+      let fail!: (reason: Error) => void;
+      (ReadDirectoryShallow as jest.Mock).mockReturnValue(
+        new Promise<FileEntry[]>((resolve, reject) => {
+          finish = resolve;
+          fail = reject;
+        })
+      );
+      seed('frontend');
+      render(<FileExplorer />);
+      const region = screen.getByRole('status');
+      const tab = screen.getByRole('tab', { name: 'Frontend' });
+      act(() => tab.focus());
+      const published: string[] = [];
+      const observer = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (node.textContent) published.push(node.textContent);
+          }
+        }
+      });
+      observer.observe(region, { childList: true, subtree: true });
+      try {
+        await act(async () => {
+          useIDEStore.setState({
+            directoryTree:
+              state === 'missing' ? [tree[0]] : [tree[0], { ...tree[1], children: undefined }],
+          });
+        });
+        expect(screen.getByRole('status', { name: 'Loading file tree' })).toBeInTheDocument();
+        expect(region).toBeEmptyDOMElement();
+        // An insert removed before this observer runs still changes the live
+        // region, even though the final DOM is empty.
+        expect(published).toEqual([]);
+        expect(tab).toHaveFocus();
+
+        await act(async () => {
+          if (state === 'missing') fail(new Error('Directory was removed'));
+          else finish(tree[1].children!);
+        });
+        if (state === 'missing') {
+          await waitFor(() => expect(region).toHaveTextContent('Workspace folder not found'));
+          expect(published).toEqual(['Workspace folder not found']);
+        } else {
+          expect(screen.getByRole('treeitem', { name: 'App.tsx' })).toBeInTheDocument();
+          expect(region).toBeEmptyDOMElement();
+          expect(published).toEqual([]);
+        }
+        expect(screen.getByRole('status')).toBe(region);
+        expect(tab).toHaveFocus();
+      } finally {
+        observer.disconnect();
+        restoreVirtualLayout();
+      }
+    }
+  );
+
   it('hydrates a present-but-unloaded scoped node instead of showing empty', async () => {
     // The scoped dir node EXISTS in the tree but has children === undefined (unloaded).
     // This happens after a reconcile (Fix 1 preserves it, but it might not be loaded yet)
