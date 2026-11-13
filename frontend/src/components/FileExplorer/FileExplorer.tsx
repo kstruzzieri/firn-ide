@@ -19,6 +19,7 @@ import { useDirectoryTree as useFetchDirectoryTree } from './useDirectoryTree';
 import { useFileTreePresentation } from '../../hooks/useFileTreePresentation';
 import { useOpenFolder } from '../../hooks/useOpenFolder';
 import { useEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
+import { useLiveAnnouncement } from '../../hooks/useLiveAnnouncement';
 import { TreeRow, ROW_HEIGHT, rowDomId } from './TreeRow';
 import { TreeViewToggle } from './TreeViewToggle';
 import { WorkspaceTabs } from './WorkspaceTabs';
@@ -355,6 +356,12 @@ export function FileExplorer() {
   // win. The status region in the body says it, mounted before it shows.
   const scopedErrorShown =
     !isLoadingTree && !treeError && workspace && !scopeHydrating && scopedError;
+  // Hydration clears the first transient error; only publish its settled result.
+  const scopedErrorAnnouncement = useMemo(
+    () => ({ text: scopedErrorShown ? 'Workspace folder not found' : '' }),
+    [scopedErrorShown]
+  );
+  const liveScopedError = useLiveAnnouncement(scopedErrorAnnouncement);
 
   const renderContent = () => {
     if (isLoadingTree) return <FileExplorerSkeleton />;
@@ -474,7 +481,7 @@ export function FileExplorer() {
             together with its text reaches VoiceOver as created, not changed,
             and is not spoken. */}
         <div className={styles.srOnly} role="status">
-          {scopedErrorShown ? 'Workspace folder not found' : ''}
+          {liveScopedError}
         </div>
         <div className={styles.tree}>{renderContent()}</div>
       </div>

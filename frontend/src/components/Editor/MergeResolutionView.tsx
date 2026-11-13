@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   createMergeResolutionEditor,
   type MergeResolutionEditor,
@@ -12,6 +12,7 @@ import {
   type TextMergeSession,
 } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
+import { useLiveAnnouncement } from '../../hooks/useLiveAnnouncement';
 import { GitConflictStages, GitFileAtRev } from '../../wails/bindings';
 import { decisionLabel, describeMergeAnnouncement } from './mergeAnnouncement';
 import styles from './MergeResolutionView.module.css';
@@ -432,6 +433,7 @@ function TextResolutionContent({
   const hostRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MergeResolutionEditor | null>(null);
   const sessionRef = useRef(session);
+  const openedSessionRef = useRef(session);
   const decisionsRef = useRef(session.decisions);
   const activeIndexRef = useRef<number | null>(null);
   const hadSurfaceFocusRef = useRef(false);
@@ -446,8 +448,16 @@ function TextResolutionContent({
   const [baseExpanded, setBaseExpanded] = useState(false);
   const [announcement, setAnnouncement] = useState(() => {
     const remaining = session.regions.length - Object.keys(session.decisions).length;
-    return `${remaining} conflict${remaining === 1 ? '' : 's'} unresolved.`;
+    return {
+      text: `${remaining} conflict${remaining === 1 ? '' : 's'} unresolved.`,
+      deferred: false,
+    };
   });
+  const reloadAnnouncement = useMemo(
+    () => ({ text: announcement.deferred ? announcement.text : '' }),
+    [announcement]
+  );
+  const liveReloadAnnouncement = useLiveAnnouncement(reloadAnnouncement, true);
   sessionRef.current = session;
   focusResultRef.current = () => editorRef.current?.view.focus();
 
@@ -549,7 +559,7 @@ function TextResolutionContent({
           next.decisions,
           sessionRef.current.regions.length
         );
-        if (message !== null) setAnnouncement(message);
+        if (message !== null) setAnnouncement({ text: message, deferred: false });
         if (message !== null || next.activeIndex !== activeIndexRef.current)
           setResolutionRefusal(null);
         decisionsRef.current = next.decisions;
@@ -576,7 +586,15 @@ function TextResolutionContent({
     // lingers until the first action here.
     const remainingOnOpen =
       session.regions.length - Object.keys(initialEditorState.decisions).length;
-    setAnnouncement(`${remainingOnOpen} conflict${remainingOnOpen === 1 ? '' : 's'} unresolved.`);
+    // Reload moves focus; let it settle before speaking even an unchanged count.
+    const previousSession = openedSessionRef.current;
+    setAnnouncement({
+      text: `${remainingOnOpen} conflict${remainingOnOpen === 1 ? '' : 's'} unresolved.`,
+      deferred:
+        previousSession.path === session.path &&
+        previousSession.requestRevision !== session.requestRevision,
+    });
+    openedSessionRef.current = session;
     return () => {
       hadSurfaceFocusRef.current = surface?.contains(document.activeElement) ?? false;
       editor.destroy();
@@ -783,7 +801,7 @@ function TextResolutionContent({
         </button>
       </footer>
       <div role="status" aria-live="polite" className={styles.srOnly}>
-        {announcement}
+        {announcement.deferred ? liveReloadAnnouncement : announcement.text}
       </div>
     </>
   );
