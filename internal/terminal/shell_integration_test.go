@@ -154,6 +154,23 @@ func unsetenv(t *testing.T, keys ...string) {
 	}
 }
 
+// hermeticHome returns an empty HOME for a test shell whose .zshenv turns
+// off the system-wide startup files zsh reads after zshenv (/etc/zshrc,
+// /etc/zsh/zshrc, and the zprofile/zlogin pair for login shells). Those
+// differ by host: Ubuntu's zshrc runs compinit, which on a CI runner finds an
+// insecure fpath directory and stops at a y/n prompt instead of drawing the
+// shell's prompt. The wrapper .zshenv sources this file before zsh reaches
+// them. The global zshenv still runs first and cannot be skipped. bash never
+// reads this file.
+func hermeticHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".zshenv"), []byte("unsetopt GLOBAL_RCS\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
 func envValue(env []string, key string) (string, bool) {
 	for i := len(env) - 1; i >= 0; i-- {
 		e := env[i]
@@ -331,8 +348,9 @@ func TestIntegratedShellEmitsOSC133(t *testing.T) {
 
 			// Make the spawned shell hermetic: point HOME / USER_ZDOTDIR at an
 			// empty dir so it does not source the developer's real rc files
-			// (p10k, nvm, input-blocking prompts) which would make this flaky.
-			hermetic := t.TempDir()
+			// (p10k, nvm, input-blocking prompts) or the host's global zshrc,
+			// either of which would make this flaky.
+			hermetic := hermeticHome(t)
 			base := cmd.Env
 			if base == nil {
 				base = os.Environ()

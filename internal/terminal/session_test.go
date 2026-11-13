@@ -163,8 +163,9 @@ func TestNewSession_ZshBackspaceErasesWithoutParentTERM(t *testing.T) {
 	if err != nil {
 		t.Skip("zsh not installed")
 	}
-	// Hermetic: no user rc files, no inherited TERM, as under launchd.
-	t.Setenv("HOME", t.TempDir())
+	// Hermetic: no user rc files, no global zshrc, no inherited TERM (as
+	// under launchd).
+	t.Setenv("HOME", hermeticHome(t))
 	t.Setenv("SHELL", zsh)
 	unsetenv(t, "TERM", "COLORTERM", "ZDOTDIR", "USER_ZDOTDIR", "XDG_CACHE_HOME")
 
