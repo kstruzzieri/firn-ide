@@ -505,6 +505,21 @@
   margin-top: -6px;
 }
 
+/* [#550] The workspace's always-mounted alert regions. An empty one cancels the
+   gap it would add in the body's flex column (the Golem picker has none); a
+   filled one is a plain block. Margin only: WebKit rebuilds a live region
+   whose display type changes, and VoiceOver then does not announce it. */
+.body > .alertSlot:empty {
+  margin-top: calc(-1 * var(--body-gap));
+}
+
+/* Source error and recovery can both show; keep the body's gap between them. */
+.blockingAlerts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--body-gap);
+}
+
 .menuHint {
   margin: 0;
   padding: 0 8px;
@@ -593,9 +608,11 @@
 /* ── body + cards ───────────────────────────────────────────────────────── */
 
 .body {
+  --body-gap: 14px;
+
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--body-gap);
   padding: 12px 12px 14px;
 }
 
@@ -2776,7 +2793,7 @@ select.input {
 
   .body {
     padding: 16px 22px 18px;
-    gap: 18px;
+    --body-gap: 18px;
   }
 
   /* ── destination approval prompt: grid rows, actions right-aligned ─────── */

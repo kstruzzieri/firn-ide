@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
 import { openSharedConfiguration } from '../../helpers/sharedConfiguration';
@@ -996,6 +996,31 @@ describe('GolemConfigWorkspace', () => {
     unmount();
     settle({ busy: false, projection: readyProjection });
     await waitFor(() => expect(ReloadGolemSettings).toHaveBeenCalledTimes(1));
+  });
+
+  // WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live
+  // region inserted together with its text, and VoiceOver says nothing. A load
+  // that fails is reachable only while the Golem service shuts down, so the app
+  // could not record it; jsdom has no accessibility tree, so this pins the
+  // cause: the alert region is in the page, empty, while the configuration
+  // loads, and the failure arrives in that same element.
+  it('announces a failed load in the alert region that was waiting for it', async () => {
+    let fail!: (reason: unknown) => void;
+    (ReloadGolemSettings as jest.Mock).mockReturnValue(
+      new Promise((_, reject) => {
+        fail = reject;
+      })
+    );
+    render(<GolemConfigWorkspace onClose={() => {}} />);
+    const region = screen.getByTestId('golem-config-load-alert');
+    expect(region).toHaveAttribute('role', 'alert');
+    expect(region).toBeEmptyDOMElement();
+
+    await act(async () => fail('Golem is unavailable.'));
+
+    expect(screen.getByTestId('golem-config-load-alert')).toBe(region);
+    expect(region).toHaveTextContent('Golem is unavailable.');
+    expect(within(region).getByRole('button', { name: 'Retry' })).toBeEnabled();
   });
 
   it('offers a bounded message and Retry when the call is rejected', async () => {

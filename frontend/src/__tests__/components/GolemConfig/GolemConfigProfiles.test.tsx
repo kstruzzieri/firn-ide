@@ -337,6 +337,28 @@ describe('masthead profile select', () => {
     await waitFor(() => expect(sourceTrigger()).toHaveFocus());
   });
 
+  // The packaged app recorded a profile that failed to load: its notice's
+  // alert region mounted together with its text, which WebKit reports as
+  // created and VoiceOver does not speak. jsdom has no accessibility tree, so
+  // this pins the cause: the region is in the body, empty, before the pick, and
+  // the refusal arrives in that same element.
+  it('announces a failed pick in the alert region that was waiting for it', async () => {
+    (LoadGolemProfile as jest.Mock).mockResolvedValue({
+      status: 'diagnostics',
+      diagnostics: [{ code: 'not_found', profileId: 'user/mine' }],
+    });
+    await mountReady();
+    const region = screen.getByTestId('golem-config-blocking-alert');
+    expect(region).toHaveAttribute('role', 'alert');
+    expect(region).toBeEmptyDOMElement();
+
+    const user = userEvent.setup();
+    await pickSource(user, /mine/, 'Yours');
+
+    await waitFor(() => expect(region).toHaveTextContent('That profile no longer exists.'));
+    expect(screen.getByTestId('golem-config-blocking-alert')).toBe(region);
+  });
+
   it('re-adopts the profile a START FROM entry names even when it is already the source', async () => {
     // [K3] `selectSource` short-circuits on `value === current`, so START FROM Curated
     // local was a silent no-op once `curated/local` WAS the source — exactly when a
@@ -685,7 +707,8 @@ describe('Save as profile', () => {
     await openMenu(user);
     await user.type(screen.getByLabelText('Profile name'), 'Bad Name!');
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('That profile name is invalid.');
+    const form = screen.getByRole('group', { name: 'Save as profile' });
+    expect(within(form).getByRole('alert')).toHaveTextContent('That profile name is invalid.');
     expect(SaveGolemProfileAs).not.toHaveBeenCalled();
   });
 

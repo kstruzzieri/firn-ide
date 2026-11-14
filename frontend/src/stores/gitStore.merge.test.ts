@@ -2615,6 +2615,22 @@ describe('queue advance', () => {
     expect(useGitStore.getState().mergeQueueAnnouncement).toBe('');
   });
 
+  it('does not reuse a completed queue announcement when another conflict opens', async () => {
+    await openQueue('file.txt', ['file.txt', 'other.txt']);
+    await useGitStore.getState().mergeFinalizeAndStage('resolved\n');
+    expect(useGitStore.getState().mergeQueueAnnouncement).toBe(
+      'Now resolving other.txt. 1 conflicted file remaining.'
+    );
+
+    useGitStore.getState().recordDecision(0, 'C');
+    expect(await useGitStore.getState().mergeFinalizeAndStage('resolved\n')).toBe(true);
+    expect(useGitStore.getState().mergeSession).toBeNull();
+
+    expect(await useGitStore.getState().openMergeResolution('later.txt', ['later.txt'])).toBe(true);
+    expect(useGitStore.getState().mergeSession?.path).toBe('later.txt');
+    expect(useGitStore.getState().mergeQueueAnnouncement).toBe('');
+  });
+
   it('marks the advance pending across the gap between sessions', async () => {
     await openQueue('file.txt', ['file.txt', 'other.txt']);
     const gate = deferred<git.ConflictState>();

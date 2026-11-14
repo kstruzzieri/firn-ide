@@ -543,11 +543,10 @@ export function ProviderEditor({
         </div>
       </div>
 
-      {refusal !== '' && (
-        <p className={styles.fieldError} role="alert">
-          {refusal}
-        </p>
-      )}
+      {/* Mounted with the editor, before any refusal: a region inserted
+          together with its text reaches VoiceOver as created, not changed,
+          and is not spoken. Unstyled, so it adds no space while empty. */}
+      <div role="alert">{refusal !== '' && <p className={styles.fieldError}>{refusal}</p>}</div>
 
       <div className={styles.editorFooter}>
         <button

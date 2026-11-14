@@ -175,6 +175,26 @@ describe('lifecycle', () => {
     expect(screen.getByRole('textbox', { name: /message golem/i })).toBeEnabled();
   });
 
+  // WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live
+  // region inserted together with its text, and VoiceOver says nothing; the
+  // main window recorded that for alerts built like this one. jsdom has no
+  // accessibility tree, so this pins the cause: the alert region is mounted,
+  // empty, before a failure, and the reason arrives in that same element.
+  it('announces a failure through an alert region mounted before it', () => {
+    install(viewOf());
+    render(<GolemWindowRoot />);
+    const region = screen.getByRole('alert');
+    expect(region).toBeEmptyDOMElement();
+
+    act(() => set({ error: 'The main window stopped answering.' }));
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region).toHaveTextContent('The main window stopped answering.');
+
+    act(() => set({ error: null }));
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region).toBeEmptyDOMElement();
+  });
+
   it('shows the failure reason with a retry that reconnects', () => {
     install(viewOf(), { error: 'The main window stopped answering.' });
     render(<GolemWindowRoot />);

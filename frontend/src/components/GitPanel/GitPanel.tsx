@@ -94,7 +94,28 @@ export function GitPanel() {
     };
   }, [status, repoRoot, scopeCtx]);
 
-  if (!status || !status.isRepo) {
+  // One alert region for both returns below, mounted while empty with a fixed
+  // class and parent: a region inserted together with its text reaches
+  // VoiceOver as created, not changed, and is not spoken. The key keeps it the
+  // same element when the status arrives, so a repository that opens already in
+  // conflict is announced too.
+  const repo = status?.isRepo ? status : null;
+  const alertRegion = (
+    <div key="git-alerts" role="alert" className={styles.alertRegion}>
+      {repo &&
+        (buckets.conflicts.length > 0 ? (
+          <ConflictBanner branch={repo.branch} conflicts={buckets.conflicts} raw={lastError} />
+        ) : (
+          lastError && (
+            <div className={styles.errorStrip} data-testid="git-error">
+              {lastError}
+            </div>
+          )
+        ))}
+    </div>
+  );
+
+  if (!repo) {
     const message = !status
       ? 'Loading git status…'
       : status.detail
@@ -102,7 +123,10 @@ export function GitPanel() {
         : 'Not a git repository.';
     return (
       <Panel title="Source Control">
-        <div className={styles.empty}>{message}</div>
+        <div className={styles.panelBody}>
+          <div className={styles.empty}>{message}</div>
+          {alertRegion}
+        </div>
       </Panel>
     );
   }
@@ -135,20 +159,7 @@ export function GitPanel() {
           </div>
         </div>
         <SyncControls />
-        {/* Mounted while empty, with a fixed class: a region inserted together
-            with its text reaches VoiceOver as created, not changed, and is
-            not spoken. */}
-        <div role="alert" className={styles.alertRegion}>
-          {buckets.conflicts.length > 0 ? (
-            <ConflictBanner branch={status.branch} conflicts={buckets.conflicts} raw={lastError} />
-          ) : (
-            lastError && (
-              <div className={styles.errorStrip} data-testid="git-error">
-                {lastError}
-              </div>
-            )
-          )}
-        </div>
+        {alertRegion}
         {receipt && <CommitReceiptCard />}
         <CommitArea
           key={git.epoch}
@@ -646,13 +657,15 @@ function ChangeRow({
           </span>
         )}
       </button>
+      {/* Busy is aria-disabled, not disabled, for the focus reason SyncControls
+          gives; the store ignores a press while another operation runs. */}
       <span className={styles.rowActions}>
         {file.rowStatus === 'untracked' && (
           <button
             type="button"
             className={styles.rowTrackBtn}
             onClick={() => void git.intentToAdd([file.change.path])}
-            disabled={busy}
+            aria-disabled={busy}
             aria-label={`Track ${file.change.path} without staging`}
             title="Track without staging (git add -N): the file shows in diffs and can be staged hunk-by-hunk"
           >
@@ -664,7 +677,7 @@ function ChangeRow({
             type="button"
             className={styles.rowTrackBtn}
             onClick={() => void git.unstage([file.change.path])}
-            disabled={busy}
+            aria-disabled={busy}
             aria-label={`Untrack ${file.change.path}`}
             title="Stop tracking (git restore --staged): back to untracked, file kept on disk"
           >
