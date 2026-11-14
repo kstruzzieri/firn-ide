@@ -1,3 +1,9 @@
+// These tests assert macOS/Linux path rules (#510): pin a POSIX host.
+jest.mock('../utils/platform', () => ({
+  ...jest.requireActual('../utils/platform'),
+  getPlatform: () => 'linux',
+}));
+
 jest.mock('../wails/bindings', () => ({
   GitStatus: jest.fn(),
   GitStage: jest.fn(),
@@ -328,6 +334,47 @@ describe('openMergeResolution', () => {
     const snapshotOrder = mockSnapshot.mock.invocationCallOrder[0];
     expect(writeOrder).toBeLessThan(snapshotOrder);
     expect(useIDEStore.getState().openFiles[0].isModified).toBe(false);
+  });
+
+  // #510: on macOS and Linux `a\b` is a folder name, not `a/b`. Resolve on the
+  // conflicted `a\b/x.ts` must not flush the unsaved `a/b/x.ts` buffer over it.
+  it('does not flush a twin buffer whose path differs only by a backslash', async () => {
+    useIDEStore.setState({
+      openFiles: [openFile({ path: '/repo/a/b/x.ts', isModified: true, content: 'a/b draft' })],
+    });
+    useGitStore.setState({
+      status: repoStatus({
+        files: [{ path: 'a\\b/x.ts', index: 'U', worktree: 'U', unmerged: true }],
+      }),
+    });
+    mockStages.mockResolvedValue(allStages({ path: 'a\\b/x.ts' }));
+    mockHeads.mockResolvedValue(heads());
+    mockSnapshot.mockResolvedValue(snapshot());
+
+    const ok = await useGitStore.getState().openMergeResolution('a\\b/x.ts', ['a\\b/x.ts']);
+
+    expect(ok).toBe(true);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(useIDEStore.getState().openFiles[0].isModified).toBe(true);
+  });
+
+  it('flushes the dirty buffer to its own path when the repo root holds a backslash', async () => {
+    const root = '/home/dev/a\\b';
+    useGitStore.getState().resetForWorkspace(root);
+    useGitStore.setState({ status: repoStatus({ repoRoot: root }) });
+    mockGitStatus.mockResolvedValue(repoStatus({ repoRoot: root }));
+    useIDEStore.setState({
+      openFiles: [openFile({ path: `${root}/file.txt`, isModified: true, content: 'unsaved' })],
+    });
+    mockStages.mockResolvedValue(allStages());
+    mockHeads.mockResolvedValue(heads());
+    mockSnapshot.mockResolvedValue(snapshot());
+
+    const ok = await useGitStore.getState().openMergeResolution('file.txt', ['file.txt']);
+
+    expect(ok).toBe(true);
+    expect(mockWriteFile).toHaveBeenCalledWith(`${root}/file.txt`, 'unsaved', 'utf-8', 'lf', false);
+    expect(useGitStore.getState().mergeSession?.absPath).toBe(`${root}/file.txt`);
   });
 
   it('returns false with a toast when flushing the dirty buffer fails', async () => {
@@ -2612,6 +2659,22 @@ describe('queue advance', () => {
 
     useGitStore.getState().closeMergeResolution();
 
+    expect(useGitStore.getState().mergeQueueAnnouncement).toBe('');
+  });
+
+  it('does not reuse a completed queue announcement when another conflict opens', async () => {
+    await openQueue('file.txt', ['file.txt', 'other.txt']);
+    await useGitStore.getState().mergeFinalizeAndStage('resolved\n');
+    expect(useGitStore.getState().mergeQueueAnnouncement).toBe(
+      'Now resolving other.txt. 1 conflicted file remaining.'
+    );
+
+    useGitStore.getState().recordDecision(0, 'C');
+    expect(await useGitStore.getState().mergeFinalizeAndStage('resolved\n')).toBe(true);
+    expect(useGitStore.getState().mergeSession).toBeNull();
+
+    expect(await useGitStore.getState().openMergeResolution('later.txt', ['later.txt'])).toBe(true);
+    expect(useGitStore.getState().mergeSession?.path).toBe('later.txt');
     expect(useGitStore.getState().mergeQueueAnnouncement).toBe('');
   });
 

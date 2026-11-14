@@ -175,6 +175,26 @@ describe('lifecycle', () => {
     expect(screen.getByRole('textbox', { name: /message golem/i })).toBeEnabled();
   });
 
+  // WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live
+  // region inserted together with its text, and VoiceOver says nothing; the
+  // main window recorded that for alerts built like this one. jsdom has no
+  // accessibility tree, so this pins the cause: the alert region is mounted,
+  // empty, before a failure, and the reason arrives in that same element.
+  it('announces a failure through an alert region mounted before it', () => {
+    install(viewOf());
+    render(<GolemWindowRoot />);
+    const region = screen.getByRole('alert');
+    expect(region).toBeEmptyDOMElement();
+
+    act(() => set({ error: 'The main window stopped answering.' }));
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region).toHaveTextContent('The main window stopped answering.');
+
+    act(() => set({ error: null }));
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region).toBeEmptyDOMElement();
+  });
+
   it('shows the failure reason with a retry that reconnects', () => {
     install(viewOf(), { error: 'The main window stopped answering.' });
     render(<GolemWindowRoot />);
@@ -310,9 +330,58 @@ describe('interaction state', () => {
   it('locks only the composer of a conversation awaiting an acknowledgement', () => {
     install(viewOf(), { pendingComposers: new Map([['conv-a', 'send']]) });
     render(<GolemWindowRoot />);
-    expect(screen.getByRole('textbox', { name: /message golem/i })).toBeDisabled();
+    // Read-only, not disabled: a disabled control loses keyboard focus in
+    // WebKit, and the composer is where a send leaves it (#550).
+    expect(screen.getByRole('textbox', { name: /message golem/i })).toHaveAttribute('readonly');
     // The window itself is still usable: the re-dock must never be trapped.
     expect(screen.getByRole('button', { name: /dock in main window/i })).toBeEnabled();
+  });
+
+  // WebKit moves keyboard focus to <body> when the focused control becomes
+  // disabled and does not give it back; the packaged app recorded Send leaving
+  // focus on nothing in this window, and the composer disabled itself the same
+  // way under an Enter. jsdom does not model that blur, so these pin the cause:
+  // a send hands focus to the composer, which stays enabled (read-only) while
+  // the send is unacknowledged and keeps the focus once its draft clears.
+  it('keeps keyboard focus in the composer through a Send press', () => {
+    install(viewOf());
+    useDraftStore.getState().setDraft('conv-a', 'hello');
+    relayActions.send.mockImplementationOnce(() =>
+      set({ pendingComposers: new Map([['conv-a', 'send']]) })
+    );
+    render(<GolemWindowRoot />);
+    const composer = screen.getByRole('textbox', { name: /message golem/i });
+    const send = screen.getByRole('button', { name: 'Send' });
+
+    send.focus();
+    fireEvent.click(send);
+    expect(relayActions.send).toHaveBeenCalledWith('conv-a', 'hello');
+    expect(composer).toHaveFocus();
+    expect(composer).toBeEnabled();
+    expect(composer).toHaveAttribute('readonly');
+
+    act(() => {
+      useDraftStore.getState().clear('conv-a');
+      set({ pendingComposers: NO_PENDING_COMPOSERS });
+    });
+    expect(composer).toHaveFocus();
+    expect(composer).not.toHaveAttribute('readonly');
+  });
+
+  it('keeps the composer enabled and focused through an Enter send', () => {
+    install(viewOf());
+    useDraftStore.getState().setDraft('conv-a', 'hello');
+    relayActions.send.mockImplementationOnce(() =>
+      set({ pendingComposers: new Map([['conv-a', 'send']]) })
+    );
+    render(<GolemWindowRoot />);
+    const composer = screen.getByRole('textbox', { name: /message golem/i });
+
+    composer.focus();
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    expect(relayActions.send).toHaveBeenCalledWith('conv-a', 'hello');
+    expect(composer).toBeEnabled();
+    expect(composer).toHaveFocus();
   });
 
   it('announces nothing while Go has not made this window ready', () => {

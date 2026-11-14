@@ -38,6 +38,7 @@ import { GitDiffView } from './GitDiffView';
 import { MergeResolutionView } from './MergeResolutionView';
 import { useGitStore } from '../../stores/gitStore';
 import { useGitBaseline } from '../../hooks/useGitBaseline';
+import { useLiveAnnouncement } from '../../hooks/useLiveAnnouncement';
 import { getLanguageName } from './codemirror';
 import { createWorkspacePathResolver } from '../../utils/workspaceRegions';
 import { accentVar } from '../../utils/accent';
@@ -211,6 +212,11 @@ export function Editor() {
   const diffOwner = diffSession ? resolveWorkspace(diffSession.absPath) : null;
   const mergeOwner = mergeSession ? resolveWorkspace(mergeSession.absPath) : null;
 
+  const queueText = mergeSession && !mergeAdvancePending ? queueAnnouncement : '';
+  const queueAnnouncementRequest = useMemo(() => ({ text: queueText }), [queueText]);
+  // The next merge view owns Result focus; publish after its focus change settles.
+  const publishedQueueAnnouncement = useLiveAnnouncement(queueAnnouncementRequest, true);
+
   // Any close of the merge surface — Escape, the tab X, the resolved-outside
   // notice, or a confirmed discard — ends with the session becoming null. One
   // effect observing that transition restores focus for all of them. A queue
@@ -300,6 +306,22 @@ export function Editor() {
     });
   };
 
+  // The first child of the editor root in both returns below, so the welcome
+  // screen between two queued conflicted files keeps it the same element: a
+  // region mounted together with its text reaches VoiceOver as created, not
+  // changed, and is not spoken.
+  const queueAnnouncer = (
+    <div
+      key="merge-queue-announcement"
+      data-testid="merge-queue-announcement"
+      role="status"
+      aria-live="polite"
+      className={styles.srOnly}
+    >
+      {publishedQueueAnnouncement}
+    </div>
+  );
+
   // Welcome screen when no editor surface at all is open
   if (openFiles.length === 0 && !diffSession && !mergeSession && !configTabOpen) {
     // Filter out the currently open workspace from recent list
@@ -307,6 +329,7 @@ export function Editor() {
 
     return (
       <div ref={editorRef} className={styles.editor} tabIndex={-1}>
+        {queueAnnouncer}
         <div className={styles.welcome}>
           <img src={firnLogo} alt="Firn IDE" className={styles.welcomeLogo} />
           <div className={styles.shortcuts}>
@@ -353,15 +376,8 @@ export function Editor() {
 
   return (
     <div ref={editorRef} className={styles.editor} tabIndex={-1}>
+      {queueAnnouncer}
       {/* Tab bar */}
-      <div
-        data-testid="merge-queue-announcement"
-        role="status"
-        aria-live="polite"
-        className={styles.srOnly}
-      >
-        {queueAnnouncement}
-      </div>
       <div className={styles.tabStrip}>
         <div
           ref={setTabBar}

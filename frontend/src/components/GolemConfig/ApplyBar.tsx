@@ -186,6 +186,11 @@ export interface ApplyBarProps {
    * cancel-then-transition paths rather than an edit of a frozen request.
    */
   discardLocked: boolean;
+  /**
+   * [#550] A load or write in flight, part of `locked`. Apply is aria-disabled
+   * for it rather than natively disabled, so the focus a press put there stays.
+   */
+  busy?: boolean;
   onApply: () => void;
   onDiscard: () => void;
   /** Opens and focuses the editor behind a change chip. */
@@ -201,6 +206,7 @@ export function ApplyBar({
   count,
   blocked,
   locked,
+  busy = false,
   discardLocked,
   onApply,
   onDiscard,
@@ -317,8 +323,9 @@ export function ApplyBar({
       <button
         type="button"
         className={`${styles.button} ${styles.primary}`}
-        disabled={locked || blocked !== null}
-        onClick={onApply}
+        disabled={(locked && !busy) || blocked !== null}
+        aria-disabled={busy}
+        onClick={busy ? undefined : onApply}
       >
         Apply
       </button>

@@ -659,6 +659,11 @@ export function GolemSurface({
     if (frozen || composerPending || conversationId === null) return;
     if (draft.trim() === '') return;
     actions.send(conversationId, draft);
+    // [#550] A send leaves Send impossible (pending, then an empty draft), and
+    // WebKit drops keyboard focus from a button that disables itself. The next
+    // thing to do is type, so focus goes to the composer, which only turns
+    // read-only while the send is unacknowledged.
+    composerRef.current?.focus();
   };
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -899,7 +904,10 @@ export function GolemSurface({
           placeholder="Ask Golem…"
           rows={3}
           value={draft}
-          disabled={composerLocked}
+          // [#550] Read-only, not disabled, while a send or clear is pending:
+          // a disabled control loses keyboard focus in WebKit for good.
+          disabled={frozen || conversationId === null}
+          readOnly={composerPending}
           onChange={(event) => {
             if (composerLocked) return;
             onDraftChange(event.target.value);

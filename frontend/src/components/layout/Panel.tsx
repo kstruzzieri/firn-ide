@@ -31,13 +31,16 @@ interface PanelActionProps {
 }
 
 export function PanelAction({ icon, title, onClick, disabled, ariaLabel }: PanelActionProps) {
+  // aria-disabled, never native: WebKit moves keyboard focus to <body> when the
+  // focused button becomes disabled and does not give it back, so pressing an
+  // action that disables itself while it runs would drop the user.
   return (
     <button
       type="button"
       className={styles.action}
       title={title}
-      onClick={onClick}
-      disabled={disabled}
+      onClick={disabled ? undefined : onClick}
+      aria-disabled={disabled}
       aria-label={ariaLabel || title}
     >
       {icon}

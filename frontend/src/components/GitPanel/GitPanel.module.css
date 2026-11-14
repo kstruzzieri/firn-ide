@@ -8,8 +8,9 @@
   box-sizing: border-box;
 }
 
+/* Inside .panelBody, whose 8px padding makes up the rest of the 16px 12px. */
 .empty {
-  padding: 16px 12px;
+  padding: 8px 4px;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -67,7 +68,7 @@
     opacity var(--transition);
 }
 
-.syncBtn:hover:not(:disabled) {
+.syncBtn:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--surface-active);
 }
 
@@ -79,11 +80,12 @@
   background: var(--accent-dim, color-mix(in srgb, var(--accent) 14%, transparent));
 }
 
-.syncActive:hover:not(:disabled) {
+.syncActive:hover:not(:disabled, [aria-disabled='true']) {
   background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
-.syncBtn:disabled {
+.syncBtn:disabled,
+.syncBtn[aria-disabled='true'] {
   opacity: 0.4;
   cursor: default;
 }
@@ -196,7 +198,8 @@
   cursor: pointer;
 }
 
-.commitBtn:disabled {
+.commitBtn:disabled,
+.commitBtn[aria-disabled='true'] {
   opacity: 0.45;
   cursor: default;
 }
@@ -211,7 +214,7 @@
   cursor: pointer;
 }
 
-.smallBtn:hover:not(:disabled) {
+.smallBtn:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--surface-hover);
 }
 
@@ -292,6 +295,23 @@
 .receiptPush {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+/* The empty visible alert slot must not add a flex gap. */
+.alertRegion:empty {
+  margin-top: -10px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .errorStrip {
@@ -583,17 +603,20 @@
   pointer-events: auto;
 }
 
-.rowTrackBtn:hover:not(:disabled) {
+.rowTrackBtn:hover:not([aria-disabled='true']) {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
 
-.rowTrackBtn:disabled {
+/* Busy is aria-disabled, not native, so a pressed Track keeps keyboard focus;
+   it stays visible while it holds that focus. */
+.rowTrackBtn[aria-disabled='true'] {
   cursor: default;
   opacity: 0;
 }
 
-.row:hover .rowTrackBtn:disabled {
+.row:hover .rowTrackBtn[aria-disabled='true'],
+.rowTrackBtn[aria-disabled='true']:focus-visible {
   opacity: 0.45;
 }
 

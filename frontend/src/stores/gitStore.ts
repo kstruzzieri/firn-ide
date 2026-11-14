@@ -1943,7 +1943,12 @@ async function finalizeMergeSession(
     const remaining = session.fileQueue.filter((p) => p !== session.path);
     const advancing = remaining.length > 0;
     set(
-      { mergeSession: null, mergeFocused: false, mergeAdvancePending: advancing },
+      {
+        mergeSession: null,
+        mergeFocused: false,
+        mergeAdvancePending: advancing,
+        mergeQueueAnnouncement: '',
+      },
       false,
       'git/mergeFinalized'
     );

@@ -48,7 +48,7 @@
   transition: all var(--transition);
 }
 
-.action:hover:not(:disabled) {
+.action:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--surface-hover);
   color: var(--text-secondary);
 }
@@ -58,7 +58,8 @@
   outline-offset: 2px;
 }
 
-.action:disabled {
+.action:disabled,
+.action[aria-disabled='true'] {
   opacity: 0.4;
   cursor: not-allowed;
 }
