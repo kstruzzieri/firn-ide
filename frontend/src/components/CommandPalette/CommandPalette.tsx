@@ -184,11 +184,12 @@ export function CommandPalette({
             );
           })}
         </ul>
-        {!matches.length && (
-          <p className={styles.empty} role="status">
-            No commands found
-          </p>
-        )}
+        {/* Mounted and unstyled while there are matches: a region inserted
+            together with its text reaches VoiceOver as created, not changed,
+            and is not spoken. */}
+        <div role="status">
+          {!matches.length && <p className={styles.empty}>No commands found</p>}
+        </div>
       </div>
     </dialog>
   );

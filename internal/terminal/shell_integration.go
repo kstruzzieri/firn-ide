@@ -88,10 +88,28 @@ func writeFileAtomic(dir, dst string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
-// integratedCommand builds the shell command with OSC 133 integration when the
+// integratedCommand builds the command for a terminal's shell: shellCommand's
+// integration choice, plus the terminal type every shell needs.
+//
+// TERM and COLORTERM describe xterm.js, the emulator that actually renders the
+// output, so they override whatever Firn inherited. An app started by launchd
+// (Finder, the Dock, `open`) inherits no TERM, and zsh then treats the PTY as
+// dumb and draws Backspace as a space (#556); one started from another
+// terminal inherits that terminal's TERM, which is the wrong emulator.
+// os/exec keeps the last value of a duplicate key, so appending overrides.
+func integratedCommand(shellPath, cacheRoot string) *exec.Cmd {
+	cmd := shellCommand(shellPath, cacheRoot)
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	cmd.Env = append(cmd.Env, "TERM=xterm-256color", "COLORTERM=truecolor")
+	return cmd
+}
+
+// shellCommand builds the shell command with OSC 133 integration when the
 // shell is supported and wrapper setup succeeds. It is FAIL-OPEN: any failure
 // yields a plain shell command so terminal creation never breaks on integration.
-func integratedCommand(shellPath, cacheRoot string) *exec.Cmd {
+func shellCommand(shellPath, cacheRoot string) *exec.Cmd {
 	plain := exec.Command(shellPath)
 
 	kind := shellKind(shellPath)

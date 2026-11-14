@@ -389,7 +389,7 @@
   cursor: pointer;
 }
 
-.button:hover:not(:disabled) {
+.button:hover:not(:disabled, [aria-disabled='true']) {
   border-color: var(--accent);
 }
 
@@ -398,7 +398,8 @@
   outline-offset: 2px;
 }
 
-.button:disabled {
+.button:disabled,
+.button[aria-disabled='true'] {
   opacity: 0.4;
   cursor: default;
 }
@@ -442,7 +443,7 @@
   color: var(--status-warning);
 }
 
-.warn:hover:not(:disabled) {
+.warn:hover:not(:disabled, [aria-disabled='true']) {
   border-color: var(--status-warning);
   background-color: rgba(245, 158, 11, 0.08);
 }
@@ -496,6 +497,28 @@
   border: 1px solid var(--surface-border);
   border-radius: 6px;
   box-shadow: var(--shadow-panel);
+}
+
+/* Save as profile's alert region stays mounted while empty; cancel the form's
+   flex gap it would otherwise add. Margin only: WebKit rebuilds a live region
+   whose display type changes, and VoiceOver then does not announce it. */
+.menuAlert:empty {
+  margin-top: -6px;
+}
+
+/* [#550] The workspace's always-mounted alert regions. An empty one cancels the
+   gap it would add in the body's flex column (the Golem picker has none); a
+   filled one is a plain block. Margin only: WebKit rebuilds a live region
+   whose display type changes, and VoiceOver then does not announce it. */
+.body > .alertSlot:empty {
+  margin-top: calc(-1 * var(--body-gap));
+}
+
+/* Source error and recovery can both show; keep the body's gap between them. */
+.blockingAlerts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--body-gap);
 }
 
 .menuHint {
@@ -586,9 +609,11 @@
 /* ── body + cards ───────────────────────────────────────────────────────── */
 
 .body {
+  --body-gap: 14px;
+
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--body-gap);
   padding: 12px 12px 14px;
 }
 
@@ -2425,6 +2450,12 @@ select.input {
   color: var(--accent);
 }
 
+/* [#550] Focus lands here when a press opens an approval: the masthead title's ring. */
+.grantTitle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
 .grantTtl {
   margin-left: auto;
   font-family: var(--font-mono);
@@ -2769,7 +2800,7 @@ select.input {
 
   .body {
     padding: 16px 22px 18px;
-    gap: 18px;
+    --body-gap: 18px;
   }
 
   /* ── destination approval prompt: grid rows, actions right-aligned ─────── */

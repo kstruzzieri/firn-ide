@@ -9,7 +9,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GolemConfigWorkspace } from '../../../components/GolemConfig/GolemConfigWorkspace';
 import * as golemModel from '../../../components/GolemConfig/golemModel';
@@ -419,10 +419,84 @@ describe('Use model', () => {
       consentOutcome: 'unchanged',
     });
     await tickApplyAnywayIfAsked(fold);
+    // A conflict settles the draft, which remounts this card: an alert region
+    // inside it would be created together with the conflict, which WebKit
+    // reports as created and VoiceOver does not speak. Pin the cause: the
+    // region announcing it is waiting, empty, outside the card, and stays the
+    // same element.
+    const region = screen.getByTestId('golem-conflict-alert');
+    expect(region).toHaveAttribute('role', 'alert');
+    expect(region).toBeEmptyDOMElement();
+    expect(picker()).not.toContainElement(region);
     await userEvent.click(within(fold).getByRole('button', { name: 'Use model' }));
     expect(
       await within(picker()).findByText(/The configuration moved while this draft was open/)
     ).toBeInTheDocument();
+    expect(screen.getByTestId('golem-conflict-alert')).toBe(region);
+    await waitFor(() =>
+      expect(region).toHaveTextContent(/The configuration moved while this draft was open/)
+    );
+  });
+
+  it.each([
+    ['recovers focus lost with the card', false],
+    ['preserves focus the user moved elsewhere', true],
+  ])('announces a Use model conflict after it %s', async (_, moveFocus) => {
+    let finish!: (result: unknown) => void;
+    (ApplyGolemSettings as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    await mount();
+    const fold = await openPicker();
+    await userEvent.click(
+      optionNamed(within(fold).getByRole('listbox', { name: 'Can run Golem' }), 'zai-org/GLM-5.2')
+    );
+    const region = screen.getByTestId('golem-conflict-alert');
+    await userEvent.click(within(fold).getByRole('button', { name: 'Use model' }));
+    const oldChange = changeButton();
+    expect(oldChange).toHaveFocus();
+    const title = screen.getByRole('heading', { name: 'Golem Configuration' });
+    if (moveFocus) act(() => title.focus());
+
+    const textAtFocus: (string | null)[] = [];
+    const recordFocus = (event: FocusEvent) => {
+      if (event.target === changeButton()) textAtFocus.push(region.textContent);
+    };
+    document.addEventListener('focusin', recordFocus);
+    const published: { text: string | null; focus: Element | null }[] = [];
+    const observer = new MutationObserver(() => {
+      if (region.textContent !== '')
+        published.push({ text: region.textContent, focus: document.activeElement });
+    });
+    observer.observe(region, { childList: true, subtree: true, characterData: true });
+    jest.useFakeTimers();
+    try {
+      await act(async () => {
+        finish({ status: 'conflict', conflict: 'target', consentOutcome: 'unchanged' });
+      });
+      expect(changeButton()).not.toBe(oldChange);
+      expect(textAtFocus).toEqual(moveFocus ? [] : ['']);
+      expect(moveFocus ? title : changeButton()).toHaveFocus();
+      // DOM focus alone did not prevent VoiceOver swallowing the next-task alert.
+      await act(async () => jest.advanceTimersByTime(399));
+      expect(region).toBeEmptyDOMElement();
+      expect(published).toHaveLength(0);
+      await act(async () => jest.advanceTimersByTime(1));
+      expect(published).toHaveLength(1);
+      expect(published[0].focus).toBe(moveFocus ? title : changeButton());
+      expect(published[0].text).toContain('The configuration moved while this draft was open');
+      expect(screen.getByTestId('golem-conflict-alert')).toBe(region);
+      expect(within(picker()).getByRole('button', { name: 'Reload & review draft' })).toBeEnabled();
+
+      await userEvent.setup({ advanceTimers: jest.advanceTimersByTime }).tab();
+      expect(published).toHaveLength(1);
+    } finally {
+      observer.disconnect();
+      document.removeEventListener('focusin', recordFocus);
+      jest.useRealTimers();
+    }
   });
 
   it('keeps a later destination check out of the picker', async () => {

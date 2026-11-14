@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Panel, PanelAction } from '../layout';
 import { RestartIcon, ChevronRightIcon, ChevronDownIcon } from '../icons';
 import { useGitStore, useGitStatusSnapshot } from '../../stores/gitStore';
@@ -13,6 +13,7 @@ import { joinRepoPath, normalizeFsPath } from '../../utils/paths';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import { FileIcon } from '../FileExplorer/FileIcon';
 import { BranchSwitcher } from '../git/BranchSwitcher';
+import { useLiveAnnouncement } from '../../hooks/useLiveAnnouncement';
 import styles from './GitPanel.module.css';
 
 type ViewScope = 'workspace' | 'project';
@@ -38,6 +39,7 @@ const statusLetter: Record<GitRowStatus, string> = {
 export function GitPanel() {
   const { status, isRefreshing, opInFlight, lastError } = useGitStatusSnapshot();
   const receipt = useGitStore((s) => s.lastCommitReceipt);
+  const mergeOwnsConflicts = useGitStore((s) => s.mergeFocused || s.mergeAdvancePending);
   const workspaces = useIDEStore((s) => s.workspaces);
   // Scope follows the shared workspace focus, so the panel matches whatever the
   // file tree / workspace selector is showing (selecting the Frontend workspace
@@ -94,7 +96,37 @@ export function GitPanel() {
     };
   }, [status, repoRoot, scopeCtx]);
 
-  if (!status || !status.isRepo) {
+  const repo = status?.isRepo ? status : null;
+  const conflictTitle =
+    repo && buckets.conflicts.length > 0
+      ? `Resolve conflicts on ${repo.branch} (${buckets.conflicts.length} file${buckets.conflicts.length === 1 ? '' : 's'})`
+      : '';
+  // The merge view announces its queue; a concurrent status refresh must not interrupt it.
+  const alertText = repo ? lastError || (mergeOwnsConflicts ? '' : conflictTitle) : '';
+  const alertRequest = useMemo(() => ({ text: alertText }), [alertText]);
+  const announcement = useLiveAnnouncement(alertRequest);
+  // Keep controls out of the live region, and keep the region mounted through loading.
+  const alertRegion = (
+    <Fragment key="git-alerts">
+      <div role="alert" className={styles.srOnly}>
+        {announcement}
+      </div>
+      <div className={styles.alertRegion}>
+        {repo &&
+          (buckets.conflicts.length > 0 ? (
+            <ConflictBanner title={conflictTitle} conflicts={buckets.conflicts} raw={lastError} />
+          ) : (
+            lastError && (
+              <div className={styles.errorStrip} data-testid="git-error">
+                {lastError}
+              </div>
+            )
+          ))}
+      </div>
+    </Fragment>
+  );
+
+  if (!repo) {
     const message = !status
       ? 'Loading git status…'
       : status.detail
@@ -102,7 +134,10 @@ export function GitPanel() {
         : 'Not a git repository.';
     return (
       <Panel title="Source Control">
-        <div className={styles.empty}>{message}</div>
+        <div className={styles.panelBody}>
+          <div className={styles.empty}>{message}</div>
+          {alertRegion}
+        </div>
       </Panel>
     );
   }
@@ -135,14 +170,7 @@ export function GitPanel() {
           </div>
         </div>
         <SyncControls />
-        {buckets.conflicts.length > 0 && (
-          <ConflictBanner branch={status.branch} conflicts={buckets.conflicts} raw={lastError} />
-        )}
-        {lastError && buckets.conflicts.length === 0 && (
-          <div className={styles.errorStrip} data-testid="git-error" role="alert">
-            {lastError}
-          </div>
-        )}
+        {alertRegion}
         {receipt && <CommitReceiptCard />}
         <CommitArea
           key={git.epoch}
@@ -215,8 +243,12 @@ function SyncControls() {
   const hasUpstream = status.upstream !== '';
   // Nothing behind → nothing to pull. A branch with no upstream can still be
   // published, so push stays enabled there even with a zero ahead count.
-  const canPull = status.behind > 0 && !busy;
-  const canPush = (status.ahead > 0 || !hasUpstream) && !busy;
+  // Busy is aria-disabled, not natively disabled: WebKit moves keyboard focus
+  // to <body> when the focused button is disabled and does not return it, so
+  // the user is dropped just as the result is announced. The store ignores a
+  // press while another operation is in flight.
+  const canPull = status.behind > 0;
+  const canPush = status.ahead > 0 || !hasUpstream;
   const pushLabel = !hasUpstream ? 'Publish' : 'Push';
 
   return (
@@ -227,6 +259,7 @@ function SyncControls() {
           className={`${styles.syncBtn} ${status.behind > 0 ? styles.syncActive : ''}`}
           onClick={() => void git.pull()}
           disabled={!canPull}
+          aria-disabled={busy}
           aria-label={
             status.behind > 0 ? `Pull ${status.behind} incoming` : 'Pull (nothing to pull)'
           }
@@ -242,6 +275,7 @@ function SyncControls() {
           className={`${styles.syncBtn} ${status.ahead > 0 || !hasUpstream ? styles.syncActive : ''}`}
           onClick={() => void git.push()}
           disabled={!canPush}
+          aria-disabled={busy}
           aria-label={
             status.ahead > 0 ? `Push ${status.ahead} outgoing` : `${pushLabel} (nothing to push)`
           }
@@ -265,9 +299,12 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
   const [amend, setAmend] = useState(false);
   const [suggestion, setSuggestion] = useState<string | null>(null);
 
-  const canCommit = commitMessage.trim() !== '' && (stagedCount > 0 || amend) && !disabled;
+  // `disabled` (an operation in flight) is aria-disabled on Generate and
+  // Commit, never native, for the focus reason SyncControls gives.
+  const canCommit = commitMessage.trim() !== '' && (stagedCount > 0 || amend);
 
   const handleGenerate = async () => {
+    if (disabled) return;
     const git = useGitStore.getState();
     const epoch = git.epoch;
     setSuggestion(null);
@@ -280,6 +317,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
   };
 
   const handleCommit = async () => {
+    if (disabled) return;
     const git = useGitStore.getState();
     await git.commit(amend);
     const after = useGitStore.getState();
@@ -351,7 +389,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
             type="button"
             className={styles.smallBtn}
             onClick={() => void handleGenerate()}
-            disabled={disabled}
+            aria-disabled={disabled}
             aria-label={generating ? 'Generating commit message' : 'Generate message'}
             title="Generate a commit message with golem"
           >
@@ -362,6 +400,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
           type="button"
           className={styles.commitBtn}
           disabled={!canCommit}
+          aria-disabled={disabled}
           onClick={() => void handleCommit()}
         >
           Commit
@@ -448,11 +487,11 @@ function CommitReceiptCard() {
 }
 
 function ConflictBanner({
-  branch,
+  title,
   conflicts,
   raw,
 }: {
-  branch: string;
+  title: string;
   conflicts: BucketedChange[];
   raw: string | null;
 }) {
@@ -460,11 +499,8 @@ function ConflictBanner({
   const fileQueue = conflicts.map((file) => file.change.path);
 
   return (
-    <div className={styles.conflictBanner} data-testid="conflict-banner" role="alert">
-      <div className={styles.conflictTitle}>
-        Resolve conflicts on {branch} ({conflicts.length} file
-        {conflicts.length === 1 ? '' : 's'})
-      </div>
+    <div className={styles.conflictBanner} data-testid="conflict-banner">
+      <div className={styles.conflictTitle}>{title}</div>
       <ul className={styles.conflictList}>
         {conflicts.map((f) => (
           <li key={f.change.path} className={styles.conflictItem}>
@@ -629,13 +665,15 @@ function ChangeRow({
           </span>
         )}
       </button>
+      {/* Busy is aria-disabled, not disabled, for the focus reason SyncControls
+          gives; the store ignores a press while another operation runs. */}
       <span className={styles.rowActions}>
         {file.rowStatus === 'untracked' && (
           <button
             type="button"
             className={styles.rowTrackBtn}
             onClick={() => void git.intentToAdd([file.change.path])}
-            disabled={busy}
+            aria-disabled={busy}
             aria-label={`Track ${file.change.path} without staging`}
             title="Track without staging (git add -N): the file shows in diffs and can be staged hunk-by-hunk"
           >
@@ -647,7 +685,7 @@ function ChangeRow({
             type="button"
             className={styles.rowTrackBtn}
             onClick={() => void git.unstage([file.change.path])}
-            disabled={busy}
+            aria-disabled={busy}
             aria-label={`Untrack ${file.change.path}`}
             title="Stop tracking (git restore --staged): back to untracked, file kept on disk"
           >
