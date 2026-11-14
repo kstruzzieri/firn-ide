@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -348,5 +349,75 @@ func TestFSNotifyWatcher_DebounceRapidEvents(t *testing.T) {
 	// Should receive only one debounced event
 	if eventCount > 2 {
 		t.Errorf("Expected at most 2 events (debounced), got %d", eventCount)
+	}
+}
+
+// A workspace opened through a symlinked root must be watched, and its events
+// must keep the link spelling the file tree and open tabs use (#564). The
+// two-hop chain matters on macOS: fsnotify's kqueue Add follows one link only.
+func TestFSNotifyWatcher_WatchesSymlinkedRoot(t *testing.T) {
+	for name, chain := range map[string][]string{
+		"one hop":  {"link"},
+		"two hops": {"hop", "link"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			testWatchesSymlinkedRoot(t, chain)
+		})
+	}
+}
+
+// testWatchesSymlinkedRoot links each name in chain to the one before it,
+// starting from a real directory, and watches the last link.
+func testWatchesSymlinkedRoot(t *testing.T, chain []string) {
+	tmpDir := t.TempDir()
+	target := filepath.Join(tmpDir, "target")
+	if err := os.MkdirAll(filepath.Join(target, "sub"), 0755); err != nil {
+		t.Fatalf("Failed to create target: %v", err)
+	}
+	link := target
+	for _, name := range chain {
+		next := filepath.Join(tmpDir, name)
+		if err := os.Symlink(link, next); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		link = next
+	}
+
+	w, err := NewFSNotifyWatcher(WatcherConfig{DebounceMs: 50})
+	if err != nil {
+		t.Fatalf("Failed to create watcher: %v", err)
+	}
+	defer func() { _ = w.Stop() }()
+
+	eventCh := make(chan FileEvent, 10)
+	if err := w.Watch(context.Background(), link, func(event FileEvent) {
+		eventCh <- event
+	}); err != nil {
+		t.Fatalf("Failed to start watching: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Another tool writes through the real path; Firn must see the link path.
+	for _, rel := range []string{"root.txt", filepath.Join("sub", "nested.txt")} {
+		if err := os.WriteFile(filepath.Join(target, rel), []byte("hello"), 0644); err != nil {
+			t.Fatalf("Failed to write %s: %v", rel, err)
+		}
+		want := filepath.Join(link, rel)
+		timeout := time.After(time.Second)
+	wait:
+		for {
+			select {
+			case event := <-eventCh:
+				if event.Path != link && !strings.HasPrefix(event.Path, link+string(filepath.Separator)) {
+					t.Fatalf("Event at %q is not spelled under %q", event.Path, link)
+				}
+				if event.Path == want {
+					break wait
+				}
+			case <-timeout:
+				t.Fatalf("Timeout waiting for an event at %q", want)
+			}
+		}
 	}
 }
