@@ -20,7 +20,8 @@ successful Apply and reads each file tree row's name, level and state. The file
 tree reads paths in the project folder's own syntax and no longer selects a
 row's text on double-click, clicking a file tab focuses the editor, the diff
 view keeps its horizontal scrollbars in sight, and the welcome screen's shortcut
-hints match the keys. Building Firn needs Go 1.27 or later.
+hints match the keys. Building Firn needs Go 1.27 or later, and release
+binaries are built with Go 1.27.4.
 
 ### Golem
 
@@ -210,6 +211,13 @@ hints match the keys. Building Firn needs Go 1.27 or later.
   changed for Git to pair renames and copies, no request is sent and the error
   asks you to write the message by hand, because those pairs could not be
   checked against the rules. (#384)
+- Release binaries are built with Go 1.27.4, the `toolchain` line in
+  `go.mod`. It fixes GO-2026-6859 in `net/http`: an HTTP/1 server using
+  `MaxBytesReader` or `MaxBytesHandler` can crash when a request body passes
+  the limit while its handler, reading that body, writes response headers on
+  another goroutine. Under Go 1.27.3, `govulncheck` finds the affected
+  `net/http` code in Firn's release build and traces calls into it from
+  Firn's source. (#565)
 
 ### Known limitations
 
