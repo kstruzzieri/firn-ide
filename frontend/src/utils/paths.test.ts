@@ -1,3 +1,9 @@
+// These tests assert macOS/Linux path rules (#510): pin a POSIX host.
+jest.mock('./platform', () => ({
+  ...jest.requireActual('./platform'),
+  getPlatform: () => 'linux',
+}));
+
 import { normalizeFsPath, joinRepoPath } from './paths';
 
 describe('normalizeFsPath', () => {
@@ -33,5 +39,16 @@ describe('joinRepoPath', () => {
 
   it('joins a repository rooted at the filesystem root', () => {
     expect(joinRepoPath('/', 'a.ts')).toBe('/a.ts');
+  });
+
+  // #510: on macOS and Linux a backslash is a name character, so a repo at
+  // `/home/dev/a\b` is not `/home/dev/a/b`.
+  it('keeps a backslash in a POSIX repo root', () => {
+    expect(joinRepoPath('/home/dev/a\\b', 'x.ts')).toBe('/home/dev/a\\b/x.ts');
+    expect(normalizeFsPath('/home/dev/a\\b/')).toBe('/home/dev/a\\b');
+  });
+
+  it('normalizes a UNC repo root against git forward slashes', () => {
+    expect(joinRepoPath('\\\\server\\share\\repo', 'a.ts')).toBe('//server/share/repo/a.ts');
   });
 });

@@ -1,3 +1,9 @@
+// These tests assert macOS/Linux path rules (#510): pin a POSIX host.
+jest.mock('./platform', () => ({
+  ...jest.requireActual('./platform'),
+  getPlatform: () => 'linux',
+}));
+
 jest.mock('../wails/bindings', () => ({
   WriteFile: jest.fn(),
 }));
@@ -285,6 +291,20 @@ describe('saveOpenFileToDisk', () => {
     mockWriteFile.mockRejectedValueOnce(new Error('disk full'));
 
     await expect(saveOpenFileToDisk('/repo/src/conflicted.ts')).rejects.toThrow('disk full');
+    expect(useIDEStore.getState().openFiles[0].isModified).toBe(true);
+  });
+
+  // #510: on macOS and Linux a backslash is a name character, so the folder
+  // `a\b` is not the folder `b` inside `a`. Resolve on `a\b/x.ts` must not
+  // write the unsaved `a/b/x.ts` buffer over it, or mark that buffer clean.
+  it('does not write another file’s buffer when two paths differ only by a backslash', async () => {
+    useIDEStore.setState({
+      openFiles: [file({ id: 'ab', name: 'x.ts', path: '/repo/a/b/x.ts', content: 'a/b draft' })],
+    });
+
+    await saveOpenFileToDisk('/repo/a\\b/x.ts');
+
+    expect(mockWriteFile).not.toHaveBeenCalled();
     expect(useIDEStore.getState().openFiles[0].isModified).toBe(true);
   });
 });
