@@ -511,14 +511,14 @@
    filled one is a plain block. Margin only: WebKit rebuilds a live region
    whose display type changes, and VoiceOver then does not announce it. */
 .body > .alertSlot:empty {
-  margin-top: -14px;
+  margin-top: calc(-1 * var(--body-gap));
 }
 
 /* Source error and recovery can both show; keep the body's gap between them. */
 .blockingAlerts {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--body-gap);
 }
 
 .menuHint {
@@ -609,9 +609,11 @@
 /* ── body + cards ───────────────────────────────────────────────────────── */
 
 .body {
+  --body-gap: 14px;
+
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--body-gap);
   padding: 12px 12px 14px;
 }
 
@@ -2798,7 +2800,7 @@ select.input {
 
   .body {
     padding: 16px 22px 18px;
-    gap: 18px;
+    --body-gap: 18px;
   }
 
   /* ── destination approval prompt: grid rows, actions right-aligned ─────── */

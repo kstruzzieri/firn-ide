@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Panel, PanelAction } from '../layout';
 import { RestartIcon, ChevronRightIcon, ChevronDownIcon } from '../icons';
 import { useGitStore, useGitStatusSnapshot } from '../../stores/gitStore';
@@ -13,6 +13,7 @@ import { joinRepoPath, normalizeFsPath } from '../../utils/paths';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import { FileIcon } from '../FileExplorer/FileIcon';
 import { BranchSwitcher } from '../git/BranchSwitcher';
+import { useLiveAnnouncement } from '../../hooks/useLiveAnnouncement';
 import styles from './GitPanel.module.css';
 
 type ViewScope = 'workspace' | 'project';
@@ -38,6 +39,7 @@ const statusLetter: Record<GitRowStatus, string> = {
 export function GitPanel() {
   const { status, isRefreshing, opInFlight, lastError } = useGitStatusSnapshot();
   const receipt = useGitStore((s) => s.lastCommitReceipt);
+  const mergeOwnsConflicts = useGitStore((s) => s.mergeFocused || s.mergeAdvancePending);
   const workspaces = useIDEStore((s) => s.workspaces);
   // Scope follows the shared workspace focus, so the panel matches whatever the
   // file tree / workspace selector is showing (selecting the Frontend workspace
@@ -94,25 +96,34 @@ export function GitPanel() {
     };
   }, [status, repoRoot, scopeCtx]);
 
-  // One alert region for both returns below, mounted while empty with a fixed
-  // class and parent: a region inserted together with its text reaches
-  // VoiceOver as created, not changed, and is not spoken. The key keeps it the
-  // same element when the status arrives, so a repository that opens already in
-  // conflict is announced too.
   const repo = status?.isRepo ? status : null;
+  const conflictTitle =
+    repo && buckets.conflicts.length > 0
+      ? `Resolve conflicts on ${repo.branch} (${buckets.conflicts.length} file${buckets.conflicts.length === 1 ? '' : 's'})`
+      : '';
+  // The merge view announces its queue; a concurrent status refresh must not interrupt it.
+  const alertText = repo ? lastError || (mergeOwnsConflicts ? '' : conflictTitle) : '';
+  const alertRequest = useMemo(() => ({ text: alertText }), [alertText]);
+  const announcement = useLiveAnnouncement(alertRequest);
+  // Keep controls out of the live region, and keep the region mounted through loading.
   const alertRegion = (
-    <div key="git-alerts" role="alert" className={styles.alertRegion}>
-      {repo &&
-        (buckets.conflicts.length > 0 ? (
-          <ConflictBanner branch={repo.branch} conflicts={buckets.conflicts} raw={lastError} />
-        ) : (
-          lastError && (
-            <div className={styles.errorStrip} data-testid="git-error">
-              {lastError}
-            </div>
-          )
-        ))}
-    </div>
+    <Fragment key="git-alerts">
+      <div role="alert" className={styles.srOnly}>
+        {announcement}
+      </div>
+      <div className={styles.alertRegion}>
+        {repo &&
+          (buckets.conflicts.length > 0 ? (
+            <ConflictBanner title={conflictTitle} conflicts={buckets.conflicts} raw={lastError} />
+          ) : (
+            lastError && (
+              <div className={styles.errorStrip} data-testid="git-error">
+                {lastError}
+              </div>
+            )
+          ))}
+      </div>
+    </Fragment>
   );
 
   if (!repo) {
@@ -476,11 +487,11 @@ function CommitReceiptCard() {
 }
 
 function ConflictBanner({
-  branch,
+  title,
   conflicts,
   raw,
 }: {
-  branch: string;
+  title: string;
   conflicts: BucketedChange[];
   raw: string | null;
 }) {
@@ -489,10 +500,7 @@ function ConflictBanner({
 
   return (
     <div className={styles.conflictBanner} data-testid="conflict-banner">
-      <div className={styles.conflictTitle}>
-        Resolve conflicts on {branch} ({conflicts.length} file
-        {conflicts.length === 1 ? '' : 's'})
-      </div>
+      <div className={styles.conflictTitle}>{title}</div>
       <ul className={styles.conflictList}>
         {conflicts.map((f) => (
           <li key={f.change.path} className={styles.conflictItem}>

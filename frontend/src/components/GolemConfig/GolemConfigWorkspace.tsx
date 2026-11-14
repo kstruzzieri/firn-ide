@@ -395,17 +395,32 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
    */
   const [announcement, setAnnouncement] = useState({ text: '' });
   const liveAnnouncement = useLiveAnnouncement(announcement);
+  // A fresh outcome can repeat the same conflict; navigation must not repeat it.
+  const conflictAnnouncement = useMemo(
+    () => ({
+      text:
+        outcome.conflict === 'challenge'
+          ? CHALLENGE_CONFLICT
+          : outcome.conflict !== null
+            ? DOCUMENT_CONFLICT
+            : '',
+    }),
+    [outcome]
+  );
+  const liveConflictAnnouncement = useLiveAnnouncement(conflictAnnouncement, true);
   const announce = useCallback((text: string) => {
     if (text !== '') setAnnouncement({ text });
   }, []);
   useEffect(() => {
-    // Success removes the Apply bar. Recover its lost focus before the result
-    // publishes, without taking focus from a user who moved during the write.
+    // Success removes Apply; a Use model conflict replaces the focused card.
+    // Recover lost focus before publishing, without taking it from another control.
     if (
-      (announcement.text === APPLIED || announcement.text === APPLIED_UNCERTAIN) &&
+      (announcement.text === APPLIED ||
+        announcement.text === APPLIED_UNCERTAIN ||
+        (applyOriginRef.current === 'golem' && conflictAnnouncement.text !== '')) &&
       document.activeElement === document.body
     ) {
-      // [#490] After Use model applies, the picker closes and focus returns to Change.
+      // [#490] Use model returns focus to Change after its card is replaced.
       if (applyOriginRef.current === 'golem') {
         document.getElementById(GOLEM_CHANGE_ID)?.focus();
         return;
@@ -416,7 +431,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
       if (source instanceof HTMLButtonElement && !source.disabled) source.focus();
       else headingRef.current?.focus();
     }
-  }, [announcement]);
+  }, [announcement, conflictAnnouncement]);
   const showGrantNotice = (text: string): void => {
     setGrantNotice(text);
     announce(text);
@@ -2038,13 +2053,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
         {/* [#550] A conflict's alert lives here, outside every card: a Use model
             conflict settles the draft, which remounts the Golem card the visible
-            panel sits in, and a region remounted with its text is not spoken. */}
+            panel sits in. Publish after the redraw and lost-focus recovery. */}
         <div className={styles.srOnly} role="alert" data-testid="golem-conflict-alert">
-          {outcome.conflict === 'challenge'
-            ? CHALLENGE_CONFLICT
-            : outcome.conflict !== null
-              ? DOCUMENT_CONFLICT
-              : ''}
+          {liveConflictAnnouncement}
         </div>
 
         {phase.kind === 'loading' && <p className={styles.loading}>Loading configuration…</p>}
