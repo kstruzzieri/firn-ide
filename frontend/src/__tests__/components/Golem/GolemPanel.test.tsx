@@ -936,7 +936,8 @@ describe('GolemPanel admission', () => {
 
     // The draft is cleared when the reset lands; anything typed in between
     // would be erased with it, so there is nothing to type into until then.
-    expect(composer()).toBeDisabled();
+    // Read-only rather than disabled, so it keeps keyboard focus (#550).
+    expect(composer()).toHaveAttribute('readonly');
     expect(sendButton()).toBeDisabled();
     expect(newChatButton()).toBeDisabled();
     type('typed while waiting');
@@ -1014,7 +1015,7 @@ describe('GolemPanel admission', () => {
       );
     });
     expect(store().conversations[CONV].resetting).toBe('held');
-    expect(composer()).toBeDisabled();
+    expect(composer()).toHaveAttribute('readonly');
     expect(screen.getByRole('textbox', { name: 'Queued message 1' })).toBeDisabled();
 
     await act(async () => {

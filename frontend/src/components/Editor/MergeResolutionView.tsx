@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   createMergeResolutionEditor,
   type MergeResolutionEditor,
@@ -12,6 +12,7 @@ import {
   type TextMergeSession,
 } from '../../stores/gitStore';
 import { useEditorSyntaxTheme } from '../../stores/ideStore';
+import { useLiveAnnouncement } from '../../hooks/useLiveAnnouncement';
 import { GitConflictStages, GitFileAtRev } from '../../wails/bindings';
 import { decisionLabel, describeMergeAnnouncement } from './mergeAnnouncement';
 import styles from './MergeResolutionView.module.css';
@@ -80,6 +81,18 @@ export function MergeResolutionView({
   useEffect(() => {
     return () => onFinalizingChange?.(false);
   }, [onFinalizingChange]);
+
+  // [#550] A queue advance passes through no session, so the finalized file's
+  // view unmounts with the Write & stage that held focus, and this view is a new
+  // one: the focusResult the old view then calls names its own destroyed editor.
+  // So the next file's view takes focus into its Result when it mounts during
+  // the advance, and only while nothing else holds focus. Children's effects
+  // run first, so the Result exists by now.
+  useEffect(() => {
+    const active = document.activeElement;
+    if (!useGitStore.getState().mergeAdvancePending) return;
+    if (active === null || active === document.body) focusResult();
+  }, [focusResult]);
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== 'Escape') return;
@@ -150,103 +163,112 @@ function MergeExternalNotice({
   session,
   focusResult,
   disabled,
+  onReloadChange,
 }: {
   session: MergeSession;
   focusResult: FocusResult;
   disabled: boolean;
+  onReloadChange?: (pending: boolean) => void;
 }) {
   const actionRef = useRef<HTMLButtonElement>(null);
   const external = session.external;
-  if (!external) return null;
-  if (external.kind === 'changed' && external.hidden) return null;
+  const shown = external && !(external.kind === 'changed' && external.hidden) ? external : null;
 
   const reload = async () => {
-    await useGitStore.getState().applyMergeReload();
-    // A notice that survived the read means the user still has something to
-    // act on, so focus stays on that action rather than jumping away.
-    if (useGitStore.getState().mergeSession?.external) {
-      actionRef.current?.focus();
-      return;
+    if (session.reloadPending) return;
+    onReloadChange?.(true);
+    try {
+      await useGitStore.getState().applyMergeReload();
+      // A notice that survived the read still needs the user's attention.
+      if (useGitStore.getState().mergeSession?.external) {
+        actionRef.current?.focus();
+        return;
+      }
+      focusResult();
+    } finally {
+      onReloadChange?.(false);
     }
-    focusResult();
   };
 
-  if (external.kind === 'changed') {
-    const message =
-      external.scope === 'conflict'
+  // Reload and Retry are aria-disabled, not disabled, while their reload runs:
+  // WebKit moves keyboard focus to <body> when the focused button is disabled
+  // and does not return it. The store ignores a second press.
+  let polite = '';
+  let assertive = '';
+  let actions: ReactNode = null;
+  if (shown?.kind === 'changed') {
+    polite =
+      shown.scope === 'conflict'
         ? `The conflict in ${session.path} changed outside Firn: Current and Incoming no longer match what you reviewed. Reload to continue.`
         : `${session.path} changed outside Firn while you were resolving it. Reload to start from the file as it is now, or keep working — writing will then ask you to confirm the overwrite.`;
-    return (
-      <div className={styles.notice}>
-        <span className={styles.noticeMessage} role="status" data-testid="merge-notice">
-          {message}
-        </span>
-        <div className={styles.noticeActions}>
-          <button
-            ref={actionRef}
-            type="button"
-            className={styles.secondaryButton}
-            onClick={() => void reload()}
-            disabled={disabled || session.reloadPending}
-          >
-            Reload (discard decisions)
-          </button>
-          {external.scope === 'worktree' && (
-            <button
-              type="button"
-              className={styles.secondaryButton}
-              onClick={() => {
-                useGitStore.getState().acknowledgeMergeExternal();
-                focusResult();
-              }}
-              disabled={disabled || session.reloadPending}
-            >
-              Keep working
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (external.kind === 'resolved-outside') {
-    return (
-      <div className={styles.notice}>
-        <span className={styles.noticeMessage} role="alert" data-testid="merge-notice">
-          {external.message}
-        </span>
-        <div className={styles.noticeActions}>
-          <button
-            type="button"
-            className={styles.secondaryButton}
-            // Through the same guard as every other close: a touched session
-            // still gets its discard confirmation.
-            onClick={() => useGitStore.getState().requestMergeClose()}
-            disabled={disabled}
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={styles.notice}>
-      <span className={styles.noticeMessage} role="alert" data-testid="merge-notice">
-        {external.message}
-      </span>
-      <div className={styles.noticeActions}>
+    actions = (
+      <>
         <button
           ref={actionRef}
           type="button"
           className={styles.secondaryButton}
           onClick={() => void reload()}
-          disabled={disabled || session.reloadPending}
+          disabled={disabled}
+          aria-disabled={session.reloadPending}
         >
-          Retry
+          Reload (discard decisions)
         </button>
-      </div>
+        {shown.scope === 'worktree' && (
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={() => {
+              useGitStore.getState().acknowledgeMergeExternal();
+              focusResult();
+            }}
+            disabled={disabled || session.reloadPending}
+          >
+            Keep working
+          </button>
+        )}
+      </>
+    );
+  } else if (shown?.kind === 'resolved-outside') {
+    assertive = shown.message;
+    actions = (
+      <button
+        type="button"
+        className={styles.secondaryButton}
+        // Through the same guard as every other close: a touched session
+        // still gets its discard confirmation.
+        onClick={() => useGitStore.getState().requestMergeClose()}
+        disabled={disabled}
+      >
+        Close
+      </button>
+    );
+  } else if (shown) {
+    assertive = shown.message;
+    actions = (
+      <button
+        ref={actionRef}
+        type="button"
+        className={styles.secondaryButton}
+        onClick={() => void reload()}
+        disabled={disabled}
+        aria-disabled={session.reloadPending}
+      >
+        Retry
+      </button>
+    );
+  }
+
+  // Both regions are mounted while empty, under a slot whose display never
+  // changes (`.notice` only decorates it): a region inserted together with its
+  // text, or whose parent changes display type with it, reaches VoiceOver as
+  // created, not changed, and is not spoken.
+  return (
+    <div className={shown ? `${styles.noticeSlot} ${styles.notice}` : styles.noticeSlot}>
+      <span className={styles.noticeMessage} data-testid="merge-notice">
+        <span role="status">{polite}</span>
+        <span role="alert">{assertive}</span>
+      </span>
+      {actions && <div className={styles.noticeActions}>{actions}</div>}
     </div>
   );
 }
@@ -430,6 +452,8 @@ function TextResolutionContent({
   const hostRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MergeResolutionEditor | null>(null);
   const sessionRef = useRef(session);
+  const openedSessionRef = useRef(session);
+  const reloadAnnouncementPendingRef = useRef(false);
   const decisionsRef = useRef(session.decisions);
   const activeIndexRef = useRef<number | null>(null);
   const hadSurfaceFocusRef = useRef(false);
@@ -444,10 +468,34 @@ function TextResolutionContent({
   const [baseExpanded, setBaseExpanded] = useState(false);
   const [announcement, setAnnouncement] = useState(() => {
     const remaining = session.regions.length - Object.keys(session.decisions).length;
-    return `${remaining} conflict${remaining === 1 ? '' : 's'} unresolved.`;
+    return {
+      text: `${remaining} conflict${remaining === 1 ? '' : 's'} unresolved.`,
+      deferred: false,
+    };
   });
+  const reloadAnnouncement = useMemo(
+    () => ({ text: announcement.deferred ? announcement.text : '' }),
+    [announcement]
+  );
+  const liveReloadAnnouncement = useLiveAnnouncement(reloadAnnouncement, true);
   sessionRef.current = session;
   focusResultRef.current = () => editorRef.current?.view.focus();
+
+  const handleReloadChange = (pending: boolean) => {
+    const announceCompletion = reloadAnnouncementPendingRef.current;
+    reloadAnnouncementPendingRef.current = pending;
+    if (!pending && !announceCompletion) return;
+    const current = useGitStore.getState().mergeSession;
+    const remaining =
+      current?.kind === 'text' ? current.regions.length - Object.keys(current.decisions).length : 0;
+    setAnnouncement({
+      text:
+        !pending && current?.kind === 'text' && !current.external
+          ? `${remaining} conflict${remaining === 1 ? '' : 's'} unresolved.`
+          : '',
+      deferred: true,
+    });
+  };
 
   // Reset the strip whenever the session identity changes — a new file or a
   // fresh openMergeResolution request must not show the previous file's base.
@@ -547,7 +595,10 @@ function TextResolutionContent({
           next.decisions,
           sessionRef.current.regions.length
         );
-        if (message !== null) setAnnouncement(message);
+        if (message !== null) {
+          reloadAnnouncementPendingRef.current = false;
+          setAnnouncement({ text: message, deferred: false });
+        }
         if (message !== null || next.activeIndex !== activeIndexRef.current)
           setResolutionRefusal(null);
         decisionsRef.current = next.decisions;
@@ -574,7 +625,18 @@ function TextResolutionContent({
     // lingers until the first action here.
     const remainingOnOpen =
       session.regions.length - Object.keys(initialEditorState.decisions).length;
-    setAnnouncement(`${remainingOnOpen} conflict${remainingOnOpen === 1 ? '' : 's'} unresolved.`);
+    // Reload moves focus; let it settle before speaking even an unchanged count.
+    const previousSession = openedSessionRef.current;
+    // The forced reload still has a final backend read and focus call to finish.
+    if (!reloadAnnouncementPendingRef.current) {
+      setAnnouncement({
+        text: `${remainingOnOpen} conflict${remainingOnOpen === 1 ? '' : 's'} unresolved.`,
+        deferred:
+          previousSession.path === session.path &&
+          previousSession.requestRevision !== session.requestRevision,
+      });
+    }
+    openedSessionRef.current = session;
     return () => {
       hadSurfaceFocusRef.current = surface?.contains(document.activeElement) ?? false;
       editor.destroy();
@@ -610,8 +672,13 @@ function TextResolutionContent({
   // conflict, a resolution outside Firn, a failed check — stays unwritable.
   const overwritable =
     session.external?.kind === 'changed' && session.external.scope === 'worktree';
-  const disabled =
-    unresolved !== 0 || session.readOnly || blocked || (Boolean(session.external) && !overwritable);
+  // Write & stage is natively disabled only while there is nothing it could
+  // write. A write or reload in flight makes it aria-disabled instead, for the
+  // focus reason the external notice's Reload gives: a retryable failure that
+  // leaves the session writable leaves the user on the button they pressed.
+  const unwritable =
+    unresolved !== 0 || session.readOnly || (Boolean(session.external) && !overwritable);
+  const disabled = unwritable || blocked;
   const baseStatus =
     base.status === 'loading'
       ? 'Loading base…'
@@ -634,7 +701,8 @@ function TextResolutionContent({
       const ok = await useGitStore.getState().mergeFinalizeAndStage(editor.getResult());
       // A successful finalize either advanced to the next queued file or
       // exhausted the queue; when a session is still open, put the user back in
-      // the document rather than leaving focus on a disabled button.
+      // the document rather than leaving focus on a disabled button. An advance
+      // that unmounted this view is the next view's to focus (see the wrapper).
       if (ok && useGitStore.getState().mergeSession) focusResult();
     } finally {
       if (editorRef.current === editor) editor.setFrozen(false);
@@ -685,14 +753,20 @@ function TextResolutionContent({
           </button>
         </div>
       </header>
-      <MergeExternalNotice session={session} focusResult={focusResult} disabled={finalizing} />
-      {resolutionRefusal && (
-        <div className={styles.notice}>
-          <span className={styles.noticeMessage} role="alert">
-            {resolutionRefusal}
-          </span>
-        </div>
-      )}
+      <MergeExternalNotice
+        session={session}
+        focusResult={focusResult}
+        disabled={finalizing}
+        onReloadChange={handleReloadChange}
+      />
+      {/* Mounted while empty, like the external notice's regions. */}
+      <div
+        className={resolutionRefusal ? `${styles.noticeSlot} ${styles.notice}` : styles.noticeSlot}
+      >
+        <span className={styles.noticeMessage} role="alert" data-testid="merge-refusal">
+          {resolutionRefusal}
+        </span>
+      </div>
       {!REGIONS_CARRY_BASE(session) && (
         <div className={styles.baseStrip}>
           <button
@@ -773,14 +847,15 @@ function TextResolutionContent({
         <button
           type="button"
           className={styles.finalizeButton}
-          disabled={disabled}
+          disabled={unwritable}
+          aria-disabled={blocked}
           onClick={() => void finalize()}
         >
           Write &amp; stage
         </button>
       </footer>
       <div role="status" aria-live="polite" className={styles.srOnly}>
-        {announcement}
+        {announcement.deferred ? liveReloadAnnouncement : announcement.text}
       </div>
     </>
   );
@@ -807,7 +882,8 @@ function SidesResolutionContent({
   const blocked = finalizing || session.reloadPending;
   const overwritable =
     session.external?.kind === 'changed' && session.external.scope === 'worktree';
-  const finalizeBlocked = blocked || (Boolean(session.external) && !overwritable);
+  const unwritable = Boolean(session.external) && !overwritable;
+  const finalizeBlocked = blocked || unwritable;
   const finalize = async () => {
     if (!session.selectedSide || finalizeBlocked) return;
     if (overwritable) {
@@ -860,7 +936,9 @@ function SidesResolutionContent({
         <button
           type="button"
           className={styles.finalizeButton}
-          disabled={!session.selectedSide || finalizeBlocked}
+          // aria-disabled while blocked, for the same focus reason as the text view.
+          disabled={!session.selectedSide || unwritable}
+          aria-disabled={blocked}
           onClick={() => void finalize()}
         >
           Write &amp; stage

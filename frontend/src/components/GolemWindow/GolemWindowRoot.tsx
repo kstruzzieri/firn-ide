@@ -220,31 +220,35 @@ export function GolemWindowRoot() {
         </details>
       </div>
 
-      {error !== null && (
-        <p className={styles.error} role="alert">
-          <span className={styles.reason}>
-            {error}
-            {projectionError !== null ? (
-              <span className={styles.hint}>Dock in main window to continue.</span>
-            ) : (
-              !canRetry && <span className={styles.hint}>{RETRY_WAIT_HINT}</span>
+      {/* Mounted while empty: a region inserted together with its text reaches
+          VoiceOver as created, not changed, and is not spoken. */}
+      <div role="alert" className={styles.alertRegion}>
+        {error !== null && (
+          <p className={styles.error}>
+            <span className={styles.reason}>
+              {error}
+              {projectionError !== null ? (
+                <span className={styles.hint}>Dock in main window to continue.</span>
+              ) : (
+                !canRetry && <span className={styles.hint}>{RETRY_WAIT_HINT}</span>
+              )}
+            </span>
+            {/* Retry is a deliberate no-op while Go still believes the transfer is
+                running; a live button there reads as broken. Say why instead. */}
+            {projectionError === null && (
+              <button
+                type="button"
+                className={styles.retry}
+                title={canRetry ? 'Retry connection' : RETRY_WAIT_HINT}
+                disabled={!canRetry}
+                onClick={retryGolemConnection}
+              >
+                Retry connection
+              </button>
             )}
-          </span>
-          {/* Retry is a deliberate no-op while Go still believes the transfer is
-              running; a live button there reads as broken. Say why instead. */}
-          {projectionError === null && (
-            <button
-              type="button"
-              className={styles.retry}
-              title={canRetry ? 'Retry connection' : RETRY_WAIT_HINT}
-              disabled={!canRetry}
-              onClick={retryGolemConnection}
-            >
-              Retry connection
-            </button>
-          )}
-        </p>
-      )}
+          </p>
+        )}
+      </div>
 
       <div className={`${panelStyles.panel} ${styles.body}`} role="region" aria-label="Golem">
         {view === null ? (

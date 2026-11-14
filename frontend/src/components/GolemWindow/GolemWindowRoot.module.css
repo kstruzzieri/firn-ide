@@ -106,6 +106,12 @@
   outline-offset: 1px;
 }
 
+/* The error strip's always-mounted alert region: a fixed flex item that keeps
+   its display type, so WebKit never rebuilds it. */
+.alertRegion {
+  flex: none;
+}
+
 .error {
   display: flex;
   align-items: center;

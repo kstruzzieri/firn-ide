@@ -548,6 +548,12 @@ export function SearchPanel() {
         </div>
       </div>
 
+      {/* Mounted before any search: the state panels below replace one another
+          in place, and WebKit announced neither a panel mounted with its text
+          nor one whose live role was swapped as its text changed. */}
+      <div className={styles.srOnly} role="status">
+        {searchAnnouncement(uiState)}
+      </div>
       <PanelBody
         uiState={uiState}
         flatItems={flatItems}
@@ -568,6 +574,22 @@ export function SearchPanel() {
       />
     </div>
   );
+}
+
+/** What the status region says for a state; results speak for themselves. */
+function searchAnnouncement(state: SearchUIState): string {
+  switch (state.kind) {
+    case 'loading':
+      return 'Searching…';
+    case 'missing-tool':
+      return `ripgrep is not available: ${state.message}`;
+    case 'invalid-regex':
+      return `Invalid regular expression: ${state.message}`;
+    case 'failed':
+      return `Search failed: ${state.message}`;
+    default:
+      return '';
+  }
 }
 
 interface PanelBodyProps {
@@ -615,7 +637,7 @@ const PanelBody = memo(function PanelBody({
 
     case 'loading':
       return (
-        <div className={styles.statePanel} aria-live="polite">
+        <div className={styles.statePanel}>
           <span>
             <span className={styles.loadingDot} aria-hidden="true" />
             Searching…
@@ -633,7 +655,7 @@ const PanelBody = memo(function PanelBody({
 
     case 'missing-tool':
       return (
-        <div className={`${styles.statePanel} ${styles.error}`} role="alert">
+        <div className={`${styles.statePanel} ${styles.error}`}>
           <span className={styles.statePanelTitle}>ripgrep is not available</span>
           <span>{uiState.message}</span>
         </div>
@@ -641,7 +663,7 @@ const PanelBody = memo(function PanelBody({
 
     case 'invalid-regex':
       return (
-        <div className={`${styles.statePanel} ${styles.warning}`} role="alert">
+        <div className={`${styles.statePanel} ${styles.warning}`}>
           <span className={styles.statePanelTitle}>Invalid regular expression</span>
           <span>{uiState.message}</span>
         </div>
@@ -656,7 +678,7 @@ const PanelBody = memo(function PanelBody({
 
     case 'failed':
       return (
-        <div className={`${styles.statePanel} ${styles.error}`} role="alert">
+        <div className={`${styles.statePanel} ${styles.error}`}>
           <span className={styles.statePanelTitle}>Search failed</span>
           <span>{uiState.message}</span>
         </div>
