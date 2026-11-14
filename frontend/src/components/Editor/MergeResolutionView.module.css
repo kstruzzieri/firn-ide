@@ -419,11 +419,18 @@
   border: 0;
 }
 
-.notice {
+/* Always on a notice's slot, so its live regions' parent never changes display
+   type: WebKit rebuilds a region whose ancestor does, and VoiceOver then does
+   not announce the text that arrived with it. */
+.noticeSlot {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+/* Added while a notice shows; decoration only, never display. */
+.notice {
   padding: 8px 10px;
   border-bottom: 1px solid var(--surface-border);
   border-left: 3px solid var(--status-warning);

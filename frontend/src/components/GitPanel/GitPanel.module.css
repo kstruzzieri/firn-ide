@@ -67,7 +67,7 @@
     opacity var(--transition);
 }
 
-.syncBtn:hover:not(:disabled) {
+.syncBtn:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--surface-active);
 }
 
@@ -79,11 +79,12 @@
   background: var(--accent-dim, color-mix(in srgb, var(--accent) 14%, transparent));
 }
 
-.syncActive:hover:not(:disabled) {
+.syncActive:hover:not(:disabled, [aria-disabled='true']) {
   background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
-.syncBtn:disabled {
+.syncBtn:disabled,
+.syncBtn[aria-disabled='true'] {
   opacity: 0.4;
   cursor: default;
 }
@@ -196,7 +197,8 @@
   cursor: pointer;
 }
 
-.commitBtn:disabled {
+.commitBtn:disabled,
+.commitBtn[aria-disabled='true'] {
   opacity: 0.45;
   cursor: default;
 }
@@ -211,7 +213,7 @@
   cursor: pointer;
 }
 
-.smallBtn:hover:not(:disabled) {
+.smallBtn:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--surface-hover);
 }
 
@@ -292,6 +294,13 @@
 .receiptPush {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+/* The alert region stays mounted while empty; cancel the flex gap it would
+   otherwise add. Margin only: WebKit rebuilds a live region whose display type
+   changes, and VoiceOver then does not announce what arrived with it. */
+.alertRegion:empty {
+  margin-top: -10px;
 }
 
 .errorStrip {

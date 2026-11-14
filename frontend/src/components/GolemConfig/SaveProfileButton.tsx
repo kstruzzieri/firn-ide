@@ -439,16 +439,21 @@ export function SaveProfileButton({
                   }
                 />
               </span>
-              {save.fieldError !== '' && (
-                <p id="golem-profile-name-error" className={styles.fieldError} role="alert">
-                  {save.fieldError}
-                </p>
-              )}
-              {(saveRefusal !== '' || createRefusal !== '') && (
-                <p className={styles.menuHint} role="alert">
-                  {saveRefusal !== '' ? saveRefusal : createRefusal}
-                </p>
-              )}
+              {/* Mounted with the step, before any refusal: a region inserted
+                  together with its text reaches VoiceOver as created, not
+                  changed, and is not spoken. */}
+              <div role="alert" className={styles.menuAlert}>
+                {save.fieldError !== '' && (
+                  <p id="golem-profile-name-error" className={styles.fieldError}>
+                    {save.fieldError}
+                  </p>
+                )}
+                {(saveRefusal !== '' || createRefusal !== '') && (
+                  <p className={styles.menuHint}>
+                    {saveRefusal !== '' ? saveRefusal : createRefusal}
+                  </p>
+                )}
+              </div>
               <span className={styles.menuActions}>
                 <button type="submit" className={styles.button} disabled={createBlocked}>
                   Save
@@ -469,11 +474,9 @@ export function SaveProfileButton({
               <p className={styles.panelText}>
                 {`A profile named user/${save.slug} already exists. Overwrite replaces it with the key-scrubbed applied configuration.`}
               </p>
-              {saveRefusal !== '' && (
-                <p className={styles.menuHint} role="alert">
-                  {saveRefusal}
-                </p>
-              )}
+              <div role="alert" className={styles.menuAlert}>
+                {saveRefusal !== '' && <p className={styles.menuHint}>{saveRefusal}</p>}
+              </div>
               <span className={styles.menuActions}>
                 <button
                   type="button"

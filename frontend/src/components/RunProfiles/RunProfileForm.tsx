@@ -353,11 +353,12 @@ export function RunProfileForm({ state }: RunProfileFormProps) {
           </label>
         )}
 
-        {mismatchWarning && (
-          <div className={styles.warning} role="status">
-            {mismatchWarning}
-          </div>
-        )}
+        {/* Mounted and unstyled while there is no warning: a region inserted
+            together with its text reaches VoiceOver as created, not changed,
+            and is not spoken. */}
+        <div role="status">
+          {mismatchWarning && <div className={styles.warning}>{mismatchWarning}</div>}
+        </div>
 
         <label className={styles.group}>
           <span className={`${styles.label} ${styles.required}`}>Name</span>

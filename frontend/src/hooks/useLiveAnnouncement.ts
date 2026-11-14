@@ -12,20 +12,21 @@ const REPEAT_DELAY_MS = 400;
  * publishes on a later task so the finished redraw and any focus move reach the
  * accessibility tree first. Text matching the last one published waits through
  * the repeat gap so it is spoken again. Empty text only clears. The next request
- * or an unmount cancels whatever is still pending.
+ * or an unmount cancels whatever is still pending. After a focus move, wait the
+ * same gap so native focus notifications do not swallow the announcement.
  */
-export function useLiveAnnouncement(request: { text: string }): string {
+export function useLiveAnnouncement(request: { text: string }, afterFocusMove = false): string {
   const [publishedRequest, setPublishedRequest] = useState<{ text: string } | null>(null);
   // Survives a clear, so a repeat after an empty request still waits the gap.
   const lastPublished = useRef('');
   useEffect(() => {
     if (request.text === '') return;
-    const delay = request.text === lastPublished.current ? REPEAT_DELAY_MS : 0;
+    const delay = afterFocusMove || request.text === lastPublished.current ? REPEAT_DELAY_MS : 0;
     const timer = window.setTimeout(() => {
       lastPublished.current = request.text;
       setPublishedRequest(request);
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [request]);
+  }, [request, afterFocusMove]);
   return publishedRequest === request ? request.text : '';
 }

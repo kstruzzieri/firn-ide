@@ -498,6 +498,13 @@
   box-shadow: var(--shadow-panel);
 }
 
+/* Save as profile's alert region stays mounted while empty; cancel the form's
+   flex gap it would otherwise add. Margin only: WebKit rebuilds a live region
+   whose display type changes, and VoiceOver then does not announce it. */
+.menuAlert:empty {
+  margin-top: -6px;
+}
+
 .menuHint {
   margin: 0;
   padding: 0 8px;

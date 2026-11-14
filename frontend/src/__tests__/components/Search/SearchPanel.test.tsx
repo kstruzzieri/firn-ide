@@ -88,7 +88,9 @@ describe('SearchPanel — empty-style states', () => {
   it('renders the loading state', () => {
     setUIState({ uiState: { kind: 'loading', requestId: 'r1' } });
     render(<SearchPanel />);
-    expect(screen.getByText(/Searching/)).toBeInTheDocument();
+    // Once in the panel, once in the status region that announces it.
+    expect(screen.getAllByText(/Searching/)).toHaveLength(2);
+    expect(screen.getByRole('status')).toHaveTextContent('Searching…');
   });
 
   it('renders the no-matches state with formatted duration', () => {
@@ -98,12 +100,38 @@ describe('SearchPanel — empty-style states', () => {
     expect(screen.getByText(/142 ms/)).toBeInTheDocument();
   });
 
-  it('renders the missing-tool state as an alert', () => {
+  // The packaged app recorded no notification at all when the invalid-regex
+  // alert replaced "Searching…": React reused the state panel's element and
+  // swapped its aria-live for role="alert", and WebKit announced neither. jsdom
+  // has no accessibility tree, so this pins the cause: one status region,
+  // mounted before any search, carries each state's message and keeps its class.
+  it('announces search states through one status region mounted before them', () => {
+    setUIState({ uiState: { kind: 'empty-query' } });
+    render(<SearchPanel />);
+    const region = screen.getByRole('status');
+    expect(region).toBeEmptyDOMElement();
+    const className = region.className;
+
+    act(() => setUIState({ uiState: { kind: 'loading', requestId: 'r1' } }));
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region).toHaveTextContent('Searching…');
+
+    act(() =>
+      setUIState({ query: 'tw(', uiState: { kind: 'invalid-regex', message: 'unclosed group' } })
+    );
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region).toHaveTextContent('Invalid regular expression: unclosed group');
+    expect(region.className).toBe(className);
+  });
+
+  it('renders and announces the missing-tool state', () => {
     setUIState({
       uiState: { kind: 'missing-tool', message: 'ripgrep is not on PATH.' },
     });
     render(<SearchPanel />);
-    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'ripgrep is not available: ripgrep is not on PATH.'
+    );
     expect(screen.getByText('ripgrep is not available')).toBeInTheDocument();
     expect(screen.getByText('ripgrep is not on PATH.')).toBeInTheDocument();
   });
