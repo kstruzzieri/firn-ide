@@ -38,6 +38,48 @@ func reportedHistfile(t *testing.T, cmd *exec.Cmd) string {
 	return ""
 }
 
+func reportedHistfileAtPrompt(t *testing.T, cmd *exec.Cmd) string {
+	t.Helper()
+	output := filepath.Join(t.TempDir(), "histfile")
+	cmd.Env = append(cmd.Env, "FIRN_TEST_HISTFILE_OUT="+output)
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatalf("pty.Start: %v", err)
+	}
+	// One waiter, and cleanup before anything can fail, so every path reaps the shell.
+	exited := make(chan struct{})
+	var waitErr error
+	go func() { waitErr = cmd.Wait(); close(exited) }()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill() // already gone on the normal path
+		<-exited
+		_ = ptmx.Close()
+	})
+	go func() { _, _ = io.Copy(io.Discard, ptmx) }() // or the shell blocks on a full terminal
+
+	if _, err := ptmx.Write([]byte(printHistfile + ` > "$FIRN_TEST_HISTFILE_OUT"` + "\nexit\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	select {
+	case <-exited:
+		if waitErr != nil {
+			t.Fatalf("zsh exit: %v", waitErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("zsh did not exit")
+	}
+
+	seen, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("the shell never ran the typed command: %v", err)
+	}
+	value, ok := strings.CutPrefix(strings.TrimSpace(string(seen)), "HISTFILE=")
+	if !ok {
+		t.Fatalf("zsh printed no HISTFILE line: %q", seen)
+	}
+	return value
+}
+
 func writeRC(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -225,10 +267,10 @@ func TestIntegratedZshLeavesAppleTerminalSessionsOff(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("ZDOTDIR", "")
 
-	// What a terminal that is not Apple's gives a plain zsh.
-	plain := exec.Command(zsh, "-ic", printHistfile)
-	plain.Env = zshEnv(home)
-	want := reportedHistfile(t, plain)
+	// Compare both after a prompt: -ic does not run the first-prompt hooks.
+	plain := exec.Command(zsh)
+	plain.Env = zshEnv(home, "TERM=xterm-256color")
+	want := reportedHistfileAtPrompt(t, plain)
 
 	cmd := integratedCommand(zsh, t.TempDir())
 	wrapper, _ := envValue(cmd.Env, "ZDOTDIR")
@@ -238,36 +280,7 @@ func TestIntegratedZshLeavesAppleTerminalSessionsOff(t *testing.T) {
 	cmd.Env = zshEnv(home, "ZDOTDIR="+wrapper, "USER_ZDOTDIR="+home, "TERM=xterm-256color",
 		"TERM_PROGRAM=Apple_Terminal", "TERM_SESSION_ID=firn-560-test")
 
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		t.Fatalf("pty.Start: %v", err)
-	}
-	// One waiter, and a cleanup registered before anything can fail, so every
-	// way out of the test ends the shell and reaps it.
-	exited := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(exited) }()
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill() // already gone on the normal path
-		<-exited
-		_ = ptmx.Close()
-	})
-	go func() { _, _ = io.Copy(io.Discard, ptmx) }() // or the shell blocks on a full terminal
-
-	// Typed at the first prompt, so every first-prompt hook has run by then.
-	if _, err := ptmx.Write([]byte(printHistfile + ` > "$HOME/seen"` + "\nexit\n")); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	select {
-	case <-exited:
-	case <-time.After(10 * time.Second):
-		t.Fatal("zsh did not exit")
-	}
-
-	seen, err := os.ReadFile(filepath.Join(home, "seen"))
-	if err != nil {
-		t.Fatalf("the shell never ran the typed command: %v", err)
-	}
-	if got := strings.TrimSpace(strings.TrimPrefix(string(seen), "HISTFILE=")); got != want {
+	if got := reportedHistfileAtPrompt(t, cmd); got != want {
 		t.Errorf("HISTFILE after the first prompt = %q, want %q", got, want)
 	}
 	// Nothing of the session may be left behind in Firn's cache either.
