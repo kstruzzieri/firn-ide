@@ -276,10 +276,13 @@
   background: #040406; /* Glacier glow — near-black void */
 }
 
-.terminalContent :global(.xterm-viewport),
-.terminalContent :global(.xterm-screen) {
-  padding-left: 8px !important;
-  padding-top: 4px !important;
+/* Pad the .xterm root, not .xterm-screen. xterm places command markers and the
+   selection highlight against the screen's edge, so padding the screen shifted
+   the text but drew markers 4px above their line and the selection 8px left and
+   4px up. The fit addon also reads padding from this element. The left padding
+   is the gutter the command marker bar sits in (shellIntegration.ts). */
+.terminalContent :global(.xterm) {
+  padding: 4px 0 0 8px;
 }
 
 /* ── Empty states ────────────────────────────────────────────── */

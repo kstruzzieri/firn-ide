@@ -130,6 +130,10 @@ export function createShellIntegration(
       bar.onRender((el) => {
         el.style.backgroundColor = failed ? colors.fail : colors.ok;
         el.style.width = '3px';
+        // x:0 anchors the bar on column 0, over the first character. Shift it
+        // into the terminal's 8px left padding (Terminal.module.css). transform,
+        // not left: xterm resets `left` on resize but never touches transform.
+        el.style.transform = 'translateX(-6px)';
       });
       block.decorations.push(bar);
     }
