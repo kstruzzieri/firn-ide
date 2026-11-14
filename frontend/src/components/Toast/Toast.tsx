@@ -14,14 +14,19 @@ export function Toast() {
     return () => clearTimeout(timer);
   }, [toast, clearToast]);
 
-  if (!toast) return null;
-
+  // The alert region is always mounted and unstyled: WebKit announces a region
+  // only when its content changes, and one inserted together with its text
+  // reaches VoiceOver as created, not changed, so the toast is never spoken.
   return (
-    <div className={`${styles.toast} ${styles[toast.type]}`} role="alert" aria-live="assertive">
-      <span className={styles.message}>{toast.message}</span>
-      <button className={styles.close} onClick={clearToast} aria-label="Dismiss" type="button">
-        ×
-      </button>
+    <div role="alert" aria-live="assertive">
+      {toast && (
+        <div className={`${styles.toast} ${styles[toast.type]}`}>
+          <span className={styles.message}>{toast.message}</span>
+          <button className={styles.close} onClick={clearToast} aria-label="Dismiss" type="button">
+            ×
+          </button>
+        </div>
+      )}
     </div>
   );
 }

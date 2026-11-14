@@ -21,7 +21,7 @@ jest.mock('../../../utils/editorNavigation', () => ({
   ensureEditorFileOpen: (...args: unknown[]) => mockEnsureEditorFileOpen(...args),
 }));
 
-import { render, screen, fireEvent, act, within } from '@testing-library/react';
+import { render, screen, fireEvent, act, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GitPanel } from '../../../components/GitPanel';
 import { useGitStore } from '../../../stores/gitStore';
@@ -235,7 +235,12 @@ describe('GitPanel sections', () => {
     expect(GitUnstage).toHaveBeenCalledWith('/repo', ['docs/new.md']);
   });
 
-  it('disables track and untrack while another git op is in flight', () => {
+  // WebKit moves keyboard focus to <body> when the focused button becomes
+  // disabled and does not give it back; the packaged app recorded Track and
+  // Untrack losing focus the moment they were pressed, as their failure was
+  // announced. jsdom does not model that blur, so this pins the cause: an op in
+  // flight leaves both focusable, only aria-disabled, and a press does nothing.
+  it('keeps track and untrack focusable while another git op is in flight', () => {
     seed([file('new.md', '?', '?'), file('ita.md', '.', 'A')]);
     act(() => {
       useGitStore.setState({ opInFlight: 'pull' });
@@ -243,8 +248,26 @@ describe('GitPanel sections', () => {
 
     render(<GitPanel />);
 
-    expect(screen.getByRole('button', { name: 'Track new.md without staging' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Untrack ita.md' })).toBeDisabled();
+    for (const name of ['Track new.md without staging', 'Untrack ita.md']) {
+      const button = screen.getByRole('button', { name });
+      expect(button).toBeEnabled();
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(button);
+    }
+    expect(GitIntentToAdd).not.toHaveBeenCalled();
+    expect(GitUnstage).not.toHaveBeenCalled();
+
+    act(() => {
+      useGitStore.setState({ opInFlight: null });
+    });
+    expect(screen.getByRole('button', { name: 'Track new.md without staging' })).toHaveAttribute(
+      'aria-disabled',
+      'false'
+    );
+    expect(screen.getByRole('button', { name: 'Untrack ita.md' })).toHaveAttribute(
+      'aria-disabled',
+      'false'
+    );
   });
 
   it('conflict rows have no include checkbox until resolved', () => {
@@ -560,8 +583,12 @@ describe('GitPanel AI message generation', () => {
       await user.click(generate);
 
       expect(generate).toHaveTextContent('Generating…');
-      expect(generate).toBeDisabled();
-      expect(screen.getByRole('button', { name: /^commit$/i })).toBeDisabled();
+      // aria-disabled, not native: a natively disabled button loses focus.
+      expect(generate).toHaveAttribute('aria-disabled', 'true');
+      expect(screen.getByRole('button', { name: /^commit$/i })).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
       expect(status).toHaveTextContent('Generating commit message…');
       expect(status).toBeVisible();
       expect(input).toHaveAttribute('readonly');
@@ -586,6 +613,37 @@ describe('GitPanel AI message generation', () => {
       else expect(screen.getByTestId('git-error')).toHaveTextContent('model unavailable');
     }
   );
+
+  // #515: WebKit moves keyboard focus to <body> when the focused button becomes
+  // disabled, and nothing gave it back when generation ended. jsdom does not
+  // model that blur, so this pins the cause: the pressed Generate button is the
+  // same element throughout, never natively disabled, and still focused after.
+  it('keeps Generate focused and never natively disabled through a generation', async () => {
+    const user = userEvent.setup();
+    let resolve!: (result: git.CommitMessageResult) => void;
+    mockGenerate.mockReturnValueOnce(
+      new Promise<git.CommitMessageResult>((res) => {
+        resolve = res;
+      }) as unknown as ReturnType<typeof GitGenerateCommitMessage>
+    );
+    seed([file('main.go', 'A', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+    render(<GitPanel />);
+    const generate = screen.getByRole('button', { name: /generate message/i });
+
+    await user.click(generate);
+    expect(generate).toHaveAttribute('aria-disabled', 'true');
+    expect(generate).toBeEnabled();
+    expect(generate).toHaveFocus();
+
+    await act(async () => resolve(generated('feat: add main', [])));
+
+    expect(screen.getByRole('button', { name: /generate message/i })).toBe(generate);
+    expect(generate).toHaveAttribute('aria-disabled', 'false');
+    expect(generate).toHaveFocus();
+  });
 
   it('hides the generate button when golem is unavailable', () => {
     seed([file('staged.ts', 'M', '.')]);
@@ -883,6 +941,69 @@ describe('GitPanel conflicts and errors', () => {
     expect(within(banner).getByRole('button', { name: /open clash\.go/i })).toBeInTheDocument();
   });
 
+  // WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live
+  // region inserted together with its text, and VoiceOver says nothing; the
+  // packaged app recorded that for a failed push's error strip and for a
+  // conflict banner. jsdom has no accessibility tree, so this pins the cause:
+  // one alert region is mounted before either arrives, and it keeps its class.
+  it('announces errors and conflict summaries through one persistent text-only region', async () => {
+    seed([]);
+    render(<GitPanel />);
+    const region = screen.getByRole('alert');
+    expect(region).toBeEmptyDOMElement();
+    const className = region.className;
+
+    act(() => {
+      useGitStore.setState({ lastError: 'hook rejected: lint failed' });
+    });
+    expect(screen.getByRole('alert')).toBe(region);
+    await waitFor(() => expect(region).toHaveTextContent('hook rejected: lint failed'));
+    expect(region.className).toBe(className);
+
+    seed([file('clash.go', 'U', 'U', true)]);
+    expect(screen.getByRole('alert')).toBe(region);
+    await waitFor(() => expect(region).toHaveTextContent('Resolve conflicts on main (1 file)'));
+    expect(within(region).queryAllByRole('button')).toHaveLength(0);
+    expect(region).not.toContainElement(screen.getByTestId('conflict-banner'));
+    expect(region.className).toBe(className);
+  });
+
+  // The packaged app recorded a repository that opens already in conflict:
+  // Source Control showed "Loading git status…", then mounted the alert region
+  // together with the banner, which WebKit reported as created and VoiceOver did
+  // not speak. Pin the cause: the region, and its parent (WebKit also rebuilds a
+  // region whose ancestor changes display type), are in the document while the
+  // status loads, and the summary arrives inside those same elements. A
+  // workspace switch back to loading keeps them too.
+  it('mounts the alert region while the status loads, so a repository already in conflict is announced', async () => {
+    act(() => {
+      useGitStore.getState().resetForWorkspace('/repo');
+    });
+    render(<GitPanel />);
+    expect(screen.getByText(/loading git status/i)).toBeInTheDocument();
+    const region = screen.getByRole('alert');
+    expect(region).toBeEmptyDOMElement();
+    const parent = region.parentElement!;
+    const parentClass = parent.className;
+
+    act(() => {
+      useGitStore.setState({ status: repoStatus([file('clash.go', 'U', 'U', true)]) });
+    });
+
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region.parentElement).toBe(parent);
+    expect(parent.className).toBe(parentClass);
+    await waitFor(() => expect(region).toHaveTextContent('Resolve conflicts on main (1 file)'));
+
+    act(() => {
+      useGitStore.getState().resetForWorkspace('/repo');
+    });
+    expect(screen.getByText(/loading git status/i)).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBe(region);
+    expect(region.parentElement).toBe(parent);
+    expect(region).toBeEmptyDOMElement();
+  });
+
   it('shows operation errors inline', () => {
     seed([]);
     act(() => {
@@ -923,6 +1044,77 @@ describe('GitPanel conflicts and errors', () => {
     expect(screen.getByRole('button', { name: 'Open frontend/index.ts' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open backend/index.ts' })).toBeInTheDocument();
   });
+
+  describe('conflict speech', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it('announces one summary without reading the Resolve and Open controls', () => {
+      seed([file('a.txt', 'U', 'U', true), file('b.txt', 'U', 'U', true)]);
+      render(<GitPanel />);
+      const alert = screen.getByRole('alert');
+      act(() => jest.runOnlyPendingTimers());
+
+      expect(alert.textContent).toBe('Resolve conflicts on main (2 files)');
+      for (const name of ['Resolve a.txt', 'Open a.txt', 'Resolve b.txt', 'Open b.txt']) {
+        expect(alert).not.toContainElement(screen.getByRole('button', { name }));
+      }
+    });
+
+    it('does not republish the summary when a refresh only reorders the same conflicts', async () => {
+      seed([file('a.txt', 'U', 'U', true), file('b.txt', 'U', 'U', true)]);
+      render(<GitPanel />);
+      act(() => jest.runOnlyPendingTimers());
+      const alert = screen.getByRole('alert');
+      const mutations: MutationRecord[] = [];
+      const observer = new MutationObserver((records) => mutations.push(...records));
+      observer.observe(alert, { childList: true, characterData: true, subtree: true });
+      try {
+        await act(async () => {
+          useGitStore.setState({
+            status: repoStatus([file('b.txt', 'U', 'U', true), file('a.txt', 'U', 'U', true)]),
+          });
+        });
+        act(() => jest.runOnlyPendingTimers());
+        expect(mutations).toHaveLength(0);
+      } finally {
+        observer.disconnect();
+      }
+    });
+
+    it.each([
+      { phase: 'before the next open', mergeFocused: true, mergeAdvancePending: false },
+      { phase: 'between sessions', mergeFocused: false, mergeAdvancePending: true },
+      { phase: 'after the next open', mergeFocused: true, mergeAdvancePending: true },
+    ])('does not interrupt the merge handoff when status refresh lands $phase', (phase) => {
+      seed([file('a.txt', 'U', 'U', true), file('b.txt', 'U', 'U', true)]);
+      act(() => useGitStore.setState({ mergeFocused: true }));
+      render(<GitPanel />);
+      act(() => jest.runOnlyPendingTimers());
+      const alert = screen.getByRole('alert');
+      expect(alert).toBeEmptyDOMElement();
+
+      act(() => {
+        useGitStore.setState({
+          mergeFocused: phase.mergeFocused,
+          mergeAdvancePending: phase.mergeAdvancePending,
+          status: repoStatus([file('b.txt', 'U', 'U', true)]),
+        });
+      });
+      act(() => jest.runOnlyPendingTimers());
+      expect(alert).toBeEmptyDOMElement();
+      expect(screen.getByRole('button', { name: 'Resolve b.txt' })).toBeVisible();
+    });
+
+    it('still announces operation errors while the merge view owns conflict updates', () => {
+      seed([file('b.txt', 'U', 'U', true)]);
+      act(() => useGitStore.setState({ mergeFocused: true, lastError: 'Could not stage b.txt' }));
+      render(<GitPanel />);
+      act(() => jest.runOnlyPendingTimers());
+
+      expect(screen.getByRole('alert').textContent).toBe('Could not stage b.txt');
+    });
+  });
 });
 
 describe('GitPanel branch and sync controls', () => {
@@ -940,6 +1132,54 @@ describe('GitPanel branch and sync controls', () => {
     // push is single-flight-blocked while pull is in flight OR queued after;
     // both operations must eventually have been attempted once each.
     expect(GitPull).toHaveBeenCalledTimes(1);
+  });
+
+  // WebKit moves keyboard focus to <body> when the focused button becomes
+  // disabled and does not give it back; the packaged app recorded Push losing
+  // focus the moment it was pressed, just as its failure was announced. jsdom
+  // does not model that blur, so this pins the cause: an operation in flight
+  // leaves Pull, Push, Generate and Commit focusable, only aria-disabled.
+  it('keeps sync and commit buttons focusable while an operation is in flight', () => {
+    seed([file('a.ts', 'M', '.')], { ahead: 1, behind: 1 });
+    act(() => {
+      useGitStore.setState({ aiAvailable: true, commitMessage: 'msg', opInFlight: 'push' });
+    });
+
+    render(<GitPanel />);
+
+    for (const name of [/^pull 1/i, /^push 1/i, /^generate message$/i, /^commit$/i]) {
+      const button = screen.getByRole('button', { name });
+      expect(button).toBeEnabled();
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+    }
+
+    act(() => {
+      useGitStore.setState({ opInFlight: null });
+    });
+    for (const name of [/^pull 1/i, /^push 1/i, /^generate message$/i, /^commit$/i]) {
+      expect(screen.getByRole('button', { name })).toHaveAttribute('aria-disabled', 'false');
+    }
+  });
+
+  // Same WebKit focus loss: the packaged app recorded Refresh focused before
+  // the press and focus on nothing once the refresh it started had finished.
+  it('keeps Refresh focusable while a refresh is in flight, and ignores a press', () => {
+    seed([]);
+    act(() => {
+      useGitStore.setState({ isRefreshing: true });
+    });
+
+    render(<GitPanel />);
+    const refresh = screen.getByRole('button', { name: /refresh git status/i });
+    expect(refresh).toBeEnabled();
+    expect(refresh).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(refresh);
+    expect(mockGitStatus).not.toHaveBeenCalled();
+
+    act(() => {
+      useGitStore.setState({ isRefreshing: false });
+    });
+    expect(refresh).toHaveAttribute('aria-disabled', 'false');
   });
 
   it('disables pull when nothing is behind and push when nothing is ahead', () => {

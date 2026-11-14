@@ -3,9 +3,13 @@
 // including `rev-parse --show-toplevel`), while OS/tree paths may not — so
 // every key must pass through here before comparison.
 
-/** Forward slashes only, no trailing slash (except a bare root "/"). */
+import { backslashIsSeparator } from './lspUri';
+
+/** Forward slashes only, no trailing slash (except a bare root "/"). A
+ * backslash folds only where it is a separator (backslashIsSeparator); on
+ * macOS and Linux it stays part of the name (#510). */
 export function normalizeFsPath(path: string): string {
-  const forward = path.replace(/\\/g, '/');
+  const forward = backslashIsSeparator(path) ? path.replace(/\\/g, '/') : path;
   if (forward.length > 1 && forward.endsWith('/')) {
     return forward.replace(/\/+$/, '') || '/';
   }

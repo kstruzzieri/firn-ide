@@ -226,6 +226,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saved as a profile. Literal keys in that file keep working, as do `${NAME}` keys in your user
   configuration. To use the file as it is, set `GO_LLM_CONFIG` to its path. A
   Firn opened from Finder or the Dock starts in `/` and was not exposed. (#524)
+- Every build, test, lint and release job now runs on Go 1.27.4, the
+  `toolchain` line in `go.mod`. It fixes GO-2026-6859 in `net/http`: an HTTP/1
+  server using `MaxBytesReader` or `MaxBytesHandler` can crash when a request
+  body passes the limit while its handler, reading that body, writes response
+  headers on another goroutine. Under Go 1.27.3, `govulncheck` finds the
+  affected `net/http` code in Firn's release build and traces calls into it
+  from Firn's source. (#565)
 
 ## [0.14.0] - 2026-10-25
 

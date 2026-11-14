@@ -870,7 +870,8 @@
   outline-offset: 1px;
 }
 
-.composer:disabled {
+.composer:disabled,
+.composer:read-only {
   color: var(--text-disabled);
 }
 

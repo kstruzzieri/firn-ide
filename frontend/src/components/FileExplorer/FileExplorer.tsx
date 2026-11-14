@@ -19,6 +19,7 @@ import { useDirectoryTree as useFetchDirectoryTree } from './useDirectoryTree';
 import { useFileTreePresentation } from '../../hooks/useFileTreePresentation';
 import { useOpenFolder } from '../../hooks/useOpenFolder';
 import { useEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
+import { useLiveAnnouncement } from '../../hooks/useLiveAnnouncement';
 import { TreeRow, ROW_HEIGHT, rowDomId } from './TreeRow';
 import { TreeViewToggle } from './TreeViewToggle';
 import { WorkspaceTabs } from './WorkspaceTabs';
@@ -351,6 +352,16 @@ export function FileExplorer() {
     virtualizer.scrollToIndex(idx, { align: 'auto' });
   }, [selectedPath, rows, virtualizer, setActiveKey]);
 
+  // Only show the scoped error when the higher-priority content states are clear.
+  const scopedErrorShown =
+    !isLoadingTree && !treeError && workspace && !scopeHydrating && scopedError;
+  // Hydration clears the first transient error; only publish its settled result.
+  const scopedErrorAnnouncement = useMemo(
+    () => ({ text: scopedErrorShown ? 'Workspace folder not found' : '' }),
+    [scopedErrorShown]
+  );
+  const liveScopedError = useLiveAnnouncement(scopedErrorAnnouncement);
+
   const renderContent = () => {
     if (isLoadingTree) return <FileExplorerSkeleton />;
     if (treeError) return <FileExplorerError message={treeError} onRetry={refetch} />;
@@ -358,13 +369,7 @@ export function FileExplorer() {
       return <FileExplorerEmpty message="Open a folder to get started" onOpenFolder={openFolder} />;
     }
     if (scopeHydrating) return <FileExplorerSkeleton />;
-    if (scopedError) {
-      return (
-        <div className={styles.scopedError} role="status">
-          <p>Workspace folder not found</p>
-        </div>
-      );
-    }
+    if (scopedError) return null;
     if (roots.length === 0 && !rootUnreadable) {
       return <FileExplorerEmpty message="No files in workspace" onOpenFolder={openFolder} />;
     }
@@ -465,7 +470,18 @@ export function FileExplorer() {
     >
       <div className={styles.explorerBody}>
         {mode === 'workspace' && <WorkspaceTabs />}
-        <div className={styles.tree}>{renderContent()}</div>
+        <div className={styles.tree}>
+          {/* Keep one status node mounted before hydration settles. The visible
+              notice is its content, with no separate hidden copy. */}
+          <div className={styles.scopedErrorStatus} role="status">
+            {liveScopedError && (
+              <div className={styles.scopedError}>
+                <p>{liveScopedError}</p>
+              </div>
+            )}
+          </div>
+          {renderContent()}
+        </div>
       </div>
     </Panel>
   );

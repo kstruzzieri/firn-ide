@@ -55,9 +55,15 @@
   white-space: nowrap;
 }
 
-.viewModeBtn:hover {
+.viewModeBtn:hover:not([aria-disabled='true']) {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* A history Retry while its read runs (#550): focusable, so not :disabled. */
+.viewModeBtn[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .viewModeBtn.active {
@@ -738,4 +744,18 @@
   color: var(--status-warning);
   background: color-mix(in srgb, var(--status-warning) 12%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--status-warning) 30%, transparent);
+}
+
+/* Visually hidden but in the accessibility tree, so the panel's status region
+   can speak while staying mounted and out of the layout. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }

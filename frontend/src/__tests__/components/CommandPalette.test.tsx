@@ -103,6 +103,23 @@ test('filters commands and repairs the active descendant to the first remaining 
   expect(option).toHaveAttribute('aria-selected', 'true');
 });
 
+// WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live region
+// inserted together with its text, and VoiceOver says nothing; the packaged app
+// recorded that for "No commands found". jsdom has no accessibility tree, so this pins the
+// cause: the region is mounted before the text arrives and keeps its class.
+test('mounts the empty-result status region before a query empties the list', async () => {
+  const user = userEvent.setup();
+  renderPalette();
+  const region = screen.getByRole('status');
+  expect(region).toBeEmptyDOMElement();
+
+  await user.type(screen.getByRole('combobox', { name: 'Command palette' }), 'does not exist');
+
+  expect(screen.getByRole('status')).toBe(region);
+  expect(region).toHaveTextContent('No commands found');
+  expect(region).not.toHaveAttribute('class');
+});
+
 test('announces an empty result and clears the active descendant', async () => {
   const user = userEvent.setup();
   renderPalette();

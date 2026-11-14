@@ -9,7 +9,20 @@ import { getPlatform } from './platform';
 
 const isWindows = getPlatform() === 'windows';
 
+/**
+ * True where a backslash in `path` is a separator: on a Windows host, or in a
+ * Windows-origin path (a drive letter, its URI form `/c:/`, or a UNC share).
+ * On macOS and Linux it is a name character, so `a\b/x` is not `a/b/x`, as the
+ * backend's filepath.ToSlash keeps it (#510).
+ */
+export function backslashIsSeparator(path: string): boolean {
+  return isWindows || /^\/?[a-z]:[\\/]|^\\\\|^\/\//i.test(path);
+}
+
+/** Folds separators to slashes and drops a URI-form drive path's leading
+ * slash (`/c:/x` → `c:/x`); see backslashIsSeparator. */
 function normalizeWindowsDrivePath(path: string): string {
+  if (!backslashIsSeparator(path)) return path;
   const normalized = path.replace(/\\/g, '/');
   return /^\/[A-Za-z]:\//.test(normalized) ? normalized.slice(1) : normalized;
 }
@@ -103,8 +116,9 @@ export function fileURIToPath(uri: string): string | null {
 /**
  * Normalizes a local path for cross-platform equality checks.
  * Drive-letter paths (Windows-origin) are fully lowercased since NTFS is
- * case-insensitive. Backslashes are always converted to forward slashes.
- * Non-drive paths on macOS/Linux are left case-sensitive.
+ * case-insensitive. Backslashes become forward slashes only where they are
+ * separators (see normalizeWindowsDrivePath). Non-drive paths on macOS/Linux
+ * are left case-sensitive.
  */
 export function normalizePathForComparison(path: string): string {
   if (!path) return path;

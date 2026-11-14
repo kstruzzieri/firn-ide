@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { cssRule } from '../../helpers/cssRule';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { MergeResolutionState } from '../../../components/Editor/codemirror';
 import type { MergeResolutionEditor } from '../../../components/Editor/codemirror';
 import type { ResolutionRefusalHandler } from '../../../components/Editor/codemirror';
@@ -59,6 +59,7 @@ const confirmMergeClose = jest.fn();
 /** The session the mocked store reports; the view reads it back after awaiting
  * a store action, so tests can model what the action did. */
 let storeSession: MergeSession | null = null;
+let storeAdvancePending = false;
 
 // CodeMirror is ESM-only under Jest. The view contract is tested here without
 // mounting it; mergeResolution.test.ts covers the real editor behavior.
@@ -88,6 +89,7 @@ jest.mock('../../../stores/gitStore', () => ({
       cancelMergeClose,
       confirmMergeClose,
       mergeSession: storeSession,
+      mergeAdvancePending: storeAdvancePending,
     }),
   },
 }));
@@ -216,6 +218,7 @@ beforeEach(() => {
   onDocumentChanged = undefined;
   onResolutionRefused = undefined;
   storeSession = null;
+  storeAdvancePending = false;
   applyMergeReload.mockImplementation(() => Promise.resolve());
 });
 
@@ -226,27 +229,33 @@ describe('MergeResolutionView', () => {
       regions: [...textSession.regions, { ...textSession.regions[0], index: 1 }],
     } as MergeSession;
     const { rerender } = render(<MergeResolutionView session={navigableSession} visible />);
+    // Mounted empty before any refusal: a region inserted together with its
+    // text reaches VoiceOver as created, not changed, and is not spoken.
+    const refusal = screen.getByTestId('merge-refusal');
+    expect(refusal).toHaveAttribute('role', 'alert');
+    expect(refusal).toBeEmptyDOMElement();
 
     act(() => onResolutionRefused?.('B', 'ambiguous-eof'));
 
-    expect(screen.getByRole('alert')).toHaveTextContent(/Take Both.*Current or Incoming/i);
+    expect(screen.getByTestId('merge-refusal')).toBe(refusal);
+    expect(refusal).toHaveTextContent(/Take Both.*Current or Incoming/i);
     expect(recordDecision).not.toHaveBeenCalled();
     expect(reopenDecision).not.toHaveBeenCalled();
     expect(markMergeDirty).not.toHaveBeenCalled();
 
     act(() => onStateChange?.({ activeIndex: 1, decisions: {}, order: 'current-first' }));
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(refusal).toBeEmptyDOMElement();
 
     act(() => onResolutionRefused?.('M', 'ambiguous-eof'));
-    expect(screen.getByRole('alert')).toHaveTextContent(/Edit manually.*Current or Incoming/i);
+    expect(refusal).toHaveTextContent(/Edit manually.*Current or Incoming/i);
 
     act(() =>
       onStateChange?.({ activeIndex: null, decisions: { 0: 'C' }, order: 'current-first' })
     );
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(refusal).toBeEmptyDOMElement();
 
     act(() => onResolutionRefused?.('C', 'nonterminal-eof'));
-    expect(screen.getByRole('alert')).toHaveTextContent(/Current.*not at the end.*Reopen/i);
+    expect(refusal).toHaveTextContent(/Current.*not at the end.*Reopen/i);
 
     rerender(
       <MergeResolutionView
@@ -254,7 +263,7 @@ describe('MergeResolutionView', () => {
         visible
       />
     );
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(refusal).toBeEmptyDOMElement();
   });
 
   it('mounts a text Result editor, reflects its decisions, and finalizes only its live document', async () => {
@@ -382,9 +391,18 @@ describe('MergeResolutionView', () => {
       onStateChange?.({ activeIndex: null, decisions: { 0: 'C' }, order: 'current-first' })
     );
 
+    // WebKit moves keyboard focus to <body> when the focused button becomes
+    // disabled and does not give it back; the packaged app recorded a failed
+    // Write & stage leaving focus on nothing. jsdom does not model that blur,
+    // so this pins the cause: the pressed button stays focusable and focused,
+    // aria-disabled while the write runs, and a second press does nothing.
     const finalize = screen.getByRole('button', { name: 'Write & stage' });
+    finalize.focus();
     fireEvent.click(finalize);
-    expect(finalize).toBeDisabled();
+    expect(finalize).toBeEnabled();
+    expect(finalize).toHaveAttribute('aria-disabled', 'true');
+    expect(finalize).toHaveFocus();
+    fireEvent.click(finalize);
     expect(mergeFinalizeAndStage).toHaveBeenCalledTimes(1);
     expect(controller.setFrozen).toHaveBeenCalledWith(true);
     const undo = screen.getByRole('button', { name: 'Undo' });
@@ -407,7 +425,9 @@ describe('MergeResolutionView', () => {
       await Promise.resolve();
     });
     expect(controller.setFrozen).toHaveBeenLastCalledWith(false);
-    expect(screen.getByRole('button', { name: 'Write & stage' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Write & stage' })).toBe(finalize);
+    expect(finalize).not.toHaveAttribute('aria-disabled', 'true');
+    expect(finalize).toHaveFocus();
     expect(undo).toBeEnabled();
     expect(next).toBeEnabled();
     expect(rail).toBeEnabled();
@@ -431,9 +451,17 @@ describe('MergeResolutionView', () => {
     const incoming = screen.getByRole('button', {
       name: 'INCOMING — incoming deletes this file',
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Write & stage' }));
+    const finalize = screen.getByRole('button', { name: 'Write & stage' });
+    finalize.focus();
+    fireEvent.click(finalize);
     expect(current).toBeDisabled();
     expect(incoming).toBeDisabled();
+    // Same focus pin as the text view: aria-disabled while the write runs.
+    expect(finalize).toBeEnabled();
+    expect(finalize).toHaveAttribute('aria-disabled', 'true');
+    expect(finalize).toHaveFocus();
+    fireEvent.click(finalize);
+    expect(mergeFinalizeAndStage).toHaveBeenCalledTimes(1);
     fireEvent.click(incoming);
     expect(selectMergeSide).not.toHaveBeenCalled();
 
@@ -441,6 +469,8 @@ describe('MergeResolutionView', () => {
       finish?.(false);
       await Promise.resolve();
     });
+    expect(finalize).not.toHaveAttribute('aria-disabled', 'true');
+    expect(finalize).toHaveFocus();
     expect(incoming).toBeEnabled();
     fireEvent.click(incoming);
     expect(selectMergeSide).toHaveBeenCalledWith('theirs');
@@ -546,8 +576,8 @@ describe('MergeResolutionView', () => {
 
   it('announces decisions and reopens through the live region', () => {
     render(<MergeResolutionView session={textSession} visible />);
-    const status = screen.getByRole('status');
-    expect(status).toHaveTextContent('1 conflict unresolved.');
+    const status = screen.getByText('1 conflict unresolved.');
+    expect(status).toHaveAttribute('role', 'status');
 
     act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
     expect(status).toHaveTextContent('Conflict 1 resolved: took current. 0 unresolved.');
@@ -558,7 +588,7 @@ describe('MergeResolutionView', () => {
 
   it('resets the announcement to the new file summary when the session advances', () => {
     const { rerender } = render(<MergeResolutionView session={textSession} visible />);
-    const status = screen.getByRole('status');
+    const status = screen.getByText('1 conflict unresolved.');
     act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
     expect(status).toHaveTextContent('Conflict 1 resolved: took current. 0 unresolved.');
 
@@ -575,6 +605,48 @@ describe('MergeResolutionView', () => {
     // The previous file's "resolved" message must not linger; the new file's
     // summary is announced instead.
     expect(status).toHaveTextContent('1 conflict unresolved.');
+  });
+
+  it.each([false, true])(
+    'defers a reloaded count until focus settles, including an unchanged count (%s)',
+    (unchangedCount) => {
+      jest.useFakeTimers();
+      try {
+        const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+        const status = screen.getByText('1 conflict unresolved.');
+        if (!unchangedCount) {
+          act(() =>
+            onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' })
+          );
+        }
+
+        rerender(<MergeResolutionView session={{ ...textSession, requestRevision: 2 }} visible />);
+        expect(status).toBeEmptyDOMElement();
+        act(() => jest.advanceTimersByTime(399));
+        expect(status).toBeEmptyDOMElement();
+        act(() => jest.advanceTimersByTime(1));
+        expect(status).toHaveTextContent('1 conflict unresolved.');
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it('does not let a delayed reload count overwrite a newer merge decision', () => {
+    jest.useFakeTimers();
+    try {
+      const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+      const status = screen.getByText('1 conflict unresolved.');
+      rerender(<MergeResolutionView session={{ ...textSession, requestRevision: 2 }} visible />);
+      expect(status).toBeEmptyDOMElement();
+
+      act(() => onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' }));
+      expect(status).toHaveTextContent('Conflict 1 resolved: took current. 0 unresolved.');
+      act(() => jest.advanceTimersByTime(400));
+      expect(status).toHaveTextContent('Conflict 1 resolved: took current. 0 unresolved.');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
@@ -868,12 +940,82 @@ describe('MergeResolutionView external-change notice', () => {
       message: 'Could not check src/conflict.ts for outside changes: git exploded.',
     });
 
+  // WebKit posts AXLiveRegionCreated, not AXLiveRegionChanged, for a live
+  // region inserted together with its text, and VoiceOver says nothing; the
+  // packaged app recorded that for "a.txt changed outside Firn". jsdom has no
+  // accessibility tree, so this pins the cause: the notice's polite and
+  // assertive regions are mounted before a notice arrives and stay the same
+  // elements, and the class added with a notice never sets display.
+  it.each([
+    ['text', textSession],
+    ['sides', sidesSession],
+  ])(
+    'mounts the notice regions before a notice arrives, under a slot whose display is fixed (%s)',
+    (_renderer, base) => {
+      const { rerender } = render(<MergeResolutionView session={base} visible />);
+      const notice = screen.getByTestId('merge-notice');
+      const slot = notice.parentElement as HTMLElement;
+      const polite = within(notice).getByRole('status');
+      const assertive = within(notice).getByRole('alert');
+      expect(notice.textContent).toBe('');
+      expect(slot).toHaveClass('noticeSlot');
+
+      rerender(
+        <MergeResolutionView
+          session={withExternal(base, {
+            kind: 'changed',
+            hidden: false,
+            scope: 'worktree',
+            observedVersion: 'v1:moved',
+          })}
+          visible
+        />
+      );
+      expect(screen.getByTestId('merge-notice').parentElement).toBe(slot);
+      expect(within(notice).getByRole('status')).toBe(polite);
+      expect(polite).toHaveTextContent('changed outside Firn');
+      expect(slot).toHaveClass('noticeSlot', 'notice');
+
+      rerender(
+        <MergeResolutionView
+          session={withExternal(base, {
+            kind: 'resolved-outside',
+            message: 'src/conflict.ts is no longer conflicted — it was resolved outside Firn.',
+          })}
+          visible
+        />
+      );
+      expect(within(notice).getByRole('alert')).toBe(assertive);
+      expect(assertive).toHaveTextContent('resolved outside Firn');
+      expect(polite.textContent).toBe('');
+      expect(slot).toHaveClass('noticeSlot', 'notice');
+
+      const css = fs.readFileSync(
+        path.resolve(__dirname, '../../../components/Editor/MergeResolutionView.module.css'),
+        'utf8'
+      );
+      expect(cssRule(css, '.noticeSlot')).toMatch(/display:\s*flex/);
+      expect(cssRule(css, '.notice')).not.toMatch(/display/);
+    }
+  );
+
+  // WebKit moves keyboard focus to <body> when the focused button becomes
+  // disabled and does not return it; the packaged app recorded Reload losing
+  // focus as soon as it was pressed. jsdom does not model that blur, so this
+  // pins the cause: Reload is aria-disabled while the reload runs, not disabled.
+  it('keeps Reload focusable while its reload is in flight', () => {
+    render(<MergeResolutionView session={worktreeChange({ reloadPending: true })} visible />);
+
+    const reload = screen.getByRole('button', { name: /reload/i });
+    expect(reload).toBeEnabled();
+    expect(reload).toHaveAttribute('aria-disabled', 'true');
+  });
+
   it('offers Reload and Keep working for a worktree-scoped change as a polite notice', () => {
     render(<MergeResolutionView session={worktreeChange()} visible />);
 
     const notice = screen.getByTestId('merge-notice');
-    expect(notice).toHaveAttribute('role', 'status');
-    expect(notice).toHaveTextContent('changed outside Firn');
+    expect(within(notice).getByRole('status')).toHaveTextContent('changed outside Firn');
     // The actions are siblings of the live region, not read as part of it.
     expect(notice.querySelector('button')).toBeNull();
     expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
@@ -904,7 +1046,7 @@ describe('MergeResolutionView external-change notice', () => {
       />
     );
 
-    expect(screen.queryByTestId('merge-notice')).toBeNull();
+    expect(screen.getByTestId('merge-notice').textContent).toBe('');
     expect(screen.getByLabelText(/merge resolution for/i)).toBeInTheDocument();
   });
 
@@ -932,6 +1074,57 @@ describe('MergeResolutionView external-change notice', () => {
     expect(applyMergeReload).toHaveBeenCalledTimes(1);
     expect(controller.view.focus).toHaveBeenCalled();
   });
+
+  it.each([
+    { rebuild: false, decideBeforeCompletion: false },
+    { rebuild: true, decideBeforeCompletion: false },
+    { rebuild: true, decideBeforeCompletion: true },
+  ])(
+    'settles Reload after final focus without replacing a newer decision (%j)',
+    async ({ rebuild, decideBeforeCompletion }) => {
+      jest.useFakeTimers();
+      try {
+        storeSession = worktreeChange();
+        let finish!: () => void;
+        applyMergeReload.mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+        const { rerender } = render(<MergeResolutionView session={storeSession} visible />);
+        const status = screen.getByText('1 conflict unresolved.');
+        fireEvent.click(screen.getByRole('button', { name: /reload/i }));
+        // The store installs its replacement before awaiting its final read.
+        storeSession = {
+          ...textSession,
+          requestRevision: rebuild ? 2 : textSession.requestRevision,
+        };
+        rerender(<MergeResolutionView session={storeSession} visible />);
+        act(() => jest.advanceTimersByTime(1000));
+        expect(status).toBeEmptyDOMElement();
+
+        const decision = 'Conflict 1 resolved: took current. 0 unresolved.';
+        if (decideBeforeCompletion) {
+          act(() =>
+            onStateChange?.({ activeIndex: 0, decisions: { 0: 'C' }, order: 'current-first' })
+          );
+          storeSession = { ...storeSession, decisions: { 0: 'C' } };
+          expect(status).toHaveTextContent(decision);
+        }
+
+        await act(async () => finish());
+        expect(controller.view.focus).toHaveBeenCalled();
+        if (decideBeforeCompletion) {
+          act(() => jest.advanceTimersByTime(400));
+          expect(status).toHaveTextContent(decision);
+          return;
+        }
+        expect(status).toBeEmptyDOMElement();
+        act(() => jest.advanceTimersByTime(399));
+        expect(status).toBeEmptyDOMElement();
+        act(() => jest.advanceTimersByTime(1));
+        expect(status).toHaveTextContent('1 conflict unresolved.');
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  );
 
   it('keeps focus on the action when a reload leaves a notice behind', async () => {
     storeSession = worktreeChange();
@@ -989,7 +1182,10 @@ describe('MergeResolutionView external-change notice', () => {
     render(<MergeResolutionView session={worktreeChange({ reloadPending: true })} visible />);
 
     expect(controller.setFrozen).toHaveBeenCalledWith(true);
-    expect(screen.getByRole('button', { name: /reload/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /reload/i })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    );
     expect(screen.getByRole('button', { name: /undo/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Write & stage' })).toBeDisabled();
   });
@@ -1035,8 +1231,8 @@ describe('MergeResolutionView external-change notice', () => {
 
   it('renders no notice when the session is in sync', () => {
     render(<MergeResolutionView session={textSession} visible />);
-    expect(screen.queryByTestId('merge-notice')).toBeNull();
-    expect(screen.queryByTestId('merge-notice')).toBeNull();
+    expect(screen.getByTestId('merge-notice').textContent).toBe('');
+    expect(screen.queryByRole('button', { name: /reload|keep working|retry/i })).toBeNull();
   });
 });
 
@@ -1383,6 +1579,70 @@ describe('MergeResolutionView overwrite consent', () => {
     });
 
     expect(controller.view.focus).toHaveBeenCalled();
+  });
+
+  // The packaged app recorded Write & stage advancing the queue, with no other
+  // tab open, and focus ending on nothing. The hand-off passes through no
+  // session, so the finalized file's view unmounts with the pressed button, and
+  // the focusResult that view then calls names its own destroyed editor. Pin
+  // the cause by driving the hand-off the store makes: the next file's view is
+  // a new one, and it takes focus into its Result when it mounts during the
+  // advance with nothing holding focus, and only then.
+  async function advanceToNextFile(beforeNextMounts: () => void = () => {}) {
+    let finish!: (ok: boolean) => void;
+    mergeFinalizeAndStage.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolveFinalize) => {
+          finish = resolveFinalize;
+        })
+    );
+    storeSession = textSession;
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+    resolveAll();
+    const finalize = screen.getByRole('button', { name: 'Write & stage' });
+    finalize.focus();
+    fireEvent.click(finalize);
+    (controller.view.focus as jest.Mock).mockClear();
+
+    // The store's advance: the session closes with the pending flag set...
+    act(() => {
+      storeAdvancePending = true;
+      storeSession = null;
+      rerender(<></>);
+    });
+    expect(finalize).not.toBeInTheDocument();
+    beforeNextMounts();
+    // ...the next file opens while the flag still stands...
+    const next = {
+      ...textSession,
+      path: 'src/next.ts',
+      fileQueue: ['src/next.ts'],
+      requestRevision: 2,
+    } as unknown as MergeSession;
+    act(() => {
+      storeSession = next;
+      rerender(<MergeResolutionView session={next} visible />);
+    });
+    // ...and the flag drops before the finalize the old view awaited returns.
+    await act(async () => {
+      storeAdvancePending = false;
+      finish(true);
+      await Promise.resolve();
+    });
+  }
+
+  it('focuses the next queued file in a new view once the finalized one left with the focus', async () => {
+    await advanceToNextFile();
+    expect(controller.view.focus).toHaveBeenCalled();
+  });
+
+  it('leaves focus where the user moved it during the hand-off', async () => {
+    const elsewhere = document.createElement('button');
+    document.body.appendChild(elsewhere);
+    await advanceToNextFile(() => elsewhere.focus());
+    expect(elsewhere).toHaveFocus();
+    expect(controller.view.focus).not.toHaveBeenCalled();
+    elsewhere.remove();
   });
 });
 

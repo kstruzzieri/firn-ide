@@ -173,6 +173,15 @@
 }
 
 /* Workspace-View scoped folder missing from the loaded tree */
+.scopedErrorStatus {
+  height: 100%;
+}
+
+/* Keep the live region's display type stable without taking space from the tree. */
+.scopedErrorStatus:empty {
+  height: 0;
+}
+
 .scopedError {
   display: flex;
   align-items: center;
