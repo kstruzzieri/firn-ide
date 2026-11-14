@@ -499,9 +499,21 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
     setSourceLoading(false);
   }, []);
 
+  /**
+   * [#550] The control focused when the current operation began: the button the
+   * user pressed. An approval it opens takes focus from it, and gives it back
+   * when the operation that closes it began inside the prompt (its own Cancel or
+   * Approve) — not when a source switch or Discard cancelled it from outside.
+   */
+  const operationInvokerRef = useRef<Element | null>(null);
+  const operationFromPromptRef = useRef(false);
+  const grantAlertRef = useRef<HTMLDivElement>(null);
   const beginOperation = (): boolean => {
     if (sendingRef.current) return false;
     sendingRef.current = true;
+    operationInvokerRef.current = document.activeElement;
+    operationFromPromptRef.current =
+      grantAlertRef.current?.contains(document.activeElement) ?? false;
     setSending(true);
     // [K5][N4] Every operation flips `locked`, which REMOUNTS both cards — and a
     // fresh card replays whatever `focusRequest` still stands, reopening an editor
@@ -1386,16 +1398,59 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
   const locked =
     inFlight || sourceLoading || sending || recovery || outcome.busy || outcome.challenge !== null;
   const sourceLocked = inFlight || sourceLoading || sending || recovery || outcome.busy;
+  /**
+   * [#550] A load or write in flight. A button it holds is aria-disabled, its
+   * press ignored, never natively disabled: WebKit moves keyboard focus to
+   * <body> when the focused button becomes disabled and does not give it back,
+   * so every button that runs one of these would drop the user who pressed it.
+   * Native `disabled` stays for what cannot be done at all.
+   */
+  const busy = inFlight || sourceLoading || sending;
+
+  /**
+   * [#550] An approval opened by a press makes that button impossible (natively
+   * disabled again), so focus moves to the prompt holding the decision; when the
+   * prompt's own Cancel or Approve closes it, the button that opened it takes
+   * focus back. Neither takes focus from a user who moved elsewhere meanwhile,
+   * nor from the Source handoff a cancelling source switch runs.
+   */
+  const promptHeadingRef = useRef<HTMLHeadingElement>(null);
+  const promptInvokerRef = useRef<Element | null>(null);
+  const challengeOpenRef = useRef(false);
+  useEffect(() => {
+    const open = outcome.challenge !== null;
+    const wasOpen = challengeOpenRef.current;
+    challengeOpenRef.current = open;
+    const active = document.activeElement;
+    const nowhere = active === null || active === document.body;
+    if (open && !wasOpen) {
+      const invoker = operationInvokerRef.current;
+      promptInvokerRef.current = invoker;
+      if (nowhere || active === invoker) promptHeadingRef.current?.focus();
+    } else if (!open && wasOpen) {
+      const invoker = promptInvokerRef.current;
+      promptInvokerRef.current = null;
+      if (
+        nowhere &&
+        operationFromPromptRef.current &&
+        invoker instanceof HTMLButtonElement &&
+        invoker.isConnected &&
+        !invoker.disabled
+      )
+        invoker.focus();
+    }
+  }, [outcome.challenge]);
 
   /**
    * [C28] One source of truth for the Check-destinations button's `disabled`
    * and `title`: the reason named here IS the reason shown, in the order the
    * conditions are checked.
    */
+  const checkBusy = projection !== null && busy;
   const checkDisabledReason: string =
     projection === null
       ? 'Nothing to check until a configuration is loaded.'
-      : inFlight || sourceLoading || sending
+      : checkBusy
         ? 'Wait for the current operation to finish.'
         : recovery
           ? 'Recover state first.'
@@ -1610,13 +1665,18 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
        * for Use model is not remounted under it. Unstyled but for
        * `.alertSlot`, which only cancels the flex gap an empty one would add.
        */}
-      <div role="alert" className={styles.alertSlot} data-testid="golem-grant-alert">
+      <div
+        ref={grantAlertRef}
+        role="alert"
+        className={styles.alertSlot}
+        data-testid="golem-grant-alert"
+      >
         {outcome.challenge !== null && (
           // [C27] No data-tone here: `.panel[data-tone='caution']` (0,2,0) would beat `.grant`
           // (0,1,0) whatever the source order, and the approved prompt is accent-outlined.
           <div className={`${styles.panel} ${styles.grant}`}>
             <div className={styles.grantHead}>
-              <h3 className={styles.grantTitle}>
+              <h3 ref={promptHeadingRef} tabIndex={-1} className={styles.grantTitle}>
                 {outcome.intent === 'grant-only'
                   ? 'Approve destinations'
                   : 'Approve before writing'}
@@ -1660,16 +1720,16 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               <button
                 type="button"
                 className={`${styles.button} ${styles.quiet}`}
-                disabled={inFlight || sourceLoading || sending}
-                onClick={() => void cancelDestination()}
+                aria-disabled={busy}
+                onClick={busy ? undefined : () => void cancelDestination()}
               >
                 {outcome.intent === 'grant-only' ? 'Cancel' : 'Cancel approval'}
               </button>
               <button
                 type="button"
                 className={`${styles.button} ${styles.primary}`}
-                disabled={inFlight || sourceLoading || sending}
-                onClick={confirmDestination}
+                aria-disabled={busy}
+                onClick={busy ? undefined : confirmDestination}
               >
                 {outcome.intent === 'grant-only'
                   ? `Approve ${outcome.challenge.destinations.length} destination${outcome.challenge.destinations.length === 1 ? '' : 's'}`
@@ -1907,13 +1967,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 <button
                   type="button"
                   className={`${styles.button} ${styles.warn}`}
-                  disabled={inFlight || sourceLoading || sending}
-                  title={
-                    inFlight || sourceLoading || sending
-                      ? 'Wait for the current operation to finish.'
-                      : undefined
-                  }
-                  onClick={() => void recover()}
+                  aria-disabled={busy}
+                  title={busy ? 'Wait for the current operation to finish.' : undefined}
+                  onClick={busy ? undefined : () => void recover()}
                 >
                   Recover state
                 </button>
@@ -1921,13 +1977,9 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 <button
                   type="button"
                   className={styles.button}
-                  disabled={inFlight || sourceLoading || sending}
-                  title={
-                    inFlight || sourceLoading || sending
-                      ? 'Wait for the current operation to finish.'
-                      : undefined
-                  }
-                  onClick={() => void refresh()}
+                  aria-disabled={busy}
+                  title={busy ? 'Wait for the current operation to finish.' : undefined}
+                  onClick={busy ? undefined : () => void refresh()}
                 >
                   Refresh
                 </button>
@@ -1941,9 +1993,11 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               <button
                 type="button"
                 className={`${styles.button} ${styles.checkDestinations}`}
-                disabled={checkDisabledReason !== ''}
+                // [#550] Busy is the one transient rung of the ladder: aria-disabled.
+                disabled={checkDisabledReason !== '' && !checkBusy}
+                aria-disabled={checkBusy}
                 title={checkDisabledReason !== '' ? checkDisabledReason : APPROVE_TITLE}
-                onClick={approveDestinations}
+                onClick={checkDisabledReason === '' ? approveDestinations : undefined}
               >
                 {APPROVE_ACTION}
               </button>
@@ -2281,6 +2335,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                 count={changeCount}
                 blocked={blocked}
                 locked={locked}
+                busy={busy}
                 discardLocked={inFlight || sourceLoading || sending || recovery}
                 onApply={() => apply('page')}
                 onDiscard={() => void discard()}

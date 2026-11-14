@@ -21,7 +21,7 @@ jest.mock('../../../utils/editorNavigation', () => ({
   ensureEditorFileOpen: (...args: unknown[]) => mockEnsureEditorFileOpen(...args),
 }));
 
-import { render, screen, fireEvent, act, within } from '@testing-library/react';
+import { render, screen, fireEvent, act, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GitPanel } from '../../../components/GitPanel';
 import { useGitStore } from '../../../stores/gitStore';
@@ -946,7 +946,7 @@ describe('GitPanel conflicts and errors', () => {
   // packaged app recorded that for a failed push's error strip and for a
   // conflict banner. jsdom has no accessibility tree, so this pins the cause:
   // one alert region is mounted before either arrives, and it keeps its class.
-  it('announces errors and conflicts through one alert region mounted before them', () => {
+  it('announces errors and conflict summaries through one persistent text-only region', async () => {
     seed([]);
     render(<GitPanel />);
     const region = screen.getByRole('alert');
@@ -957,14 +957,14 @@ describe('GitPanel conflicts and errors', () => {
       useGitStore.setState({ lastError: 'hook rejected: lint failed' });
     });
     expect(screen.getByRole('alert')).toBe(region);
-    expect(region).toHaveTextContent('hook rejected: lint failed');
+    await waitFor(() => expect(region).toHaveTextContent('hook rejected: lint failed'));
     expect(region.className).toBe(className);
 
     seed([file('clash.go', 'U', 'U', true)]);
     expect(screen.getByRole('alert')).toBe(region);
-    expect(within(region).getByTestId('conflict-banner')).toHaveTextContent(
-      /resolve conflicts on main/i
-    );
+    await waitFor(() => expect(region).toHaveTextContent('Resolve conflicts on main (1 file)'));
+    expect(within(region).queryAllByRole('button')).toHaveLength(0);
+    expect(region).not.toContainElement(screen.getByTestId('conflict-banner'));
     expect(region.className).toBe(className);
   });
 
@@ -973,9 +973,9 @@ describe('GitPanel conflicts and errors', () => {
   // together with the banner, which WebKit reported as created and VoiceOver did
   // not speak. Pin the cause: the region, and its parent (WebKit also rebuilds a
   // region whose ancestor changes display type), are in the document while the
-  // status loads, and the banner arrives inside those same elements. A
+  // status loads, and the summary arrives inside those same elements. A
   // workspace switch back to loading keeps them too.
-  it('mounts the alert region while the status loads, so a repository already in conflict is announced', () => {
+  it('mounts the alert region while the status loads, so a repository already in conflict is announced', async () => {
     act(() => {
       useGitStore.getState().resetForWorkspace('/repo');
     });
@@ -993,9 +993,7 @@ describe('GitPanel conflicts and errors', () => {
     expect(screen.getByRole('alert')).toBe(region);
     expect(region.parentElement).toBe(parent);
     expect(parent.className).toBe(parentClass);
-    expect(within(region).getByTestId('conflict-banner')).toHaveTextContent(
-      /resolve conflicts on main/i
-    );
+    await waitFor(() => expect(region).toHaveTextContent('Resolve conflicts on main (1 file)'));
 
     act(() => {
       useGitStore.getState().resetForWorkspace('/repo');
@@ -1045,6 +1043,77 @@ describe('GitPanel conflicts and errors', () => {
 
     expect(screen.getByRole('button', { name: 'Open frontend/index.ts' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open backend/index.ts' })).toBeInTheDocument();
+  });
+
+  describe('conflict speech', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it('announces one summary without reading the Resolve and Open controls', () => {
+      seed([file('a.txt', 'U', 'U', true), file('b.txt', 'U', 'U', true)]);
+      render(<GitPanel />);
+      const alert = screen.getByRole('alert');
+      act(() => jest.runOnlyPendingTimers());
+
+      expect(alert.textContent).toBe('Resolve conflicts on main (2 files)');
+      for (const name of ['Resolve a.txt', 'Open a.txt', 'Resolve b.txt', 'Open b.txt']) {
+        expect(alert).not.toContainElement(screen.getByRole('button', { name }));
+      }
+    });
+
+    it('does not republish the summary when a refresh only reorders the same conflicts', async () => {
+      seed([file('a.txt', 'U', 'U', true), file('b.txt', 'U', 'U', true)]);
+      render(<GitPanel />);
+      act(() => jest.runOnlyPendingTimers());
+      const alert = screen.getByRole('alert');
+      const mutations: MutationRecord[] = [];
+      const observer = new MutationObserver((records) => mutations.push(...records));
+      observer.observe(alert, { childList: true, characterData: true, subtree: true });
+      try {
+        await act(async () => {
+          useGitStore.setState({
+            status: repoStatus([file('b.txt', 'U', 'U', true), file('a.txt', 'U', 'U', true)]),
+          });
+        });
+        act(() => jest.runOnlyPendingTimers());
+        expect(mutations).toHaveLength(0);
+      } finally {
+        observer.disconnect();
+      }
+    });
+
+    it.each([
+      { phase: 'before the next open', mergeFocused: true, mergeAdvancePending: false },
+      { phase: 'between sessions', mergeFocused: false, mergeAdvancePending: true },
+      { phase: 'after the next open', mergeFocused: true, mergeAdvancePending: true },
+    ])('does not interrupt the merge handoff when status refresh lands $phase', (phase) => {
+      seed([file('a.txt', 'U', 'U', true), file('b.txt', 'U', 'U', true)]);
+      act(() => useGitStore.setState({ mergeFocused: true }));
+      render(<GitPanel />);
+      act(() => jest.runOnlyPendingTimers());
+      const alert = screen.getByRole('alert');
+      expect(alert).toBeEmptyDOMElement();
+
+      act(() => {
+        useGitStore.setState({
+          mergeFocused: phase.mergeFocused,
+          mergeAdvancePending: phase.mergeAdvancePending,
+          status: repoStatus([file('b.txt', 'U', 'U', true)]),
+        });
+      });
+      act(() => jest.runOnlyPendingTimers());
+      expect(alert).toBeEmptyDOMElement();
+      expect(screen.getByRole('button', { name: 'Resolve b.txt' })).toBeVisible();
+    });
+
+    it('still announces operation errors while the merge view owns conflict updates', () => {
+      seed([file('b.txt', 'U', 'U', true)]);
+      act(() => useGitStore.setState({ mergeFocused: true, lastError: 'Could not stage b.txt' }));
+      render(<GitPanel />);
+      act(() => jest.runOnlyPendingTimers());
+
+      expect(screen.getByRole('alert').textContent).toBe('Could not stage b.txt');
+    });
   });
 });
 

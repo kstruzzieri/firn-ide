@@ -771,7 +771,7 @@ describe('Editor merge queue hand-off', () => {
   // with the next file's text, and WebKit posted nothing VoiceOver speaks.
   // jsdom has no accessibility tree, so this pins the cause: the announcer is
   // one element across the welcome screen, and the text arrives in it.
-  it('restores focus before announcing the next file across the welcome screen', () => {
+  it('lets the next Result take focus before announcing across the welcome screen', () => {
     jest.useFakeTimers();
     useGitStore.setState({ mergeSession, mergeFocused: true, mergeQueueAnnouncement: '' });
     render(<Editor />);
@@ -794,7 +794,9 @@ describe('Editor merge queue hand-off', () => {
       });
     });
     expect(screen.getByTestId('merge-queue-announcement')).toBe(region);
-    expect(screen.getByRole('tab', { name: /next\.go.*merge/i })).toHaveFocus();
+    // The merge view owns Result focus. The shell must not focus the tab first
+    // and make the view mistake that for focus the user deliberately moved.
+    expect(screen.getByRole('tab', { name: /next\.go.*merge/i })).not.toHaveFocus();
     act(() => jest.advanceTimersByTime(399));
     expect(region).toBeEmptyDOMElement();
     act(() => jest.advanceTimersByTime(1));

@@ -937,7 +937,9 @@ describe('GolemConfigWorkspace', () => {
     ).toHaveAttribute('role', 'status');
   });
 
-  it('disables Refresh while a load is in flight', async () => {
+  // aria-disabled, not disabled: WebKit drops keyboard focus from a focused
+  // button that disables itself (#550).
+  it('marks Refresh unavailable while a load is in flight', async () => {
     let settle!: (value: unknown) => void;
     (ReloadGolemSettings as jest.Mock).mockImplementationOnce(
       () =>
@@ -947,11 +949,11 @@ describe('GolemConfigWorkspace', () => {
     );
     render(<GolemConfigWorkspace onClose={() => {}} />);
     const refresh = await screen.findByRole('button', { name: 'Refresh' });
-    expect(refresh).toBeDisabled();
+    expect(refresh).toHaveAttribute('aria-disabled', 'true');
 
     settle({ busy: false, projection: readyProjection });
     await screen.findByTestId('provider-row-llama-swap');
-    expect(refresh).toBeEnabled();
+    expect(refresh).toHaveAttribute('aria-disabled', 'false');
   });
 
   it('closes an open editor while Refresh owns the surface', async () => {

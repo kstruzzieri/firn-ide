@@ -406,7 +406,8 @@ describe('GolemSurface barriers', () => {
       />
     );
 
-    expect(composer()).toBeDisabled();
+    // Read-only rather than disabled, so it keeps keyboard focus (#550).
+    expect(composer()).toHaveAttribute('readonly');
     expect(sendButton()).toBeDisabled();
     fireEvent.keyDown(composer(), { key: 'Enter' });
     expect(actions.send).not.toHaveBeenCalled();

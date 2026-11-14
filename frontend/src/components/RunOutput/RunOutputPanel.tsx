@@ -32,6 +32,8 @@ const pendingHistoryReads = new Map<string, Promise<runhistory.Record>>();
 interface HistoryReadState {
   status: 'loading' | 'error';
   message?: string;
+  /** [#550] A read that follows a failure: its Retry stays on screen while it runs. */
+  retrying?: boolean;
 }
 
 type UpdateHistoryReadState = (key: string, state?: HistoryReadState) => void;
@@ -190,11 +192,19 @@ function HistoryReadMessage({
   onRetry: () => void;
 }) {
   const failed = state?.status === 'error';
+  // [#550] Retry stays through the read it starts, aria-disabled, its press
+  // ignored: unmounted while focused, it left keyboard focus on nothing.
+  const retrying = state?.retrying === true;
   return (
     <div className={styles.emptyState}>
       <p>{historyReadText(label, state)}</p>
-      {failed && (
-        <button type="button" className={styles.viewModeBtn} onClick={onRetry}>
+      {(failed || retrying) && (
+        <button
+          type="button"
+          className={styles.viewModeBtn}
+          aria-disabled={retrying}
+          onClick={retrying ? undefined : onRetry}
+        >
           Retry
         </button>
       )}
@@ -222,7 +232,13 @@ export function RunOutputPanel() {
   const workspacePath = workspace?.path;
   const updateHistoryReadState = useCallback<UpdateHistoryReadState>((key, next) => {
     setHistoryReadStates((current) => {
-      if (next) return { ...current, [key]: next };
+      if (next) {
+        const previous = current[key];
+        const retrying =
+          next.status === 'loading' &&
+          (previous?.status === 'error' || previous?.retrying === true);
+        return { ...current, [key]: retrying ? { ...next, retrying } : next };
+      }
       if (!(key in current)) return current;
       const updated = { ...current };
       delete updated[key];

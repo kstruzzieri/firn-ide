@@ -82,6 +82,18 @@ export function MergeResolutionView({
     return () => onFinalizingChange?.(false);
   }, [onFinalizingChange]);
 
+  // [#550] A queue advance passes through no session, so the finalized file's
+  // view unmounts with the Write & stage that held focus, and this view is a new
+  // one: the focusResult the old view then calls names its own destroyed editor.
+  // So the next file's view takes focus into its Result when it mounts during
+  // the advance, and only while nothing else holds focus. Children's effects
+  // run first, so the Result exists by now.
+  useEffect(() => {
+    const active = document.activeElement;
+    if (!useGitStore.getState().mergeAdvancePending) return;
+    if (active === null || active === document.body) focusResult();
+  }, [focusResult]);
+
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== 'Escape') return;
     // CodeMirror consumed it (collapsing a selection), or the platform is
@@ -689,7 +701,8 @@ function TextResolutionContent({
       const ok = await useGitStore.getState().mergeFinalizeAndStage(editor.getResult());
       // A successful finalize either advanced to the next queued file or
       // exhausted the queue; when a session is still open, put the user back in
-      // the document rather than leaving focus on a disabled button.
+      // the document rather than leaving focus on a disabled button. An advance
+      // that unmounted this view is the next view's to focus (see the wrapper).
       if (ok && useGitStore.getState().mergeSession) focusResult();
     } finally {
       if (editorRef.current === editor) editor.setFrozen(false);

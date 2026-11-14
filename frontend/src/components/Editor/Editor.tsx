@@ -214,14 +214,8 @@ export function Editor() {
 
   const queueText = mergeSession && !mergeAdvancePending ? queueAnnouncement : '';
   const queueAnnouncementRequest = useMemo(() => ({ text: queueText }), [queueText]);
+  // The next merge view owns Result focus; publish after its focus change settles.
   const publishedQueueAnnouncement = useLiveAnnouncement(queueAnnouncementRequest, true);
-  useLayoutEffect(() => {
-    if (!queueAnnouncementRequest.text || !showMerge || document.activeElement !== document.body) {
-      return;
-    }
-    // Recover the removed merge control before VoiceOver receives the next-file announcement.
-    editorRef.current?.querySelector<HTMLElement>('#tab-merge-resolution')?.focus();
-  }, [queueAnnouncementRequest, showMerge]);
 
   // Any close of the merge surface — Escape, the tab X, the resolved-outside
   // notice, or a confirmed discard — ends with the session becoming null. One

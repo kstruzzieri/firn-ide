@@ -389,7 +389,7 @@
   cursor: pointer;
 }
 
-.button:hover:not(:disabled) {
+.button:hover:not(:disabled, [aria-disabled='true']) {
   border-color: var(--accent);
 }
 
@@ -398,7 +398,8 @@
   outline-offset: 2px;
 }
 
-.button:disabled {
+.button:disabled,
+.button[aria-disabled='true'] {
   opacity: 0.4;
   cursor: default;
 }
@@ -442,7 +443,7 @@
   color: var(--status-warning);
 }
 
-.warn:hover:not(:disabled) {
+.warn:hover:not(:disabled, [aria-disabled='true']) {
   border-color: var(--status-warning);
   background-color: rgba(245, 158, 11, 0.08);
 }
@@ -2447,6 +2448,12 @@ select.input {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--accent);
+}
+
+/* [#550] Focus lands here when a press opens an approval: the masthead title's ring. */
+.grantTitle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
 }
 
 .grantTtl {

@@ -1038,9 +1038,10 @@ describe('nonterminal apply results', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
     await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
 
-    expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+    // Busy, so aria-disabled rather than disabled: a focused button keeps focus (#550).
+    for (const name of ['Confirm destination', 'Cancel approval', 'Refresh']) {
+      expect(screen.getByRole('button', { name })).toHaveAttribute('aria-disabled', 'true');
+    }
     expect(screen.getByRole('button', { name: 'Discard' })).toBeDisabled();
 
     settleCancel({ status: 'cancelled' });
@@ -2129,7 +2130,11 @@ describe('bootstrap through the Source picker', () => {
     // two former CTAs' own disabled attributes.
     expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
     expect(sourceTrigger()).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+    // Busy, so aria-disabled rather than disabled: a focused button keeps focus (#550).
+    expect(screen.getByRole('button', { name: 'Refresh' })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    );
 
     settleProfile(loadedProfile);
     expect(await screen.findByRole('button', { name: 'source → curated/local' })).toBeVisible();
@@ -2209,8 +2214,10 @@ describe('bootstrap through the Source picker', () => {
 
     expect(sourceTrigger()).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Cancel approval' })).toBeDisabled();
+    // Busy, so aria-disabled rather than disabled: a focused button keeps focus (#550).
+    for (const name of ['Confirm destination', 'Cancel approval']) {
+      expect(screen.getByRole('button', { name })).toHaveAttribute('aria-disabled', 'true');
+    }
 
     settleCancel({ status: 'cancelled' });
     await waitFor(() => expect(screen.queryByTestId('golem-config-draft')).not.toBeInTheDocument());
@@ -2764,5 +2771,160 @@ describe('selector-wide siblings (firn-ide#315)', () => {
     expect(lastApply().changes).toEqual([
       expect.objectContaining({ kind: 'route', useCase: 'chat', thinkMode: 'always' }),
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Busy buttons keep keyboard focus (#550)
+//
+// WebKit moves keyboard focus to <body> when the focused button becomes
+// disabled and does not give it back. The packaged app recorded Refresh, Check
+// destinations, the approval prompt's Cancel and Apply each leaving focus on
+// nothing the moment they were pressed. jsdom does not model that blur, so
+// these pin the cause: the pressed button stays enabled and focused,
+// aria-disabled while its operation runs, and a second press does nothing.
+// Where the result makes the button impossible (an approval is open) or
+// removes it (the prompt closes), focus moves to where the decision now is.
+// ---------------------------------------------------------------------------
+
+function pending<T = unknown>() {
+  let settle!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    settle = resolvePromise;
+  });
+  return { promise, settle };
+}
+
+/** Focus and press, the way a keyboard user does: the button must keep it. */
+function pressKeepingFocus(button: HTMLElement): void {
+  button.focus();
+  fireEvent.click(button);
+  expect(button).toBeEnabled();
+  expect(button).toHaveAttribute('aria-disabled', 'true');
+  expect(button).toHaveFocus();
+  fireEvent.click(button);
+}
+
+describe('busy buttons keep keyboard focus (#550)', () => {
+  it('keeps Refresh focusable while it reloads, and ignores a second press', async () => {
+    await mountWorkspace();
+    const reloadCall = pending();
+    (ReloadGolemSettings as jest.Mock).mockReturnValueOnce(reloadCall.promise);
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+
+    pressKeepingFocus(refresh);
+    expect(ReloadGolemSettings).toHaveBeenCalledTimes(2); // the mount, then one Refresh
+
+    await act(async () => reloadCall.settle({ busy: false, projection: readyProjection }));
+    expect(refresh).toHaveAttribute('aria-disabled', 'false');
+    expect(refresh).toHaveFocus();
+  });
+
+  it('keeps Check destinations focusable while it asks, then focuses the prompt it opened', async () => {
+    const prepare = pending();
+    (PrepareGolemDestinationGrants as jest.Mock).mockReturnValueOnce(prepare.promise);
+    await mountWorkspace();
+    const action = screen.getByRole('button', { name: 'Check destinations…' });
+
+    pressKeepingFocus(action);
+    expect(PrepareGolemDestinationGrants).toHaveBeenCalledTimes(1);
+
+    await act(async () =>
+      prepare.settle({ status: 'consent_required', challenge: grantChallenge() })
+    );
+    // An open approval makes the action impossible, so it is natively disabled
+    // again; focus goes to the prompt that now holds the decision.
+    expect(action).toBeDisabled();
+    expect(screen.getByRole('heading', { name: 'Approve destinations' })).toHaveFocus();
+  });
+
+  it('keeps the prompt Cancel focusable while it cancels, then returns focus to Check destinations', async () => {
+    prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+    const cancelCall = pending();
+    (CancelGolemSettingsApply as jest.Mock).mockReturnValueOnce(cancelCall.promise);
+    await mountWorkspace();
+    await approve();
+
+    pressKeepingFocus(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Approve 2 destinations' })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    );
+
+    await act(async () => cancelCall.settle({ status: 'cancelled' }));
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check destinations…' })).toHaveFocus();
+  });
+
+  it('keeps Approve focusable while it records, then returns focus to Check destinations', async () => {
+    prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+    const confirmCall = pending();
+    (ConfirmGolemDestinationGrants as jest.Mock).mockReturnValueOnce(confirmCall.promise);
+    await mountWorkspace();
+    await approve();
+
+    pressKeepingFocus(await screen.findByRole('button', { name: 'Approve 2 destinations' }));
+    expect(ConfirmGolemDestinationGrants).toHaveBeenCalledTimes(1);
+
+    await act(async () => confirmCall.settle({ status: 'granted' }));
+    expect(screen.getByRole('button', { name: 'Check destinations…' })).toHaveFocus();
+  });
+
+  // A Source switch that cancels an open approval hands focus to Source once
+  // the profile lands. WebKit blurs Source while the cancellation and the load
+  // disable it, so the prompt closing must not claim that empty focus for
+  // Check destinations: the Source handoff only fires while nothing holds
+  // focus. Giving focus back to the opener is for a prompt closed from its own
+  // Cancel or Approve.
+  it('leaves focus to the Source handoff when a source switch cancels the approval', async () => {
+    prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
+    const cancelCall = pending();
+    (CancelGolemSettingsApply as jest.Mock).mockReturnValueOnce(cancelCall.promise);
+    (LoadGolemProfile as jest.Mock).mockResolvedValueOnce(loadedProfile);
+    await mountWorkspace();
+    await approve();
+    await screen.findByRole('button', { name: 'Approve 2 destinations' });
+
+    await pickSource(/mine/, 'Yours');
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Cancel approval',
+      })
+    );
+    await waitFor(() => expect(CancelGolemSettingsApply).toHaveBeenCalledTimes(1));
+    // WebKit's blur of the Source trigger the cancellation disabled. jsdom keeps
+    // focus on a disabled control and will not blur it, so focus leaves through
+    // a stand-in that is then removed.
+    expect(sourceTrigger()).toHaveFocus();
+    act(() => {
+      const standIn = document.body.appendChild(document.createElement('button'));
+      standIn.focus();
+      standIn.remove();
+    });
+    expect(document.activeElement).toBe(document.body);
+
+    await act(async () => cancelCall.settle({ status: 'cancelled' }));
+    await waitFor(() => expect(LoadGolemProfile).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(sourceTrigger()).toHaveFocus());
+    expect(screen.getByRole('button', { name: 'Check destinations…' })).not.toHaveFocus();
+  });
+
+  it('keeps Apply focusable while it writes, focuses the approval it returns, and gets focus back on Cancel approval', async () => {
+    const write = pending();
+    (ApplyGolemSettings as jest.Mock).mockReturnValueOnce(write.promise);
+    await mountWorkspace();
+    await stageEndpoint();
+    const applyButton = screen.getByRole('button', { name: 'Apply' });
+
+    pressKeepingFocus(applyButton);
+    expect(ApplyGolemSettings).toHaveBeenCalledTimes(1);
+
+    await act(async () => write.settle({ status: 'consent_required', challenge: challenge() }));
+    expect(applyButton).toBeDisabled();
+    expect(screen.getByRole('heading', { name: 'Approve before writing' })).toHaveFocus();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel approval' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).toHaveFocus());
   });
 });

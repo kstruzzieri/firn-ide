@@ -59,6 +59,7 @@ const confirmMergeClose = jest.fn();
 /** The session the mocked store reports; the view reads it back after awaiting
  * a store action, so tests can model what the action did. */
 let storeSession: MergeSession | null = null;
+let storeAdvancePending = false;
 
 // CodeMirror is ESM-only under Jest. The view contract is tested here without
 // mounting it; mergeResolution.test.ts covers the real editor behavior.
@@ -88,6 +89,7 @@ jest.mock('../../../stores/gitStore', () => ({
       cancelMergeClose,
       confirmMergeClose,
       mergeSession: storeSession,
+      mergeAdvancePending: storeAdvancePending,
     }),
   },
 }));
@@ -216,6 +218,7 @@ beforeEach(() => {
   onDocumentChanged = undefined;
   onResolutionRefused = undefined;
   storeSession = null;
+  storeAdvancePending = false;
   applyMergeReload.mockImplementation(() => Promise.resolve());
 });
 
@@ -1576,6 +1579,70 @@ describe('MergeResolutionView overwrite consent', () => {
     });
 
     expect(controller.view.focus).toHaveBeenCalled();
+  });
+
+  // The packaged app recorded Write & stage advancing the queue, with no other
+  // tab open, and focus ending on nothing. The hand-off passes through no
+  // session, so the finalized file's view unmounts with the pressed button, and
+  // the focusResult that view then calls names its own destroyed editor. Pin
+  // the cause by driving the hand-off the store makes: the next file's view is
+  // a new one, and it takes focus into its Result when it mounts during the
+  // advance with nothing holding focus, and only then.
+  async function advanceToNextFile(beforeNextMounts: () => void = () => {}) {
+    let finish!: (ok: boolean) => void;
+    mergeFinalizeAndStage.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolveFinalize) => {
+          finish = resolveFinalize;
+        })
+    );
+    storeSession = textSession;
+    const { rerender } = render(<MergeResolutionView session={textSession} visible />);
+    resolveAll();
+    const finalize = screen.getByRole('button', { name: 'Write & stage' });
+    finalize.focus();
+    fireEvent.click(finalize);
+    (controller.view.focus as jest.Mock).mockClear();
+
+    // The store's advance: the session closes with the pending flag set...
+    act(() => {
+      storeAdvancePending = true;
+      storeSession = null;
+      rerender(<></>);
+    });
+    expect(finalize).not.toBeInTheDocument();
+    beforeNextMounts();
+    // ...the next file opens while the flag still stands...
+    const next = {
+      ...textSession,
+      path: 'src/next.ts',
+      fileQueue: ['src/next.ts'],
+      requestRevision: 2,
+    } as unknown as MergeSession;
+    act(() => {
+      storeSession = next;
+      rerender(<MergeResolutionView session={next} visible />);
+    });
+    // ...and the flag drops before the finalize the old view awaited returns.
+    await act(async () => {
+      storeAdvancePending = false;
+      finish(true);
+      await Promise.resolve();
+    });
+  }
+
+  it('focuses the next queued file in a new view once the finalized one left with the focus', async () => {
+    await advanceToNextFile();
+    expect(controller.view.focus).toHaveBeenCalled();
+  });
+
+  it('leaves focus where the user moved it during the hand-off', async () => {
+    const elsewhere = document.createElement('button');
+    document.body.appendChild(elsewhere);
+    await advanceToNextFile(() => elsewhere.focus());
+    expect(elsewhere).toHaveFocus();
+    expect(controller.view.focus).not.toHaveBeenCalled();
+    elsewhere.remove();
   });
 });
 

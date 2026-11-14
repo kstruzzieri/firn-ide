@@ -313,6 +313,46 @@ it('shows selected archive read failure and retries the demanded record', async 
   );
 });
 
+// WebKit moves keyboard focus to <body> when the focused button leaves the
+// page and does not give it back; the packaged app recorded Retry unmounting
+// while the read it started ran, so the failure it came back with left focus
+// on nothing. Pin the cause: Retry stays mounted, enabled and focused through
+// the retry, aria-disabled so a second press does nothing, and it is the same
+// button once the read fails again.
+it('keeps Retry mounted and focused while a failed read retries', async () => {
+  const archivedBuild = summary(newestId, 'build', 300);
+  const retried = deferred<runhistory.Record>();
+  mockGetRunHistoryRecord
+    .mockRejectedValueOnce(new Error('record unreadable'))
+    .mockReturnValueOnce(retried.promise);
+  setPhase2CState({
+    runHistorySummaries: { [newestId]: archivedBuild },
+    runHistoryRecords: { [newestId]: archivedBuild },
+    activeRunOutputId: `history:${newestId}`,
+    runOutputViewMode: 'merged',
+  });
+
+  render(<RunOutputPanel />);
+  const retry = await screen.findByRole('button', { name: 'Retry' });
+  retry.focus();
+  fireEvent.click(retry);
+  expect(mockGetRunHistoryRecord).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole('button', { name: 'Retry' })).toBe(retry);
+  expect(retry).toBeEnabled();
+  expect(retry).toHaveAttribute('aria-disabled', 'true');
+  expect(retry).toHaveFocus();
+  fireEvent.click(retry);
+  expect(mockGetRunHistoryRecord).toHaveBeenCalledTimes(2);
+
+  await act(async () => retried.reject(new Error('still unreadable')));
+  expect(
+    await screen.findByText('Could not load run output: still unreadable', onScreen)
+  ).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Retry' })).toBe(retry);
+  expect(retry).toHaveAttribute('aria-disabled', 'false');
+  expect(retry).toHaveFocus();
+});
+
 it('ignores a delayed rich response after workspace ownership changes', async () => {
   const pending = deferred<runhistory.Record>();
   const workspaceA = summary(newestId, 'build', 300);
