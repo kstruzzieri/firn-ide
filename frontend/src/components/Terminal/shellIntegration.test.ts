@@ -1,3 +1,6 @@
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+import { cssRule } from '../../__tests__/helpers/cssRule';
 import { createShellIntegration, type IntegrationTerminal } from './shellIntegration';
 
 const COLORS = { fail: '#F87171', ok: '#334155', separator: 'rgba(148,163,184,0.2)' };
@@ -88,6 +91,43 @@ describe('createShellIntegration', () => {
     const bar = f.decorations[0];
     bar.render();
     expect(bar.el.style.backgroundColor).toBe('rgb(51, 65, 85)'); // #334155
+  });
+
+  it('draws the bar in the left gutter, not over the first character', () => {
+    const f = makeFakeTerm();
+    createShellIntegration(f.term, COLORS);
+    f.fire('A');
+    f.fire('C');
+    f.fire('D;1');
+    const bar = f.decorations[0];
+    bar.render();
+    // xterm anchors an x:0 decoration on column 0, the cell holding the first
+    // glyph. The bar must sit left of that cell.
+    expect(bar.el.style.transform).toBe('translateX(-6px)');
+  });
+
+  it('keeps the gutter padding on the .xterm root, not the screen', () => {
+    // Padding .xterm-screen shifts the text but not xterm's absolutely placed
+    // layers: markers drew 4px above their line, the selection highlight 8px
+    // left and 4px up. The bar's -6px shift above needs this 8px left gutter.
+    const css = readFileSync(resolve(__dirname, 'Terminal.module.css'), 'utf8');
+    // Whole declarations, so `scroll-padding: 4px 0 0 8px` cannot pass for it.
+    const declarations = (body: string) =>
+      body.split(';').map((d) => d.trim().replace(/\s+/g, ' ').replace(/ ?: ?/, ': '));
+    expect(declarations(cssRule(css, '.terminalContent :global(.xterm)'))).toContain(
+      'padding: 4px 0 0 8px'
+    );
+    // No top-level rule naming the screen or viewport may add padding; zero is
+    // harmless. ponytail: flat rules only, like cssRule. A rule nested in
+    // @media/@supports or native nesting is not seen; walk nesting if one lands.
+    const noComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const [, selector, body] of noComments.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+      if (!/\.xterm-(screen|viewport)(?![\w-])/.test(selector)) continue;
+      const nonzeroPadding = declarations(body).filter(
+        (d) => /^padding(-[a-z-]+)?:/.test(d) && !/^[^:]+: (0(px)? ?)+(!important)?$/.test(d)
+      );
+      expect(nonzeroPadding).toEqual([]);
+    }
   });
 
   it('ignores a D with no preceding A', () => {
