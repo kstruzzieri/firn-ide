@@ -363,6 +363,9 @@ type applyGatesCase struct {
 	Refused             []string       `json:"refused"`
 	Picker              []string       `json:"picker"`
 	RefusedForEveryCard string         `json:"refusedForEveryCard"`
+	// Exposed (#512): use case → the capabilities its route runs with once
+	// the change is applied.
+	Exposed map[string][]string `json:"exposed"`
 }
 
 type applyGatesFixture struct {
@@ -478,11 +481,38 @@ func TestApplyGatesFixture(t *testing.T) {
 				t.Errorf("asks = %v, want %v", asks, tc.Asks)
 			}
 
+			if tc.Exposed != nil {
+				checkExposedAfter(t, request, doc, tc.Exposed)
+			}
+
 			accepted, refused, res := applyOutcome(t, h, change)
 			if accepted != (len(tc.Refused) == 0) || !slices.Equal(refused, tc.Refused) {
 				t.Errorf("Apply accepted %v refusing %v (%+v), want refused %v", accepted, refused, res, tc.Refused)
 			}
 		})
+	}
+}
+
+// checkExposedAfter runs the request ungated on a scratch copy of doc — the
+// document the gated Apply writes, or refuses (deriveApplyGates) — and
+// compares each named route's exposure there, as the projection shows it,
+// with want.
+func checkExposedAfter(t *testing.T, request SettingsApplyRequest, doc *config.Document, want map[string][]string) {
+	t.Helper()
+	scratch, result := scratchSourceDocument(context.Background(), request, doc)
+	if result != nil {
+		t.Fatalf("scratchSourceDocument = %+v", result)
+	}
+	if result := applyStagedChanges(scratch, request, nil, &applyGates{dry: true, wrote: map[modelSelector]bool{}}); result != nil {
+		t.Fatalf("dry run = %+v", result)
+	}
+	after := scratch.Config()
+	overrides := selectorCapabilityOverrides(after)
+	for _, useCase := range slices.Sorted(maps.Keys(want)) {
+		got := roleStateOf(after.Models[after.Defaults[useCase]], overrides).exposed
+		if wanted := strings.Join(want[useCase], ","); got != wanted {
+			t.Errorf("%s exposes %q after Apply, want %q", useCase, got, wanted)
+		}
 	}
 }
 

@@ -185,6 +185,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   click or Tab, and a later refresh that added a file above that row could pull
   focus back into the tree. (#522)
 
+- On macOS and Linux, commit message generation and the Git panel work in a
+  repository whose folder name ends in a space, such as `project `. Firn used
+  to drop the space from the repository's path and look in a folder that does
+  not exist, so Generate failed, and so did staging, unstaging and tracking
+  files, staging a hunk, diffs and the merge view. Generation broke in 0.15.0;
+  the rest was broken before. (#511)
+
 ### Security
 
 - A `models.json` in the folder Firn was started from can no longer read
@@ -198,6 +205,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saved as a profile. Literal keys in that file keep working, as do `${NAME}` keys in your user
   configuration. To use the file as it is, set `GO_LLM_CONFIG` to its path. A
   Firn opened from Finder or the Dock starts in `/` and was not exposed. (#524)
+
+- In Golem Configuration, moving a route onto a model another route already
+  uses, with the capabilities that model's type gives it, no longer marks the
+  other route Incompatible. Apply leaves that route's capabilities as they are,
+  and now its row, its route editor and the editor's model list show them too.
+  A route whose capabilities Apply does change, such as one left without the
+  capability list it ran on when another route moves away, is marked
+  Incompatible before Apply instead of only being refused by it. (#512)
 
 ## [0.15.0] - 2026-11-14
 

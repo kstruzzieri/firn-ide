@@ -4,6 +4,7 @@ import { RoutingCard } from '../../../components/GolemConfig/RoutingCard';
 import { routeRowKey } from '../../../components/GolemConfig/routingRows';
 import {
   CAPABILITY_NAMES,
+  type CapabilityName,
   type ModelProjection,
   type ProviderProjection,
 } from '../../../types/golem';
@@ -900,6 +901,94 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
       />
     );
     expect(screen.getByText(/staged, not applied/)).toBeInTheDocument();
+  });
+});
+
+describe('a join that writes no capability list (#512)', () => {
+  // embedding runs on shared-model through an embedding-typed role, chat on a
+  // model of its own; neither role holds an explicit list.
+  const routes = [
+    { useCase: 'chat', role: 'chat-role' },
+    { useCase: 'embedding', role: 'embed-role' },
+  ];
+  const derivedDense: CapabilityName[] = ['chat', 'generate', 'stream'];
+  const models: ModelProjection[] = [
+    {
+      ...model,
+      modelName: 'chat-model',
+      effectiveCapabilities: derivedDense,
+      capabilityFacts: { caps: derivedDense, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: derivedDense,
+    },
+    {
+      ...model,
+      role: 'embed-role',
+      modelName: 'shared-model',
+      type: 'embedding',
+      effectiveCapabilities: ['embed'],
+      capabilityFacts: { caps: ['embed'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: ['embed'],
+      routedUseCases: ['embedding'],
+    },
+  ];
+  /** chat moves onto shared-model, declared Dense with `exposedCaps`. */
+  const join = (exposedCaps: CapabilityName[]) =>
+    change({
+      modelFacts: { provider: 'hosted', model: 'shared-model', type: 'dense' },
+      capabilityFacts: { caps: exposedCaps, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps,
+      thinkMode: '',
+    });
+
+  it('leaves the unchanged route on the shared model with its own capabilities', () => {
+    // The exposure is what Dense derives and nothing on the selector holds a
+    // list, so Apply sends no override: embedding keeps embed.
+    renderProjected(routes, models, join(derivedDense));
+    const row = screen.getByTestId('route-row-embedding');
+    expect(within(row).queryByText('Incompatible')).not.toBeInTheDocument();
+    expect(within(row).getByText('Ready')).toBeInTheDocument();
+  });
+
+  it('still reads the route Incompatible when the join asserts a list', () => {
+    // An exposure Dense does not derive is sent as a selector-wide list.
+    renderProjected(routes, models, join(['chat', 'stream']));
+    const row = screen.getByTestId('route-row-embedding');
+    expect(within(row).getByText('Incompatible')).toBeInTheDocument();
+    expect(row).toHaveTextContent('needs embed');
+  });
+
+  it('reads a route Incompatible once the selector loses the only list it ran on', () => {
+    // agent's role holds shared-model's only list; planning's role derives and
+    // shows that list. agent moving to its own model takes the list along, so
+    // planning is left with what Dense derives: no tool_call.
+    const agentList: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    const onShared = (role: string, useCase: string, list?: CapabilityName[]): ModelProjection => ({
+      ...model,
+      role,
+      modelName: 'shared-model',
+      effectiveCapabilities: list ?? derivedDense,
+      capabilityFacts: { caps: list ?? derivedDense, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: agentList,
+      ...(list === undefined ? {} : { capabilityOverride: list }),
+      routedUseCases: [useCase],
+    });
+    renderProjected(
+      [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'planning', role: 'plan-role' },
+      ],
+      [onShared('agent-role', 'agent', agentList), onShared('plan-role', 'planning')],
+      change({
+        useCase: 'agent',
+        modelFacts: { provider: 'hosted', model: 'agent-model', type: 'dense' },
+        capabilityFacts: { caps: agentList, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: agentList,
+        thinkMode: '',
+      })
+    );
+    const row = screen.getByTestId('route-row-planning');
+    expect(within(row).getByText('Incompatible')).toBeInTheDocument();
+    expect(row).toHaveTextContent('needs tool_call');
   });
 });
 

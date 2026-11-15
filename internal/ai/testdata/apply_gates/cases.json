@@ -1,5 +1,5 @@
 {
-  "about": "#493 shared gate fixture. Each case stages one route change, as the route editor and the Golem model picker stage it, over a base document. apply_gates_test.go runs it through Apply (refuseIneligible and checkPreparedDocument) and the derived gates; frontend applyGates.test.ts runs it through touchedUseCasesOf, the confirmation set and the picker's verdict (governedUseCasesOf, floorShortfalls, golemModelVerdict) over projections.json, which the Go test writes. touched: the use cases the change touches. asks: the floorless ones the change must acknowledge, the ones it can narrow (#350). refused: the use cases Apply refuses, by name. picker: the use cases the picker's verdict names for the card; equal to refused unless refusedForEveryCard says the refusal is not the card's.",
+  "about": "#493 shared gate fixture. Each case stages one route change, as the route editor and the Golem model picker stage it, over a base document. apply_gates_test.go runs it through Apply (refuseIneligible and checkPreparedDocument) and the derived gates; frontend applyGates.test.ts runs it through touchedUseCasesOf, the confirmation set and the picker's verdict (governedUseCasesOf, floorShortfalls, golemModelVerdict) over projections.json, which the Go test writes. touched: the use cases the change touches. asks: the floorless ones the change must acknowledge, the ones it can narrow (#350). refused: the use cases Apply refuses, by name. picker: the use cases the picker's verdict names for the card; equal to refused unless refusedForEveryCard says the refusal is not the card's. exposed (#512), where given: the capabilities each named route runs with once the change is applied, as Apply writes them and as the routing row shows them.",
   "bases": {
     "hybrid-cc": "golem_model_row/hybrid-cc.models.json",
     "chat-short": {
@@ -113,6 +113,20 @@
         "vision-m": { "name": "shared-model", "provider": "ollama", "type": "dense" }
       },
       "defaults": { "agent": "agent-m", "planning": "plan-m", "vision": "vision-m" }
+    },
+    "shared-join": {
+      "providers": { "ollama": { "base_url": "http://localhost:11434" } },
+      "models": {
+        "agent-m": {
+          "name": "agent-model",
+          "provider": "ollama",
+          "type": "dense",
+          "capabilities": ["chat", "stream", "tool_call"]
+        },
+        "chat-m": { "name": "chat-model", "provider": "ollama", "type": "dense" },
+        "emb-m": { "name": "shared-model", "provider": "ollama", "type": "embedding" }
+      },
+      "defaults": { "agent": "agent-m", "chat": "chat-m", "embedding": "emb-m" }
     }
   },
   "cases": [
@@ -250,7 +264,12 @@
       "asks": ["vision"],
       "refused": ["planning"],
       "picker": [],
-      "refusedForEveryCard": "Any model agent moves to takes shared-model's only list away; planning, left deriving, falls short whatever the card."
+      "refusedForEveryCard": "Any model agent moves to takes shared-model's only list away; planning, left deriving, falls short whatever the card.",
+      "exposed": {
+        "agent": ["chat", "stream", "tool_call"],
+        "planning": ["chat", "generate", "stream"],
+        "vision": ["chat", "generate", "stream"]
+      }
     },
     {
       "name": "agent leaves with its selector's only list, and a fallback planning reaches changes",
@@ -267,6 +286,46 @@
       "refused": ["planning"],
       "picker": [],
       "refusedForEveryCard": "Any model agent moves to takes shared-model's only list away; fb-m, which planning falls back to, then lacks tool_call whatever the card."
+    },
+    {
+      "name": "#512: chat joins embedding's model with what dense derives, and embedding keeps embed",
+      "base": "shared-join",
+      "useCase": "chat",
+      "card": {
+        "provider": "ollama",
+        "model": "shared-model",
+        "type": "dense",
+        "exposedCaps": ["chat", "generate", "stream"]
+      },
+      "touched": ["chat"],
+      "asks": [],
+      "refused": [],
+      "picker": [],
+      "exposed": {
+        "agent": ["chat", "stream", "tool_call"],
+        "chat": ["chat", "generate", "stream"],
+        "embedding": ["embed"]
+      }
+    },
+    {
+      "name": "#512: chat joins embedding's model with a list dense does not derive, and embedding loses embed",
+      "base": "shared-join",
+      "useCase": "chat",
+      "card": {
+        "provider": "ollama",
+        "model": "shared-model",
+        "type": "dense",
+        "exposedCaps": ["chat", "stream"]
+      },
+      "touched": ["chat", "embedding"],
+      "asks": [],
+      "refused": ["embedding"],
+      "picker": ["embedding"],
+      "exposed": {
+        "agent": ["chat", "stream", "tool_call"],
+        "chat": ["chat", "stream"],
+        "embedding": ["chat", "stream"]
+      }
     }
   ]
 }

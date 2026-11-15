@@ -40,7 +40,7 @@ func (s *Service) ConflictSnapshot(ctx context.Context, dir, path string) (Confl
 	if err := validateRepoRelPaths([]string{path}); err != nil {
 		return ConflictSnapshot{}, err
 	}
-	root, err := s.repoRoot(ctx, dir)
+	root, err := s.TopLevel(ctx, dir)
 	if err != nil {
 		return ConflictSnapshot{}, err
 	}
@@ -173,7 +173,7 @@ func (s *Service) conflictState(ctx context.Context, dir, path string, withSnaps
 	if err := validateRepoRelPaths([]string{path}); err != nil {
 		return ConflictState{}, err
 	}
-	root, err := s.repoRoot(ctx, dir)
+	root, err := s.TopLevel(ctx, dir)
 	if err != nil {
 		return ConflictState{}, err
 	}
@@ -483,7 +483,7 @@ func (s *Service) guardedConflictMutation(
 	if state.SourceVersion != expectedSourceVersion {
 		return ConflictGuardResult{Applied: false, SourceVersion: state.SourceVersion}, nil
 	}
-	root, err := s.repoRoot(ctx, dir)
+	root, err := s.TopLevel(ctx, dir)
 	if err != nil {
 		return ConflictGuardResult{}, err
 	}
@@ -634,7 +634,7 @@ func (s *Service) gitPathExists(ctx context.Context, dir, name string) bool {
 	if err != nil {
 		return false
 	}
-	p := strings.TrimSpace(out)
+	p := outputPath(out)
 	if p == "" {
 		return false
 	}
@@ -688,7 +688,7 @@ func (s *Service) ResolveConflictSide(ctx context.Context, dir, path, side strin
 	if err := validateConflictSide(side); err != nil {
 		return err
 	}
-	root, err := s.repoRoot(ctx, dir)
+	root, err := s.TopLevel(ctx, dir)
 	if err != nil {
 		return err
 	}
@@ -1073,18 +1073,6 @@ func lastRegionEndsFile(lines []string, regions []ConflictRegion) bool {
 	}
 	end := regions[len(regions)-1].EndLine // 1-based line of >>>>>>>
 	return end == len(lines) || (end+1 == len(lines) && lines[end] == "")
-}
-
-// repoRoot returns the repository top-level for dir. Unlike runAtRoot (which
-// silently falls back to dir), this surfaces the error, because a path that
-// cannot be resolved to a repo root must fail the operation rather than read a
-// file relative to the wrong directory.
-func (s *Service) repoRoot(ctx context.Context, dir string) (string, error) {
-	out, err := s.run(ctx, dir, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
 }
 
 // ConflictRegion is one <<<<<<< / ======= / >>>>>>> block in a conflicted
