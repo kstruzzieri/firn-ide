@@ -381,7 +381,21 @@ export function FileExplorer() {
         className={`${styles.scrollArea}${treeAccent ? ` ${styles.workspaceTree}` : ''}`}
         role="tree"
         aria-label="File explorer"
+        // Not a Tab stop: the active row is. A press on the scrollbar sends no
+        // click, so it needs somewhere to land other than the page.
+        tabIndex={-1}
+        onFocus={(event) => {
+          // Removal recovery covers the tree itself, as it does a focused row.
+          if (event.target === event.currentTarget) focusedElementRef.current = event.currentTarget;
+        }}
         onKeyDown={onKeyDown}
+        onClick={(event) => {
+          // The rows hold the tree's focus, so a click on its blank space hands
+          // focus to the active row.
+          if (event.target === event.currentTarget && activeKey !== null) {
+            document.getElementById(rowDomId(activeKey))?.focus({ preventScroll: true });
+          }
+        }}
         onBlurCapture={(event) => {
           // Intentionally leaving the tree cancels removal recovery. DOM
           // removal itself does not dispatch blur for the disconnected row.
