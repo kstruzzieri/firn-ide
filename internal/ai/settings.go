@@ -188,9 +188,21 @@ type RouteProjection struct {
 // ModelName is the provider's model ID — different namespaces, both shown.
 // EffectiveCapabilities/CapabilityFacts.Caps are this model's own canonical
 // ResolvedCapabilities(); ExposedCapabilities is what a selector-sharing
-// mutation would actually apply (selectorCapabilityOverrides). RoutedUseCases
-// lists every use case reaching this role (directly or through a fallback
-// chain); Removable is true when nothing references it.
+// mutation would actually apply (selectorCapabilityOverrides).
+// CapabilityOverride is THIS role's own explicit Capabilities value, canonical,
+// absent for a role that derives its set from its type (#335). It is per role,
+// like ThinkMode, because ownership is what the editor's pre-check needs: a
+// route joining the selector must agree with an explicit override
+// (selectorPairConflict compares explicit sets only) for as long as a role
+// that OWNS one is still on the selector, and a deriving sibling locks
+// nothing — even while ExposedCapabilities shows it the folded override.
+// Validation makes every owner on a selector agree, so where present the
+// value is also the selector's.
+// RoutedUseCases lists every use case reaching this role (directly or through
+// a fallback chain); Fallbacks is the role's own authored chain, in order,
+// absent when it has none (#311: the editor names HOW a use case reaches a
+// model it never routes to directly); Removable is true when nothing
+// references it.
 //
 // HasThinkTags/HasSlots are EXISTENCE facts only: a real model retarget drops
 // these authored, model-specific members, so the editor has to disclose the
@@ -214,11 +226,14 @@ type ModelProjection struct {
 	EffectiveCapabilities []string        `json:"effectiveCapabilities"`
 	CapabilityFacts       CapabilityFacts `json:"capabilityFacts"`
 	ExposedCapabilities   []string        `json:"exposedCapabilities"`
-	ThinkMode             string          `json:"thinkMode"`
-	RoutedUseCases        []string        `json:"routedUseCases"`
-	HasThinkTags          bool            `json:"hasThinkTags"`
-	HasSlots              bool            `json:"hasSlots"`
-	Removable             bool            `json:"removable"`
+	// Omitted, never empty: the frontend reads absence as "none".
+	CapabilityOverride []string `json:"capabilityOverride,omitempty"`
+	ThinkMode          string   `json:"thinkMode"`
+	RoutedUseCases     []string `json:"routedUseCases"`
+	Fallbacks          []string `json:"fallbacks,omitempty"`
+	HasThinkTags       bool     `json:"hasThinkTags"`
+	HasSlots           bool     `json:"hasSlots"`
+	Removable          bool     `json:"removable"`
 }
 
 // clone deep-copies every slice a projection owns. Settings() and
@@ -235,7 +250,9 @@ func (p SettingsProjection) clone() SettingsProjection {
 		m := &out.Models[i]
 		m.EffectiveCapabilities = slices.Clone(m.EffectiveCapabilities)
 		m.ExposedCapabilities = slices.Clone(m.ExposedCapabilities)
+		m.CapabilityOverride = slices.Clone(m.CapabilityOverride)
 		m.RoutedUseCases = slices.Clone(m.RoutedUseCases)
+		m.Fallbacks = slices.Clone(m.Fallbacks)
 		m.CapabilityFacts.Caps = slices.Clone(m.CapabilityFacts.Caps)
 		m.CapabilityFacts.KnownCaps = slices.Clone(m.CapabilityFacts.KnownCaps)
 	}
@@ -406,6 +423,9 @@ func sanitizeProjectionIdentifiers(p SettingsProjection) SettingsProjection {
 		m.Type = sanitizeIdentifier(m.Type)
 		m.ThinkMode = sanitizeIdentifier(m.ThinkMode)
 		m.Parameters = sanitizeIdentifier(m.Parameters)
+		for j := range m.Fallbacks {
+			m.Fallbacks[j] = sanitizeIdentifier(m.Fallbacks[j])
+		}
 		m.Description = sanitizeNote(m.Description)
 		for j := range m.RoutedUseCases {
 			m.RoutedUseCases[j] = sanitizeIdentifier(m.RoutedUseCases[j])
@@ -555,11 +575,18 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 	routed, referenced := roleUsage(cfg)
 	for role, m := range cfg.Models {
 		effective := canonicalizeCapabilities(m.ResolvedCapabilities())
-		var exposed []string
+		var exposed, owned []string
 		if override, ok := overrides[modelSelector{provider: m.Provider, model: m.Name}]; ok {
 			exposed = append([]string{}, override...)
 		} else {
 			exposed = append([]string{}, effective...)
+		}
+		if len(m.Capabilities) > 0 {
+			owned = canonicalizeCapabilities(m.Capabilities)
+		}
+		var fallbacks []string
+		if len(m.Fallbacks) > 0 {
+			fallbacks = slices.Clone(m.Fallbacks)
 		}
 		p.Models = append(p.Models, ModelProjection{
 			Role: role, ModelName: m.Name, Provider: m.Provider, Type: m.Type,
@@ -570,8 +597,10 @@ func assembleSettingsProjection(loaded loadedAgentConfig, loadErr error) Setting
 				Caps:      append([]string{}, effective...),
 				KnownCaps: append([]string{}, provider.CanonicalCapabilityNames...),
 			},
-			ExposedCapabilities: exposed, ThinkMode: m.ThinkMode,
+			ExposedCapabilities: exposed, CapabilityOverride: owned,
+			ThinkMode:      m.ThinkMode,
 			RoutedUseCases: append([]string{}, routed[role]...),
+			Fallbacks:      fallbacks,
 			HasThinkTags:   m.ThinkTags != nil,
 			HasSlots:       m.Slots != 0,
 			Removable:      !referenced[role],

@@ -1,14 +1,25 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { EditorView } from '@codemirror/view';
 import { undo, redo } from '@codemirror/commands';
 import { Editor } from '../../../components/Editor';
 import { useIDEStore, type EditorFile } from '../../../stores/ideStore';
+import { useGitStore } from '../../../stores/gitStore';
 
 jest.mock('../../../wails/bindings', () => ({
   OpenFolderDialog: jest.fn(),
   ListRecentWorkspaces: jest.fn(() => Promise.resolve([])),
 }));
 jest.mock('../../../wails/runtime', () => ({ WindowSetTitle: jest.fn() }));
+jest.mock('../../../components/Editor/GitDiffView', () => ({
+  GitDiffView: () => <button>Diff control</button>,
+}));
+
+// jsdom has no text geometry; real CodeMirror measures ranges between user events.
+beforeAll(() => {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
+});
 
 const applyEditorThemeSpy = jest.fn();
 jest.mock('../../../components/Editor/codemirror', () => {
@@ -38,6 +49,7 @@ function switchToTab(name: RegExp) {
 }
 
 beforeEach(() => {
+  useGitStore.setState({ diffSession: null, diffFocused: false });
   useIDEStore.setState({
     workspace: { name: 'w', path: '/w' },
     openFiles: [file('/w/a.ts', 'alpha'), file('/w/b.ts', 'beta')],
@@ -192,5 +204,85 @@ describe('theme reapplied on switch-in (#153)', () => {
     expect(applyEditorThemeSpy).toHaveBeenCalled();
     const lastCall = applyEditorThemeSpy.mock.calls.at(-1);
     expect(lastCall?.[1]).toBe('solar');
+  });
+});
+
+describe('file tab input focus (#507)', () => {
+  it('focuses the real editor after clicks on the current, another, and a cached file tab', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<Editor />);
+    const view = getView(container);
+
+    for (const name of ['a.ts', 'b.ts', 'a.ts', 'a.ts']) {
+      await user.click(screen.getByRole('tab', { name }));
+      expect(useIDEStore.getState().activeFileId).toBe(`/w/${name}`);
+      expect(view.contentDOM).toHaveFocus();
+      expect(view.state.doc.toString()).toBe(name === 'a.ts' ? 'alpha' : 'beta');
+    }
+  });
+
+  it('does not take focus on mount or a passive active-file change', async () => {
+    const user = userEvent.setup();
+    render(<button>Outside editor</button>);
+    const outside = screen.getByRole('button', { name: 'Outside editor' });
+    await user.click(outside);
+    render(<Editor />);
+    expect(outside).toHaveFocus();
+    act(() => useIDEStore.getState().setActiveFile('/w/b.ts'));
+    expect(outside).toHaveFocus();
+  });
+
+  it('focuses the editor when clicking its tab returns from a hidden pane', async () => {
+    const user = userEvent.setup();
+    useGitStore.setState({
+      diffSession: {
+        path: 'a.ts',
+        absPath: '/w/a.ts',
+        context: 'unstaged',
+        left: { label: 'Index', content: 'alpha' },
+        right: { label: 'Working Tree', content: 'alpha' },
+        binary: false,
+        truncated: false,
+        hunks: [],
+      },
+      diffFocused: true,
+    });
+    const { container } = render(<Editor />);
+    const view = getView(container);
+    await user.click(screen.getByRole('button', { name: 'Diff control' }));
+    expect(view.contentDOM).not.toBeVisible();
+    await user.click(screen.getByRole('tab', { name: 'a.ts' }));
+    expect(view.contentDOM).toBeVisible();
+    expect(view.contentDOM).toHaveFocus();
+  });
+
+  it('does not replay an old tab click after closing every file and opening one again', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <button>Outside editor</button>
+        <Editor />
+      </>
+    );
+    await user.click(screen.getByRole('tab', { name: 'a.ts' }));
+    act(() => useIDEStore.setState({ openFiles: [], activeFileId: null }));
+    const outside = screen.getByRole('button', { name: 'Outside editor' });
+    await user.click(outside);
+    act(() => useIDEStore.getState().openFile(file('/w/a.ts', 'alpha')));
+    expect(outside).toHaveFocus();
+  });
+
+  it('keeps keyboard focus in the tab strip during arrow navigation and activation', async () => {
+    const user = userEvent.setup();
+    render(<Editor />);
+    const first = screen.getByRole('tab', { name: 'a.ts' });
+    const second = screen.getByRole('tab', { name: 'b.ts' });
+    act(() => first.focus());
+    await user.keyboard('{ArrowRight}{Enter}');
+    expect(useIDEStore.getState().activeFileId).toBe('/w/b.ts');
+    expect(second).toHaveFocus();
+    await user.keyboard('{ArrowLeft} ');
+    expect(useIDEStore.getState().activeFileId).toBe('/w/a.ts');
+    expect(first).toHaveFocus();
   });
 });

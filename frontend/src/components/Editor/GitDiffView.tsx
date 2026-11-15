@@ -10,6 +10,7 @@ import { ensureEditorFileOpen } from '../../utils/editorNavigation';
 import { buildTheme, gitGutterExtension, loadLanguageSupport, setGitBaseline } from './codemirror';
 import { hunkStagingGutter } from './codemirror/hunkStagingGutter';
 import { isWorkingTreeEditable, workingTreeEditListener } from './codemirror/editableWorkingTree';
+import { pinnedScrollbar } from './codemirror/pinnedScrollbar';
 import { reconcileDoc } from './codemirror/reconcileDoc';
 import styles from './GitDiffView.module.css';
 
@@ -40,6 +41,8 @@ export function GitDiffView({
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const leftScrollRef = useRef<HTMLDivElement>(null);
+  const rightScrollRef = useRef<HTMLDivElement>(null);
   const mergeRef = useRef<MergeView | null>(null);
   const sessionKeyRef = useRef<string | null>(null);
   const localEditRevisionRef = useRef(0);
@@ -165,7 +168,10 @@ export function GitDiffView({
     // No lineWrapping here: the merge view aligns the two panes with spacer
     // widgets sized from measured line heights, and wrapped lines re-measure
     // as pane widths settle — producing sudden mid-scroll jumps and blank
-    // regions. Long lines scroll horizontally inside their pane instead.
+    // regions. Long lines scroll horizontally inside their pane instead, with
+    // the pane's scrollbar pinned under the view (#448).
+    const pinned = (proxy: HTMLElement | null): Extension[] =>
+      proxy ? [pinnedScrollbar(proxy)] : [];
     const base: Extension[] = [
       lineNumbers(),
       // JetBrains diff-navigation keys.
@@ -193,13 +199,14 @@ export function GitDiffView({
     const view = new MergeView({
       a: {
         doc: session.left.content,
-        extensions: [...base, leftLanguage.of([]), ...readOnly],
+        extensions: [...base, leftLanguage.of([]), ...readOnly, ...pinned(leftScrollRef.current)],
       },
       b: {
         doc: rightContent,
         extensions: [
           ...base,
           rightLanguage.of([]),
+          ...pinned(rightScrollRef.current),
           ...(editableRight
             ? [
                 workingTreeEditListener(
@@ -405,6 +412,18 @@ export function GitDiffView({
           onMouseDown={handleDividerMouseDown}
           onKeyDown={handleDividerKeyDown}
         />
+      </div>
+      {/* Each pane's horizontal scrollbar, pinned under the view (#448).
+          Presentation only: each pane stays its own scroll container, so it
+          scrolls by trackpad, Shift+wheel or the editable pane's cursor as
+          before, and these mirrors add no stop for assistive tech. */}
+      <div className={styles.hScroll} aria-hidden="true" data-testid="diff-hscroll">
+        <div ref={leftScrollRef} className={styles.hScrollPane} tabIndex={-1}>
+          <div className={styles.hScrollTrack} />
+        </div>
+        <div ref={rightScrollRef} className={styles.hScrollPane} tabIndex={-1}>
+          <div className={styles.hScrollTrack} />
+        </div>
       </div>
     </div>
   );

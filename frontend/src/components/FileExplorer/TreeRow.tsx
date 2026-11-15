@@ -22,7 +22,7 @@ const gitBadgeLetters: Record<GitRowStatus, string> = {
 /** Fixed row height; MUST match `.row { height }` in TreeRow.module.css. */
 export const ROW_HEIGHT = 28;
 
-/** Stable DOM id for a row, used as aria-activedescendant target. */
+/** Stable DOM id for focusing a row. */
 export function rowDomId(key: string): string {
   return `treeitem-${encodeURIComponent(key)}`;
 }
@@ -44,9 +44,9 @@ export interface TreeRowProps {
   posInSet: number;
   /** Root only: absolute path shown as a dimmed label. */
   rootPath?: string;
-  /** DOM id for aria-activedescendant. */
+  /** DOM id for focusing this row. */
   rowId: string;
-  /** True when this row is the keyboard-active descendant. */
+  /** True when this row is the tree's keyboard entry point. */
   isActive: boolean;
   /** Show the expand chevron: true for unloaded dirs or dirs with children; false for loaded-empty dirs and files. */
   canExpand: boolean;
@@ -55,6 +55,7 @@ export interface TreeRowProps {
   /** Git working-tree decoration; undefined renders an undecorated row. */
   gitStatus?: GitRowStatus;
   onToggle: (kind: 'root' | 'entry', path?: string) => void;
+  onActivate: (kind: 'root' | 'entry', path?: string) => void;
   onSelect: (path: string) => void;
   onOpen: (path: string) => void;
 }
@@ -85,6 +86,7 @@ function TreeRowImpl({
   unreadable,
   gitStatus,
   onToggle,
+  onActivate,
   onSelect,
   onOpen,
 }: TreeRowProps) {
@@ -93,10 +95,12 @@ function TreeRowImpl({
 
   const handleToggleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    onActivate(kind, path);
     onToggle(kind, path);
   };
 
   const handleRowClick = () => {
+    onActivate(kind, path);
     if (kind === 'root') {
       onToggle('root', undefined);
     } else if (path) {
@@ -136,6 +140,7 @@ function TreeRowImpl({
       }
       onClick={handleRowClick}
       onDoubleClick={handleRowDoubleClick}
+      onFocus={() => onActivate(kind, path)}
       role="treeitem"
       aria-level={level}
       aria-setsize={setSize}
@@ -148,7 +153,7 @@ function TreeRowImpl({
           ? `${name}, unreadable${kind === 'root' && rootPath ? `, ${shortenPath(rootPath)}` : ''}`
           : undefined
       }
-      tabIndex={-1}
+      tabIndex={isActive ? 0 : -1}
     >
       {canExpand ? (
         <button

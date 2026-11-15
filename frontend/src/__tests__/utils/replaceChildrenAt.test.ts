@@ -62,4 +62,13 @@ describe('replaceChildrenAt', () => {
     ]);
     expect(next[0].children![0].children).toEqual([file('C:\\repo\\src\\pkg\\main.go')]);
   });
+
+  it('replaces only the POSIX folder a\\b, not its twin a/b (#447)', () => {
+    const twin = dir('/r/a/b', [file('/r/a/b/keep.txt')]);
+    const tree = [dir('/r/a', [twin]), dir('/r/a\\b', [])];
+    const next = replaceChildrenAt(tree, '/r/a\\b', [file('/r/a\\b/new.txt')]);
+    expect(next[0]).toBe(tree[0]);
+    expect(next[0].children![0]).toBe(twin);
+    expect(next[1].children).toEqual([file('/r/a\\b/new.txt')]);
+  });
 });

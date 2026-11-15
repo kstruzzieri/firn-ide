@@ -250,6 +250,43 @@ describe('App — surgical watcher reconcile', () => {
     expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a', '/r');
   });
 
+  it('re-reads an expanded POSIX folder a\\b without touching its twin a/b (#447)', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+
+    const keep = { name: 'keep.txt', path: '/r/a/b/keep.txt', isDir: false } as FileEntry;
+    const added = { name: 'new.txt', path: '/r/a\\b/new.txt', isDir: false } as FileEntry;
+    // /r/a is collapsed; its child /r/a/b is loaded. The top-level /r/a\b is expanded.
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [
+          { ...loadedDir('/r/a'), children: [{ ...loadedDir('/r/a/b'), children: [keep] }] },
+          loadedDir('/r/a\\b'),
+        ] as FileEntry[],
+        expandedPaths: new Set(['/r/a\\b']),
+        isRootExpanded: true,
+      });
+    });
+    (ReadDirectoryShallow as jest.Mock).mockImplementation((path: string) =>
+      Promise.resolve(path === '/r/a\\b' ? [added] : [])
+    );
+
+    const fire = getWatcherCallback();
+    act(() => {
+      fire({ type: 'created', path: '/r/a\\b/new.txt', isDir: false, time: '' });
+      jest.advanceTimersByTime(100);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a\\b', '/r');
+    const [a, backslash] = useIDEStore.getState().directoryTree;
+    expect(a.children?.[0].children).toEqual([keep]);
+    expect(backslash.children).toEqual([added]);
+  });
+
   // ── (b) loaded but collapsed dir → markDirty, no fetch ────────────────────
   it('(b) change under a loaded-but-collapsed dir marks it dirty, no ReadDirectoryShallow', async () => {
     await act(async () => {

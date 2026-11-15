@@ -294,6 +294,38 @@ describe('reconcileTreeWithDisk pruning (#256)', () => {
     }
   );
 
+  it('forgets a removed POSIX folder a\\b without collapsing its twin a/b (#447)', async () => {
+    useIDEStore.setState({
+      directoryTree: [dir('/r/a', [dir('/r/a/b', [])]), dir('/r/a\\b', [])],
+      expandedPaths: new Set(['/r/a', '/r/a/b', '/r/a\\b']),
+    });
+    mockRead.mockImplementation((path: string) =>
+      Promise.resolve(path === '/r' ? [dir('/r/a')] : path === '/r/a' ? [dir('/r/a/b')] : [])
+    );
+
+    await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+    expect([...useIDEStore.getState().expandedPaths].sort()).toEqual(['/r/a', '/r/a/b']);
+  });
+
+  it('does not judge a child of a/b by the fresh listing of its twin a\\b (#447)', async () => {
+    useIDEStore.setState({
+      directoryTree: [dir('/r/a', [dir('/r/a/b')]), dir('/r/a\\b', [])],
+      expandedPaths: new Set(['/r/a\\b', '/r/a/b/c']),
+    });
+    mockRead.mockImplementation((path: string) => {
+      if (path === '/r') return Promise.resolve([dir('/r/a'), dir('/r/a\\b')]);
+      if (path === '/r/a') return Promise.resolve([dir('/r/a/b')]);
+      if (path === '/r/a\\b') return Promise.resolve([]);
+      return Promise.reject(new Error(`open ${path}: EIO`));
+    });
+
+    await reconcileTreeWithDisk('/r', useIDEStore.getState().expandedPaths);
+
+    // /r/a/b's read failed, so /r/a/b/c has no fresh parent listing to be judged by.
+    expect(useIDEStore.getState().expandedPaths.has('/r/a/b/c')).toBe(true);
+  });
+
   it('drops an expanded path its freshly read parent no longer lists as a directory', async () => {
     useIDEStore.setState({
       directoryTree: [dir('/r/a'), dir('/r/gone', [])],

@@ -1,13 +1,22 @@
 import {
   abilitiesLine,
   assertedOf,
+  editReachOf,
   noteOf,
   pendingOf,
   snapshotOf,
   type Seed,
   usedByOf,
 } from '../../../components/GolemConfig/routeEdit';
-import { CAPABILITY_NAMES, type ModelProjection } from '../../../types/golem';
+import { CAPABILITY_NAMES, type CapabilityName, type ModelProjection } from '../../../types/golem';
+import {
+  cleanDraft,
+  KeyVault,
+  editReachFor,
+  stageChange,
+  type DraftBaseProjection,
+  type RouteChange,
+} from '../../../types/golemConfig';
 
 const model = (over: Partial<ModelProjection> = {}): ModelProjection => ({
   role: 'chat-role',
@@ -122,16 +131,17 @@ describe('routeEdit', () => {
     expect(pendingOf(variants.otherRoleOtherCaps, base)).toEqual(['Declares: + tool_call']);
   });
 
-  it('stages Think only while thinking is exposed, but the row holds it raw', () => {
-    // A value left behind an untick is nothing Done would stage: no edit.
-    expect(snapshotOf(variants.inactiveThink, 'stage')).toBe(snapshotOf(base, 'row'));
-    expect(pendingOf(variants.inactiveThink, base)).toEqual([]);
-    // A row holding `auto` behind an unexposed thinking: Done clears it, and
-    // says so before a single edit.
-    expect(pendingOf(base, variants.inactiveThink)).toEqual(['Think mode: cleared (was Auto)']);
-    expect(pendingOf(variants.inactiveThink, variants.inactiveThink)).toEqual([
-      'Think mode: cleared (was Auto)',
-    ]);
+  it('keeps a Think behind an unexposed thinking unless thinking was actually removed', () => {
+    // [#311] go-llm ties think_mode to no capability, so a row can hold `auto`
+    // behind an unexposed thinking. Untouched is untouched: nothing pending.
+    expect(pendingOf(variants.inactiveThink, variants.inactiveThink)).toEqual([]);
+    expect(snapshotOf(variants.inactiveThink, 'stage', variants.inactiveThink)).toBe(
+      snapshotOf(variants.inactiveThink, 'row')
+    );
+    // Neither side exposes thinking, so a differing mode is kept and NAMED (a
+    // model chosen above brings its own authored mode), never read as cleared.
+    expect(pendingOf(variants.inactiveThink, base)).toEqual(['Think mode: Auto (was Default)']);
+    expect(pendingOf(base, variants.inactiveThink)).toEqual(['Think mode: Default (was Auto)']);
   });
 
   it('says what Done clears when thinking is unticked, and what the select reads while it is on', () => {
@@ -263,6 +273,67 @@ describe('card helpers', () => {
       { useCase: 'xＡ', role: 'r' },
     ];
     expect(usedByOf(routes2, ['r'])).toEqual(['xＡ', 'x\u{1F600}']);
+  });
+  it('editReachOf splits who else an edit reaches into users, fallbacks and defined roles (#307, #349)', () => {
+    // On gpt-5: agent-role routes agent (and planning, through planning-role's
+    // fallback) and spare-role routes nothing. analysis is already staged onto
+    // gpt-5; chat joins it with an exposure both roles lack, which the
+    // coalesced group writes to every role on the selector.
+    const GPT5: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    const onGpt5 = (role: string, routedUseCases: string[]) =>
+      model({ role, modelName: 'gpt-5', routedUseCases });
+    const base: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'analysis', role: 'analysis-role' },
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'planning-role' },
+      ],
+      models: [
+        onGpt5('agent-role', ['agent', 'planning']),
+        onGpt5('spare-role', []),
+        model({ role: 'analysis-role', modelName: 'gpt-4o', routedUseCases: ['analysis'] }),
+        model(),
+        model({
+          role: 'planning-role',
+          modelName: 'gpt-4',
+          routedUseCases: ['planning'],
+          fallbacks: ['agent-role'],
+        }),
+      ],
+    };
+    const join = (useCase: string): RouteChange => ({
+      kind: 'route',
+      useCase,
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: { caps: GPT5, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: GPT5,
+      thinkMode: '',
+      confirmUnknown: false,
+    });
+    const clean = cleanDraft('0'.repeat(64));
+    // Alone on gpt-5, chat's join writes its list to both roles.
+    expect(editReachOf(editReachFor(base, clean, join('chat')), 'chat')).toEqual({
+      model: 'gpt-5',
+      uses: ['agent'],
+      fallsBack: ['planning'],
+      definedAs: ['spare-role'],
+    });
+    // analysis staged onto gpt-5 first with another exposure: chat's values
+    // become the group's, so analysis changes with it and is named.
+    const peer = { ...join('analysis'), exposedCaps: ['chat', 'stream'] as CapabilityName[] };
+    const draft = stageChange(clean, peer, new KeyVault(new Map()));
+    expect(editReachOf(editReachFor(base, draft, join('chat')), 'chat')).toEqual({
+      model: 'gpt-5',
+      uses: ['agent', 'analysis'],
+      fallsBack: ['planning'],
+      definedAs: ['spare-role'],
+    });
+    // The same values as the peer's change nothing the draft does not already show.
+    const same = stageChange(clean, join('analysis'), new KeyVault(new Map()));
+    expect(editReachOf(editReachFor(base, same, join('chat')), 'chat')).toBeUndefined();
+    // Nothing projected, nothing reached.
+    expect(editReachOf(undefined, 'chat')).toBeUndefined();
   });
   it('abilitiesLine joins with spaces and never reads empty', () => {
     expect(abilitiesLine(['tool_call', 'chat', 'stream'])).toBe('tool_call chat stream');

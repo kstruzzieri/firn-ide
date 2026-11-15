@@ -1,6 +1,7 @@
 // src/components/FileExplorer/FileExplorer.tsx
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
+import type { Range } from '@tanstack/react-virtual';
 import { Panel, PanelAction } from '../layout';
 import { MinusIcon } from '../icons';
 import {
@@ -20,11 +21,11 @@ import { useEnsurePathLoaded } from '../../hooks/useEnsurePathLoaded';
 import { TreeRow, ROW_HEIGHT, rowDomId } from './TreeRow';
 import { TreeViewToggle } from './TreeViewToggle';
 import { WorkspaceTabs } from './WorkspaceTabs';
-import { flattenVisibleTree } from '../../utils/flattenTree';
+import { flattenVisibleTree, ROOT_ROW_KEY } from '../../utils/flattenTree';
 import type { FlatRow } from '../../utils/flattenTree';
 import { useTreeKeyboardNav } from './useTreeKeyboardNav';
 import { ensureEditorFileOpen } from '../../utils/editorNavigation';
-import { relativePathFromRoot } from '../../utils/workspaceRegions';
+import { pathUnderRoot, relativePathFromRoot } from '../../utils/workspaceRegions';
 import { useGitStatusByPath } from '../../stores/gitStore';
 import { normalizeFsPath } from '../../utils/paths';
 import { accentVar } from '../../utils/accent';
@@ -86,13 +87,11 @@ export function FileExplorer() {
     if (!ws || !relPath) return;
 
     const rel = relPath.split('/');
-    const sep = ws.path.includes('\\') ? '\\' : '/';
 
     void (async () => {
-      let cursor = ws.path;
       const toExpand: string[] = [];
-      for (let i = 0; i < rel.length - 1; i++) {
-        cursor += sep + rel[i];
+      for (let i = 1; i < rel.length; i++) {
+        const cursor = pathUnderRoot(ws.path, rel.slice(0, i).join('/'));
         await ensurePathLoaded(cursor);
         const afterLoad = useIDEStore.getState();
         if (revealGenRef.current !== gen || afterLoad.workspace !== ws) return;
@@ -142,10 +141,10 @@ export function FileExplorer() {
     hydratingForRef.current = relDir;
     let cancelled = false;
     setScopeHydrating(true);
-    const sep = ws.path.includes('\\') ? '\\' : '/';
+    const segments = relDir.split('/');
     void (async () => {
-      let cursor = ws.path;
-      for (const seg of relDir.split('/')) {
+      for (let depth = 0; depth < segments.length; depth++) {
+        const cursor = pathUnderRoot(ws.path, segments.slice(0, depth).join('/'));
         await ensurePathLoaded(cursor);
         const state = useIDEStore.getState();
         if (cancelled || state.workspace !== ws) return;
@@ -153,9 +152,8 @@ export function FileExplorer() {
           setScopeHydrating(false);
           return;
         }
-        cursor += sep + seg;
       }
-      await ensurePathLoaded(cursor);
+      await ensurePathLoaded(pathUnderRoot(ws.path, relDir));
       if (cancelled || useIDEStore.getState().workspace !== ws) return;
       setScopeHydrating(false);
     })();
@@ -210,12 +208,8 @@ export function FileExplorer() {
   );
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const virtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 12,
-  });
+  const focusedElementRef = useRef<HTMLElement | null>(null);
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
 
   // Primitive handlers — single source of truth; used by both TreeRow and actions.
   const handleToggle = useCallback(
@@ -251,14 +245,86 @@ export function FileExplorer() {
     [handleToggle, handleSelect, handleOpen]
   );
 
-  const { activeKey, setActiveKey, activeId, onKeyDown } = useTreeKeyboardNav({
+  const { activeKey, setActiveKey, navigationVersion, onKeyDown } = useTreeKeyboardNav({
     rows,
     actions,
-    virtualizer,
+  });
+  const activeIndex = rows.findIndex((row) => row.key === activeKey);
+  const focusedIndex = rows.findIndex((row) => row.key === focusedKey);
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const indexes = new Set(defaultRangeExtractor(range));
+      // Keep the entry tab stop mounted even outside the viewport. Retain the
+      // old focused row until focus transfers, including a jump to Home/End.
+      if (activeIndex >= 0) indexes.add(activeIndex);
+      if (focusedIndex >= 0) indexes.add(focusedIndex);
+      return [...indexes].sort((a, b) => a - b);
+    },
+    [activeIndex, focusedIndex]
+  );
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 12,
+    rangeExtractor,
   });
 
+  useEffect(() => {
+    // Focus landing outside the tree cancels removal recovery, including while
+    // an error has removed the tree and its own blur handler cannot run.
+    const cancelRecovery = (event: FocusEvent) => {
+      if (!(event.target instanceof Node) || !scrollRef.current?.contains(event.target)) {
+        focusedElementRef.current = null;
+      }
+    };
+    document.addEventListener('focusin', cancelRecovery);
+    return () => document.removeEventListener('focusin', cancelRecovery);
+  }, []);
+
+  const lastNavigation = useRef({ activeKey, navigationVersion });
+  useLayoutEffect(() => {
+    const navigated =
+      lastNavigation.current.activeKey !== activeKey ||
+      lastNavigation.current.navigationVersion !== navigationVersion;
+    lastNavigation.current = { activeKey, navigationVersion };
+    const tree = scrollRef.current;
+    const focusedElement = focusedElementRef.current;
+    const focusedRowRemoved =
+      document.activeElement === document.body &&
+      focusedElement !== null &&
+      !focusedElement.isConnected;
+    // A refresh can shift the active row's index without moving focus: the row
+    // keeps its DOM node by key, and the viewport stays where the user left it.
+    if (!navigated && !focusedRowRemoved) return;
+    // Editor-driven reveals update the entry tab stop without taking focus
+    // from the editor or controls used to switch workspaces. A removed focused
+    // row drops browser focus to body, so carry that focus to a surviving row.
+    if (
+      !tree ||
+      activeKey === null ||
+      (!tree.contains(document.activeElement) && !focusedRowRemoved)
+    )
+      return;
+    virtualizer.scrollToIndex(activeIndex, { align: 'auto' });
+    document.getElementById(rowDomId(activeKey))?.focus({ preventScroll: true });
+  }, [activeKey, activeIndex, navigationVersion, virtualizer]);
+
+  const handleActivate = useCallback(
+    (kind: 'root' | 'entry', path?: string) => {
+      const key = kind === 'root' ? ROOT_ROW_KEY : path;
+      if (!key) return;
+      setActiveKey(key);
+      setFocusedKey(key);
+      const element = document.getElementById(rowDomId(key));
+      focusedElementRef.current = element;
+      element?.focus({ preventScroll: true });
+    },
+    [setActiveKey]
+  );
+
   // Active-file reveal: once ancestors are expanded and rows recomputed, scroll
-  // the selected row into view and mark it the keyboard-active descendant.
+  // the selected row into view and make it the keyboard entry row.
   // lastRevealed guards against re-running when expandedPaths changes (which
   // rebuilds `rows`) but selectedPath has not changed.
   const lastRevealed = useRef<string | null>(null);
@@ -297,28 +363,44 @@ export function FileExplorer() {
     }
 
     const virtualItems = virtualizer.getVirtualItems();
-    // aria-activedescendant must reference an element that is actually in the DOM.
-    // With virtualization the active row only exists while inside the window, so
-    // omit the attribute when it is scrolled out rather than dangle a missing id.
-    const activeRowRendered =
-      activeId !== undefined && virtualItems.some((vi) => rows[vi.index]?.key === activeKey);
-
     return (
       <div
         ref={scrollRef}
         className={`${styles.scrollArea}${treeAccent ? ` ${styles.workspaceTree}` : ''}`}
         role="tree"
         aria-label="File explorer"
-        aria-activedescendant={activeRowRendered ? activeId : undefined}
-        tabIndex={0}
+        // Not a Tab stop: the active row is. A press on the scrollbar sends no
+        // click, so it needs somewhere to land other than the page.
+        tabIndex={-1}
+        onFocus={(event) => {
+          // Removal recovery covers the tree itself, as it does a focused row.
+          if (event.target === event.currentTarget) focusedElementRef.current = event.currentTarget;
+        }}
         onKeyDown={onKeyDown}
+        onClick={(event) => {
+          // The rows hold the tree's focus, so a click on its blank space hands
+          // focus to the active row.
+          if (event.target === event.currentTarget && activeKey !== null) {
+            document.getElementById(rowDomId(activeKey))?.focus({ preventScroll: true });
+          }
+        }}
+        onBlurCapture={(event) => {
+          // Intentionally leaving the tree cancels removal recovery. DOM
+          // removal itself does not dispatch blur for the disconnected row.
+          if (!event.currentTarget.contains(event.relatedTarget) && event.target.isConnected) {
+            focusedElementRef.current = null;
+          }
+        }}
         style={
           treeAccent
             ? ({ '--tree-accent': accentVar(treeAccent) } as React.CSSProperties)
             : undefined
         }
       >
-        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
+        <div
+          role="presentation"
+          style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}
+        >
           {virtualItems.map((vi) => {
             const row = rows[vi.index];
             const unreadable =
@@ -326,6 +408,7 @@ export function FileExplorer() {
             return (
               <div
                 key={row.key}
+                role="presentation"
                 style={{
                   position: 'absolute',
                   top: 0,
@@ -358,6 +441,7 @@ export function FileExplorer() {
                     row.entry ? gitStatusByPath[normalizeFsPath(row.entry.path)] : undefined
                   }
                   onToggle={handleToggle}
+                  onActivate={handleActivate}
                   onSelect={handleSelect}
                   onOpen={handleOpen}
                 />

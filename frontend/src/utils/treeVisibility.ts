@@ -1,4 +1,4 @@
-import { relativePathFromRoot } from './workspaceRegions';
+import { pathUnderRoot, relativePathFromRoot } from './workspaceRegions';
 
 export interface VisibilityState {
   rootPath: string;
@@ -20,13 +20,10 @@ export function isDirVisible(path: string, state: VisibilityState): boolean {
   if (rel === '') return true;
 
   const segments = rel.split('/');
-  const sep = rootPath.includes('\\') ? '\\' : '/';
   // Every ancestor dir (root + intermediate dirs), excluding `path` itself, must be expanded.
-  // ponytail: O(depth) walk; depth is bounded by filesystem nesting, no optimization needed
-  let cursor = rootPath;
-  for (let i = 0; i < segments.length - 1; i++) {
-    cursor += sep + segments[i];
-    if (!expandedPaths.has(cursor)) return false;
+  // ponytail: O(depth²) joins; depth is bounded by filesystem nesting, no optimization needed
+  for (let i = 1; i < segments.length; i++) {
+    if (!expandedPaths.has(pathUnderRoot(rootPath, segments.slice(0, i).join('/')))) return false;
   }
   return true;
 }

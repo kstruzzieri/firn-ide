@@ -144,7 +144,11 @@ export function GitPanel() {
           </div>
         )}
         {receipt && <CommitReceiptCard />}
-        <CommitArea stagedCount={buckets.staged.length} disabled={opInFlight !== null} />
+        <CommitArea
+          key={git.epoch}
+          stagedCount={buckets.staged.length}
+          disabled={opInFlight !== null}
+        />
         <div className={styles.sections}>
           {buckets.conflicts.length > 0 && (
             <Section
@@ -256,6 +260,8 @@ function SyncControls() {
 function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: boolean }) {
   const commitMessage = useGitStore((s) => s.commitMessage);
   const aiAvailable = useGitStore((s) => s.aiAvailable);
+  const withheldFromAI = useGitStore((s) => s.withheldFromAI);
+  const generating = useGitStore((s) => s.opInFlight === 'generate');
   const [amend, setAmend] = useState(false);
   const [suggestion, setSuggestion] = useState<string | null>(null);
 
@@ -263,19 +269,21 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
 
   const handleGenerate = async () => {
     const git = useGitStore.getState();
-    const draft = git.commitMessage.trim();
-    if (draft === '') {
-      await git.generateMessage(); // fills the empty textarea directly
-      return;
-    }
-    // Non-destructive: keep the draft, surface the proposal beside it.
-    const before = git.commitMessage;
-    await git.generateMessage();
-    const generated = useGitStore.getState().commitMessage;
-    if (generated !== before) {
-      useGitStore.getState().setCommitMessage(before);
-      setSuggestion(generated);
-    }
+    const epoch = git.epoch;
+    setSuggestion(null);
+    const generated = await git.generateMessage();
+    const after = useGitStore.getState();
+    if (after.epoch !== epoch || !generated) return;
+    // Other callers may have updated the current draft while waiting.
+    if (after.commitMessage.trim() === '') after.setCommitMessage(generated);
+    else setSuggestion(generated);
+  };
+
+  const handleCommit = async () => {
+    const git = useGitStore.getState();
+    await git.commit(amend);
+    const after = useGitStore.getState();
+    if (after.epoch === git.epoch && after.lastCommitReceipt) setSuggestion(null);
   };
 
   return (
@@ -285,6 +293,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
         placeholder={`Commit message${stagedCount === 0 ? ' (stage changes first)' : ''}`}
         aria-label="Commit message"
         value={commitMessage}
+        readOnly={generating}
         onChange={(e) => useGitStore.getState().setCommitMessage(e.target.value)}
         rows={3}
       />
@@ -308,6 +317,24 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
           </div>
         </div>
       )}
+      {/* Mounted empty so screen readers announce progress and withheld files. */}
+      <div role="status" className={styles.statusRegion}>
+        {generating && <div className={styles.generationStatus}>Generating commit message…</div>}
+        {withheldFromAI && (
+          <div className={styles.aiWithheld} data-testid="ai-withheld">
+            {withheldFromAI.allWithheld
+              ? "Every staged file is withheld from the AI by Golem's file access rules, so no request was made. Write the message by hand."
+              : "Withheld from the AI by Golem's file access rules, so the message may not mention:"}
+            <ul className={styles.aiWithheldList}>
+              {withheldFromAI.paths.map((path) => (
+                <li key={path}>
+                  <code>{path}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
       <ScopeGuard />
       <div className={styles.commitControls}>
         <label className={styles.amendLabel}>
@@ -325,17 +352,17 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
             className={styles.smallBtn}
             onClick={() => void handleGenerate()}
             disabled={disabled}
-            aria-label="Generate message"
+            aria-label={generating ? 'Generating commit message' : 'Generate message'}
             title="Generate a commit message with golem"
           >
-            Generate
+            {generating ? 'Generating…' : 'Generate'}
           </button>
         )}
         <button
           type="button"
           className={styles.commitBtn}
           disabled={!canCommit}
-          onClick={() => void useGitStore.getState().commit(amend)}
+          onClick={() => void handleCommit()}
         >
           Commit
         </button>

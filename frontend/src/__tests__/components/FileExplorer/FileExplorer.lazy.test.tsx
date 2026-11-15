@@ -130,15 +130,16 @@ describe('FileExplorer lazy-load on expand', () => {
 
     render(<FileExplorer />);
     const tree = screen.getByRole('tree', { name: 'File explorer' });
+    act(() => screen.getAllByRole('treeitem')[0].focus());
     fireEvent.keyDown(tree, { key: 'ArrowDown' });
 
     const row = screen.getByRole('treeitem', { name: 'a, unreadable' });
-    expect(tree).toHaveAttribute('aria-activedescendant', row.id);
+    expect(row).toHaveFocus();
     fireEvent.keyDown(tree, { key: 'ArrowRight' });
 
     await waitFor(() => {
       expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/a', '/r');
-      expect(tree).toHaveAttribute('aria-activedescendant', row.id);
+      expect(row).toHaveFocus();
     });
   });
 

@@ -7,6 +7,281 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-14
+
+In Golem Configuration, the route editor no longer refuses the model a route
+already uses, a refusal names the use case that fails instead of a role, and
+narrowing a model's capabilities for one route while another route moves off it
+applies in one step. Commit message generation follows Golem's file access
+rules, so a staged `.env` or credentials file stays out of the request, works
+with OpenCode Go, and shows its progress in the Git panel. Golem runs on go-llm
+v0.5.0 and dials loopback for a `localhost` chat endpoint. VoiceOver speaks a
+successful Apply and reads each file tree row's name, level and state. The file
+tree reads paths in the project folder's own syntax and no longer selects a
+row's text on double-click, clicking a file tab focuses the editor, the diff
+view keeps its horizontal scrollbars in sight, and the welcome screen's shortcut
+hints match the keys. Building Firn needs Go 1.27 or later, and release
+binaries are built with Go 1.27.4.
+
+### Golem
+
+- Golem runs on go-llm v0.5.0, and building Firn needs Go 1.27 or later: the
+  module's `go` line moves from 1.25.0 to 1.27.0, which go-llm v0.5.0 requires.
+  Through go-llm, Golem's `search` tool skips credential files such as `.env`,
+  `.netrc` and anything under `.ssh` or `.aws`, and Golem chat installs
+  go-llm's default tool guards, so `read_file` refuses those files before
+  Firn's own deny rules run and the refused read shows no tool row in the
+  chat. A run that stops at a cap now says why without a count of its tool
+  calls ("Golem stopped: too many tool calls failed."), since a refused call
+  has no row to count. Commit message generation dials 127.0.0.1, then ::1,
+  for a `localhost` endpoint, so a hosts-file entry can no longer redirect it;
+  and on macOS and Linux a workspace read fails with `path
+  changed during access` when the path it was allowed no longer reaches the
+  same file.
+  The `go` line also gives Firn Go 1.27's default runtime settings in place of
+  the 1.25 compatibility ones. One users may notice: when Firn is started with
+  `SSL_CERT_FILE` or `SSL_CERT_DIR` set, for example from a terminal, those
+  files now replace the system certificate store on macOS and Windows for
+  Firn's own HTTPS requests. (#418)
+- Golem chat dials 127.0.0.1, then ::1, for a `localhost` provider endpoint
+  instead of asking the operating system to resolve the name, so a hosts-file
+  entry can no longer redirect a local chat destination, nor, for an
+  openai-compat provider, the API key sent with it. Commit message generation
+  has dialed this way since #418 through go-llm's destination guard; chat
+  builds its own transport, which now applies the same rule. Any other host
+  keeps the ordinary dial. (#427)
+
+### Golem Configuration
+
+- The route editor in Golem Configuration no longer refuses the model a route
+  already uses. Opening a route showed a red "does not declare tool_call"
+  notice and disabled the assigned model's card whenever another use case
+  reached that model through a fallback chain (the v0.14.0 release-candidate
+  smoke: editing `analysis` on `opencode/deepseek-v4-pro`, which `agent`
+  reaches through `cloud-coder`'s fallback to `cloud-pro`), because keeping
+  the model was checked as a change to every route on it. Keeping the model
+  with the capabilities and Think mode it has now changes nothing and is
+  checked as nothing: the editor opens clean, the assigned model can be picked
+  again and leaves nothing to apply, and an explicit capability list the
+  configuration already holds is kept. Unticking a capability the model
+  declares is still refused when a route reaching the model through a chain
+  needs it, and the notice now names that route and the chain ("agent (via
+  cloud-coder → cloud-pro) needs tool_call"). Moving a route onto another
+  model with the capabilities that model's type already implies no longer
+  sends a redundant capability override, which was what widened Golem's
+  eligibility check to the model's other routes; a route already on that
+  model carrying the same implied set as an explicit list (what every earlier
+  Firn wrote on every move) does not bring that check back either, and such a
+  route can still be removed later. A different exposure, or a route there
+  holding a different list, is still an explicit override and is checked as
+  one. (#311)
+- A refusal from Golem's eligibility check now names the use case whose
+  requirement fails ("use case embedding"), on that use case's row, instead
+  of a role name no row carries (`embed-m`, or a generated `analysis-m`).
+  Firn checks the same roles and capabilities Golem does before each change
+  is applied, so the refusal arrives with the use case as its subject. (#338)
+- The route editor in Golem Configuration now refuses, before Apply, a route
+  joining a model whose capabilities another route already fixes explicitly
+  when the exposure ticked here differs from that set. Golem rejected such a
+  change at Apply as "Models sharing a provider/model selector disagree."
+  with nothing in the editor to say why. The editor now shows the same kind of
+  blocking notice it shows for a conflicting Think mode, naming the routes
+  that hold the set, and Done is refused until the exposure matches or
+  another model is picked. A model whose capabilities are only derived from
+  its type locks nothing, and keeping a route's own model is never held to
+  its own set. A route whose explicit set leaves the model, or is rewritten
+  by a retarget that keeps the same provider/model but changes its model
+  facts, stops locking it only when that change runs before every other
+  change to the model in the same Apply; otherwise the notice still names
+  the route or role that holds the lock. The settings projection names each
+  role's explicit override for this (`capabilityOverride`). (#335)
+- Golem Configuration accepts narrowing a model's capabilities for one route
+  while another route on the same role moves to a different model, in one
+  Apply. Keeping `chat` on a shared model without tool_call while `agent`
+  moves off it was refused twice over: the route editor would not stage it,
+  saying agent needs tool_call, and Apply refused it for agent as well, though
+  agent's new model has tool_call and every requirement holds once the change
+  is applied. Apply now binds a moved route to the role it creates for
+  it before any capability override runs, and the editor checks the override
+  against the routes that stay on the model, which are still checked and
+  named. Apply runs route changes in use-case name order, and the editor now
+  follows that order for a route joining a model too: a route leaving the
+  model before the join runs no longer counts against it, and one leaving
+  only after still does, as Apply already held it to. (#474)
+- The route editor's notice in Golem Configuration about the chosen model
+  names only the routes the edit changes, and says how each reaches the model
+  ("agent also uses gpt-5, and planning falls back to it"). It listed every
+  route Golem checks the edit against, so picking a model with the
+  capabilities its routes already had said its abilities change for them too,
+  and a route that keeps its own model and only falls back to the chosen one
+  read as both keeping and changing the model. That sentence now appears only
+  once the edit changes something for another route or role, measured from
+  what the draft already shows, so a route already staged onto the model with
+  the same values is not named again. Moving a route onto a model with the
+  capabilities its type implies, which writes no capability list there, also
+  no longer marks that model's other routes and defined roles Modified when
+  they derive a different set from their own type. (#307)
+- The route editor in Golem Configuration names the defined models an edit
+  rewrites. Changing the capabilities or Think mode of the model a route
+  already uses reaches every role defined on that model, including roles no
+  use case routes to, and those roles showed as Modified in the Defined models
+  list only after Done. The editor's notice now names them beforehand
+  ("gemma4:31b is also defined as critic and judge"), the same roles the list
+  marks. (#349)
+
+### Workspace
+
+- Double-clicking a file tree row opens the file or toggles the folder without
+  highlighting the row's name, and dragging across rows no longer selects
+  their text. The rows never turned text selection off, so a double-click also
+  selected the word under the pointer, which read as an editable name Firn
+  does not have. (#462)
+- Clicking a file tab focuses the editor so typing reaches the selected file,
+  including when clicking the current tab or returning from another editor
+  surface. Keyboard tab navigation keeps focus in the tab strip. (#505)
+- The file tree and Workspace Views now place a path under the project folder
+  in that folder's own path syntax: a backslash separates folders only in a
+  Windows project, and a drive root keeps its slash. With a Windows drive root
+  (`C:\`) open as the project, every file under it counted as outside the
+  project, so the tree never revealed the active file, showed its expanded
+  folders, applied its saved snapshot or loaded a Workspace View under it, no
+  file mapped to a Workspace View, and reselecting the project as `c:/`
+  reopened it in full instead of refreshing the tree. On macOS and Linux, where
+  a backslash is an ordinary filename character, a folder named `a\b` was read
+  as `a/b`: revealing `a\b/readme.txt` in the tree showed "Failed to load a",
+  a folder `a/b` elsewhere in the tree could take `a\b`'s listing or keep `a\b`
+  from being read, a project in `a\b` accepted the saved tree snapshot of the
+  folder `a/b`, and a project whose own folder name held a backslash could not
+  reveal the active file or show its expanded folders. (#447)
+- The welcome screen's shortcut hints now match what the keys do. It listed
+  Cmd+K for a Quick Search that Firn does not have, so pressing it did
+  nothing, and called Cmd+O Open File, though Cmd+O opens a folder. It now
+  lists Open Folder (Cmd+O), Command Palette (Cmd+Shift+P) and Search in
+  Workspace (Cmd+Shift+F), each Ctrl on Windows and Linux. (#454)
+
+### Git
+
+- Commit message generation works with OpenCode Go, which refuses a request
+  without a session header. Each generation sends a new random session ID that
+  is kept in memory, is never reused and carries no repository or user
+  identity. Unlike chat, which sends a session header only to opencode,
+  generation sends it to every OpenAI-compatible endpoint it contacts. When
+  every configured model is refused for context, the error now says the context
+  is unknown or too small and names `context_window`. A model with no known
+  context is still refused (#506). (#505)
+- The Git panel shows that a message is being generated. The Generate button
+  reads "Generating…", screen readers hear "Generating commit message…", and
+  the message box is read-only until generation ends. The commit controls wrap
+  in a narrow sidebar, where the Commit button used to clip. (#505)
+- A side of the side-by-side diff whose lines are wider than it now shows its
+  horizontal scrollbar at the bottom of the diff view. The scrollbar used to
+  sit below the file's last line, out of sight on any file taller than the
+  view, so a long line could only be scrolled into view with a sideways
+  trackpad swipe or Shift+wheel. Each side's scrollbar follows the column
+  divider and appears only while that side overflows. Long lines still do not
+  wrap, which keeps the two sides aligned. (#448)
+
+### Accessibility
+
+- Golem route refusals keep keyboard focus on Done and are announced on every
+  press, so a keyboard or VoiceOver user can press Done again and hear the
+  error again. An identical refusal is spoken again after about 400ms, while
+  the visible refusal stays in place. (#311, #338, #505)
+- VoiceOver speaks the result of a successful Apply in Golem Configuration,
+  including a second Apply with the same result. Success removes the Apply bar,
+  which used to drop keyboard focus and the announcement with it. Focus now
+  moves to the Source picker, or to the heading while that picker is disabled,
+  unless you have already moved elsewhere, and the result is announced after
+  that. (#505)
+- The file tree moves keyboard focus to each row, with one Tab stop for the
+  whole tree, and VoiceOver reads each row's name, level and expanded or
+  collapsed state. (#505)
+
+### Security
+
+- Commit message generation follows Golem's file access rules. A staged file
+  those rules deny, such as a `.env`, a key or credentials file, or a path an
+  `ai-kit.yaml` protects, is withheld from the request by name and content, and
+  the message is written from the rest of the staged changes. A rename or copy
+  of a protected file counts as protected. The Git panel lists the withheld
+  files under the message box, on this machine only, so you know the message
+  may not mention them. When every staged file is withheld, no request is sent
+  and the draft in the message box is kept. With a subfolder of a repository
+  open, staged files outside that folder are withheld too. When too many files
+  changed for Git to pair renames and copies, no request is sent and the error
+  asks you to write the message by hand, because those pairs could not be
+  checked against the rules. (#384)
+- Release binaries are built with Go 1.27.4, the `toolchain` line in
+  `go.mod`. It fixes GO-2026-6859 in `net/http`: an HTTP/1 server using
+  `MaxBytesReader` or `MaxBytesHandler` can crash when a request body passes
+  the limit while its handler, reading that body, writes response headers on
+  another goroutine. Under Go 1.27.3, `govulncheck` finds the affected
+  `net/http` code in Firn's release build and traces calls into it from
+  Firn's source. (#565)
+
+### Known limitations
+
+- The run-profile store writes its profiles without checking whether
+  `.firn/run-profiles.json` changed on disk, so a branch checkout or merge that
+  rewrites the file is overwritten by the next Save, Pin, Adopt or Delete. The
+  lost version can be recovered from Git (#397).
+- In the Golem configuration view, closing the Save as profile popover while a
+  save is in flight drops its result, failures included, so a failed save can
+  look like it succeeded (#396).
+- The Golem chat's live region reads the newest error in the whole transcript,
+  so it can re-announce an earlier run's error after a later run answers, and
+  it skips a repeated one (#395).
+- In a terminal session, Tab and Shift+Tab go to the shell, so only Cmd
+  shortcuts such as Cmd+Shift+P move focus out; the terminal input does not
+  name its session, and tabbing out of the session menu can drop focus to the
+  page (#429).
+- The destination approval row names one model, but an approval covers every
+  model on that endpoint, and it reads `Reached by agent` without saying when
+  the endpoint is reached only through the agent's fallbacks (#355).
+- Golem's deny floor matches paths by name, so on Windows a trailing dot or
+  space, an alternate data stream suffix or a short (8.3) name, and on any
+  platform a hard link, can reach a denied file (#431).
+- When `.firn/run-recency.json` cannot be read, the next run rewrites it from
+  memory, so every other profile's last-run time is lost, and Reload only
+  clears the warning (#442).
+- When one of the file tree's root reads fails after a newer one has
+  succeeded, the tree reports "Failed to refresh file tree" and a restore
+  stops refreshing deeper expanded folders, which can keep stale contents
+  until a file changes or the folder is collapsed and expanded again (#443).
+- A run ended by quitting Firn or switching workspaces leaves its profile
+  showing the "just ran" chip while the expanded panel says "Never run"
+  (#283).
+- In Golem Configuration, while one route editor is open, a second editor on a
+  route sharing its model can stage a change that undoes a Think mode or
+  exposure the first just staged, without the first editor's Pending line
+  naming it (#342).
+- Commit message generation refuses a model whose context window is unknown,
+  though Golem chat accepts the same model. The error names the cause; set
+  `context_window` for the agent model and its fallbacks, using a value verified
+  with the provider (#506).
+- On macOS and Linux, a folder named `a\b` and a folder `a/b` holding a file of
+  the same name count as one open file when Resolve saves first: pressing
+  Resolve on a conflicted `a\b/x.ts` while `a/b/x.ts` has unsaved edits writes
+  those edits over the conflicted file and marks `a/b/x.ts` saved, so closing
+  its tab loses them (#510).
+- Commit message generation fails in a repository whose folder name ends in a
+  space, because Firn trims the space from the path (#511).
+- In Golem Configuration, a route that joins a shared model and declares a
+  different type for it can make an unchanged route on that model read
+  Incompatible, and that route's editor say its model does not declare a
+  capability the route needs, though the staged change does not remove it
+  (#512).
+- With a subfolder of a repository open, the Git panel says Golem's file access
+  rules withheld a staged file that is only outside that folder (#513).
+- Generating a commit message drops keyboard focus to the page, so a keyboard
+  or VoiceOver user loses their place in Source Control (#515).
+- When the file at the file tree's active row is deleted or renamed from outside
+  the tree while the tree holds keyboard focus, the tree jumps to its top and
+  focus moves to its root row (#521).
+- After a failed directory read replaces the file tree with its error, a refresh
+  that restores the same contents leaves keyboard focus on the page until a
+  click or Tab (#522).
+
 ## [0.14.0] - 2026-10-25
 
 Defect release. Golem moves to go-llm v0.3.0, which marks tool results as
@@ -696,7 +971,8 @@ or Windows 10/11 (WebView2).
   pre-push hooks; golangci-lint v2.11.4; frontend and backend coverage.
 - macOS dev-build fix for the UniformTypeIdentifiers framework (#145).
 
-[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.11.0...v0.12.0

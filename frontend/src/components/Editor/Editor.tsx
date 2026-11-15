@@ -94,6 +94,7 @@ export function Editor() {
   const tabPressRef = useRef(false);
   const restoreFocusAfterCloseRef = useRef(false);
   const [mergeFinalizing, setMergeFinalizing] = useState(false);
+  const [fileFocusRevision, setFileFocusRevision] = useState(0);
 
   // Handle content changes from the editor
   const handleContentChange = useCallback(
@@ -310,7 +311,7 @@ export function Editor() {
           <img src={firnLogo} alt="Firn IDE" className={styles.welcomeLogo} />
           <div className={styles.shortcuts}>
             <div className={styles.shortcutItem}>
-              <span className={styles.shortcutLabel}>Open File</span>
+              <span className={styles.shortcutLabel}>Open Folder</span>
               <kbd>{formatShortcut('\u2318O')}</kbd>
             </div>
             <div className={styles.shortcutItem}>
@@ -318,8 +319,8 @@ export function Editor() {
               <kbd>{formatShortcut('\u2318\u21e7P')}</kbd>
             </div>
             <div className={styles.shortcutItem}>
-              <span className={styles.shortcutLabel}>Quick Search</span>
-              <kbd>{formatShortcut('\u2318K')}</kbd>
+              <span className={styles.shortcutLabel}>Search in Workspace</span>
+              <kbd>{formatShortcut('\u2318\u21e7F')}</kbd>
             </div>
           </div>
           {recentProjects.length > 0 && (
@@ -401,7 +402,10 @@ export function Editor() {
                   className={`${styles.tab} ${owner ? styles.workspaceTab : ''} ${isActive ? styles.active : ''}`}
                   style={tabAccentStyle(owner)}
                   title={`${file.path}\n${languageName}`}
-                  onClick={activateFileTab}
+                  onClick={() => {
+                    activateFileTab();
+                    setFileFocusRevision((revision) => revision + 1);
+                  }}
                 >
                   <div
                     id={editorTabId(file.id)}
@@ -607,6 +611,7 @@ export function Editor() {
           >
             <CodeMirrorEditor
               fileId={activeFile.id}
+              focusRevision={fileFocusRevision}
               filename={activeFile.name}
               content={activeFile.content || ''}
               openFileIds={openFiles.map((f) => f.id)}

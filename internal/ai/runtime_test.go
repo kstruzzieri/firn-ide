@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -690,7 +692,14 @@ func TestGolemRuntimeScopeGuardBlocksSensitivePaths(t *testing.T) {
 	if observations[4] != "public readme content" {
 		t.Fatalf("allowed read = %q, want the README content", observations[4])
 	}
-	for _, i := range []int{2, 3, 5, 6, 8, 9} {
+	// .env and .git/config are go-llm credential paths, refused before the
+	// guard runs; the rest are Firn's own floor and ai-kit.yaml rules.
+	for _, i := range []int{2, 3} {
+		if observations[i] != credentialBlock {
+			t.Fatalf("observation %d = %q, want the credential invariant block", i, observations[i])
+		}
+	}
+	for _, i := range []int{5, 6, 8, 9} {
 		if observations[i] != "path denied by workspace policy" {
 			t.Fatalf("observation %d = %q, want the fixed sanitized denial", i, observations[i])
 		}
@@ -713,6 +722,95 @@ func TestGolemRuntimeScopeGuardBlocksSensitivePaths(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&backend.unexpected); got != 0 {
 		t.Fatalf("unexpected provider calls = %d", got)
+	}
+}
+
+// credentialBlock is go-llm's observation for a read_file call its default
+// credential invariant refuses. The call never reaches the tool, so it is
+// refused before Firn's ScopeGuard sees it.
+const credentialBlock = "tool call blocked by interceptor invariants (credential_path)"
+
+// go-llm's read_file credential invariant holds on its own, below Firn's
+// deny floor: the guard here is nil, so only the installed interceptor can
+// refuse these reads (golem.Options.Orchestrator documents that a supplied
+// orchestrator gets none unless the embedder installs them).
+func TestGolemRuntimeInvariantsRefuseCredentialReadsWithoutGuard(t *testing.T) {
+	const leakPrefix = "NEVER-LEAK"
+	root := canonicalTempDir(t)
+	files := map[string]string{
+		"README.md":               "public readme content",
+		".netrc":                  leakPrefix + "-NETRC",
+		".aws/config":             leakPrefix + "-AWS",
+		"nested/.ssh/known_hosts": leakPrefix + "-SSH",
+		".env.local":              leakPrefix + "-ENV",
+	}
+	for rel, content := range files {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The allowed read sits mid-script: a block counts toward go-llm's cap of
+	// three consecutive tool errors, which would end the run early.
+	reads := []string{".netrc", ".aws/config", "README.md", "nested/.ssh/known_hosts", ".env.local"}
+	const allowed = 2
+	var steps []provider.ChatResponse
+	for i, rel := range reads {
+		steps = append(steps, scriptedToolCall(fmt.Sprintf("c%d", i), "read_file", `{"path":"`+rel+`"}`))
+	}
+	steps = append(steps, provider.ChatResponse{Content: "done"})
+	backend := &scriptedProvider{name: "hosted", steps: steps}
+	runner, err := newGolemRunner(context.Background(), root, testTarget("hosted", "big-coder"), nil,
+		NewMemorySessionStore(), backend, nil, golemTuning{})
+	if err != nil {
+		t.Fatalf("newGolemRunner: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+
+	result, err := runner.Run(context.Background(), golem.Turn{
+		RunID:    "run-invariants",
+		Message:  "read the credentials",
+		Approver: approveAll{},
+	}, collectSink(new([]golem.Event)))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Answer != "done" {
+		t.Fatalf("Answer = %q, want the full script to finish", result.Answer)
+	}
+
+	reqs := backend.recorded()
+	var observations []string
+	for _, msg := range reqs[len(reqs)-1].Messages {
+		if msg.Role == "tool" {
+			observations = append(observations, msg.Content)
+		}
+	}
+	if len(observations) != len(reads) {
+		t.Fatalf("tool observations = %d, want %d:\n%q", len(observations), len(reads), observations)
+	}
+	for i, rel := range reads {
+		want := credentialBlock
+		if i == allowed {
+			want = "public readme content"
+		}
+		if got := unfenceToolResult(t, observations[i]); got != want {
+			t.Fatalf("read_file %s observation = %q, want %q", rel, got, want)
+		}
+	}
+	for i, req := range reqs {
+		for _, msg := range req.Messages {
+			if strings.Contains(msg.Content, leakPrefix) {
+				t.Fatalf("model request %d leaks credential content: %q", i, msg.Content)
+			}
+		}
 	}
 }
 
@@ -897,6 +995,291 @@ func TestGolemRuntimeTransportRefusesRedirects(t *testing.T) {
 	}
 }
 
+// chatServer serves one streamed ollama chat answer per request and records
+// the Host each request named, and over TLS the server name its client sent;
+// the caller starts it, with or without TLS.
+type chatServer struct {
+	*httptest.Server
+	mu       sync.Mutex
+	hosts    []string
+	tlsNames []string
+}
+
+func newOllamaChatServer(t *testing.T, ln net.Listener) *chatServer {
+	t.Helper()
+	cs := &chatServer{}
+	cs.Server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cs.mu.Lock()
+		cs.hosts = append(cs.hosts, r.Host)
+		if r.TLS != nil {
+			cs.tlsNames = append(cs.tlsNames, r.TLS.ServerName)
+		}
+		cs.mu.Unlock()
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = io.WriteString(w, `{"model":"big-coder","message":{"role":"assistant","content":"done"},"done":false}`+"\n")
+		_, _ = io.WriteString(w, `{"model":"big-coder","message":{"role":"assistant","content":""},"done":true}`+"\n")
+	}))
+	_ = cs.Listener.Close()
+	cs.Listener = ln
+	t.Cleanup(cs.Close)
+	return cs
+}
+
+// requestHosts is the Host of every request served so far.
+func (cs *chatServer) requestHosts() []string {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return slices.Clone(cs.hosts)
+}
+
+// requestTLSNames is the TLS server name (SNI) of every request served so far
+// over TLS.
+func (cs *chatServer) requestTLSNames() []string {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return slices.Clone(cs.tlsNames)
+}
+
+// standInDialer refuses the refused IP literals, dials every other literal as
+// given, and sends every name to resolved, the way a hosts-file entry would
+// send "localhost" elsewhere.
+func standInDialer(resolved string, refused ...string) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		if slices.Contains(refused, host) {
+			return nil, fmt.Errorf("stand-in dialer: %s refused", addr)
+		}
+		if net.ParseIP(host) == nil {
+			addr = resolved
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+}
+
+// dialRecorder records every address the transport hands its base dialer,
+// then dials it through next.
+type dialRecorder struct {
+	next  func(context.Context, string, string) (net.Conn, error)
+	mu    sync.Mutex
+	addrs []string
+}
+
+func (d *dialRecorder) dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	d.mu.Lock()
+	d.addrs = append(d.addrs, addr)
+	d.mu.Unlock()
+	return d.next(ctx, network, addr)
+}
+
+func (d *dialRecorder) seen() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.addrs)
+}
+
+func chatOnce(t *testing.T, backend provider.Provider) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := backend.Chat(ctx, provider.ChatRequest{
+		Model:    "big-coder",
+		Messages: []provider.ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	return err
+}
+
+// A chat destination on http://localhost:<port> reaches the listener on
+// 127.0.0.1, or on ::1 when 127.0.0.1 refuses, while the base dialer's name
+// resolution (a hosts-file entry's stand-in) answers "localhost" with a
+// decoy: the name is never resolved. The ipv6 case refuses 127.0.0.1 in the
+// stand-in itself, so whatever else listens on that port of this machine
+// cannot take the first attempt. (#427)
+func TestGolemRuntimeTransportDialsLoopbackForLocalhost(t *testing.T) {
+	for _, tc := range []struct {
+		name, network, bind string
+		refused             []string
+	}{
+		{"ipv4", "tcp4", "127.0.0.1:0", nil},
+		{"ipv6", "tcp6", "[::1]:0", []string{"127.0.0.1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ln, err := net.Listen(tc.network, tc.bind)
+			if err != nil {
+				t.Skipf("no %s loopback listener: %v", tc.name, err)
+			}
+			var decoyHits int32
+			srv := newOllamaChatServer(t, ln)
+			srv.Start()
+			decoy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&decoyHits, 1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(decoy.Close)
+
+			port := ln.Addr().(*net.TCPAddr).Port
+			endpoint, local, err := NormalizeEndpoint(fmt.Sprintf("http://localhost:%d", port))
+			if err != nil || !local {
+				t.Fatalf("NormalizeEndpoint = %q local=%v err=%v", endpoint, local, err)
+			}
+			target := testTarget("local-ollama", "big-coder")
+			target.destination.Endpoint = endpoint
+			rec := &dialRecorder{next: standInDialer(decoy.Listener.Addr().String(), tc.refused...)}
+			base := &http.Transport{DialContext: rec.dial}
+			backend, transport, err := buildProviderOn(base, target, "")
+			if err != nil {
+				t.Fatalf("buildProviderOn: %v", err)
+			}
+			defer transport.CloseIdleConnections()
+			chatErr := chatOnce(t, backend)
+			if got := atomic.LoadInt32(&decoyHits); got != 0 {
+				t.Fatalf("decoy received %d request(s): localhost was resolved instead of dialed as loopback", got)
+			}
+			if chatErr != nil {
+				t.Fatalf("Chat: %v", chatErr)
+			}
+			wantDials := []string{net.JoinHostPort("127.0.0.1", fmt.Sprint(port))}
+			if tc.name == "ipv6" {
+				wantDials = append(wantDials, net.JoinHostPort("::1", fmt.Sprint(port)))
+			}
+			if got := rec.seen(); !slices.Equal(got, wantDials) {
+				t.Errorf("Chat(%q) dialed %q, want %q", endpoint, got, wantDials)
+			}
+			if got, want := srv.requestHosts(), []string{fmt.Sprintf("localhost:%d", port)}; !slices.Equal(got, want) {
+				t.Fatalf("loopback listener saw Host %q, want %q: one request that still names localhost", got, want)
+			}
+		})
+	}
+}
+
+// An https://localhost destination dials through the same loopback rule even
+// when the base transport carries a TLS dial hook: either hook would replace
+// DialContext for TLS connections, and with it the loopback dial. (#427)
+func TestGolemRuntimeTransportDialsLoopbackForHTTPSLocalhost(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		hook func(tr *http.Transport, used *int32)
+	}{
+		{"DialTLSContext", func(tr *http.Transport, used *int32) {
+			tr.DialTLSContext = func(context.Context, string, string) (net.Conn, error) {
+				atomic.AddInt32(used, 1)
+				return nil, errors.New("TLS dial hook used")
+			}
+		}},
+		{"DialTLS", func(tr *http.Transport, used *int32) {
+			tr.DialTLS = func(string, string) (net.Conn, error) { //nolint:staticcheck // deprecated, and still bypasses DialContext when set
+				atomic.AddInt32(used, 1)
+				return nil, errors.New("TLS dial hook used")
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ln, err := net.Listen("tcp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("Listen: %v", err)
+			}
+			var hookUsed int32
+			srv := newOllamaChatServer(t, ln)
+			srv.StartTLS()
+
+			port := ln.Addr().(*net.TCPAddr).Port
+			endpoint, local, err := NormalizeEndpoint(fmt.Sprintf("https://localhost:%d", port))
+			if err != nil || !local {
+				t.Fatalf("NormalizeEndpoint = %q local=%v err=%v", endpoint, local, err)
+			}
+			target := testTarget("local-ollama", "big-coder")
+			target.destination.Endpoint = endpoint
+			rec := &dialRecorder{next: (&net.Dialer{}).DialContext}
+			base := &http.Transport{DialContext: rec.dial}
+			// The test server's certificate does not name localhost, so the
+			// client skips verification here; the name it sends is asserted
+			// below instead.
+			base.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+			tc.hook(base, &hookUsed)
+			backend, transport, err := buildProviderOn(base, target, "")
+			if err != nil {
+				t.Fatalf("buildProviderOn: %v", err)
+			}
+			defer transport.CloseIdleConnections()
+			chatErr := chatOnce(t, backend)
+			if got := atomic.LoadInt32(&hookUsed); got != 0 {
+				t.Fatalf("%s ran %d time(s): an https localhost endpoint bypassed the loopback dial", tc.name, got)
+			}
+			if chatErr != nil {
+				t.Fatalf("Chat: %v", chatErr)
+			}
+			if got, want := rec.seen(), []string{fmt.Sprintf("127.0.0.1:%d", port)}; !slices.Equal(got, want) {
+				t.Fatalf("base dialer saw %q, want %q", got, want)
+			}
+			if got, want := srv.requestHosts(), []string{fmt.Sprintf("localhost:%d", port)}; !slices.Equal(got, want) {
+				t.Fatalf("loopback listener saw Host %q, want %q: one request that still names localhost", got, want)
+			}
+			if got, want := srv.requestTLSNames(), []string{"localhost"}; !slices.Equal(got, want) {
+				t.Fatalf("loopback listener saw TLS server name %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// A destination whose host is any other name reaches the base dialer as that
+// name, so its resolution stays the operating system's. (#427)
+func TestGolemRuntimeTransportKeepsOrdinaryDialForOtherHosts(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	srv := newOllamaChatServer(t, ln)
+	srv.Start()
+	rec := &dialRecorder{next: standInDialer(ln.Addr().String())}
+	base := &http.Transport{DialContext: rec.dial}
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	endpoint, local, err := NormalizeEndpoint(fmt.Sprintf("http://firn-backend.test:%d", port))
+	if err != nil || local {
+		t.Fatalf("NormalizeEndpoint = %q local=%v err=%v", endpoint, local, err)
+	}
+	target := testTarget("lan", "big-coder")
+	target.destination.Endpoint = endpoint
+	target.destination.Classification = "remote" // what NormalizeEndpoint says of this host
+	backend, transport, err := buildProviderOn(base, target, "")
+	if err != nil {
+		t.Fatalf("buildProviderOn: %v", err)
+	}
+	defer transport.CloseIdleConnections()
+	if err := chatOnce(t, backend); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	name := fmt.Sprintf("firn-backend.test:%d", port)
+	if got, want := srv.requestHosts(), []string{name}; !slices.Equal(got, want) {
+		t.Fatalf("listener saw Host %q, want %q", got, want)
+	}
+	if got, want := rec.seen(), []string{name}; !slices.Equal(got, want) {
+		t.Fatalf("base dialer saw %q, want %q: a non-localhost name keeps the ordinary dial", got, want)
+	}
+}
+
+// A localhost dial whose context ends during the 127.0.0.1 attempt stops
+// there instead of trying ::1 on a dead context. (#427)
+func TestLoopbackDialContextStopsWhenContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var dialed []string
+	dial := loopbackDialContext(func(ctx context.Context, _, addr string) (net.Conn, error) {
+		dialed = append(dialed, addr)
+		cancel()
+		return nil, ctx.Err()
+	})
+	if _, err := dial(ctx, "tcp", "localhost:11434"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("dial error = %v, want context.Canceled", err)
+	}
+	if want := []string{"127.0.0.1:11434"}; !slices.Equal(dialed, want) {
+		t.Fatalf("dialed %q, want %q", dialed, want)
+	}
+}
+
 func TestGolemRuntimeBuildProviderUsesConfiguredInstanceName(t *testing.T) {
 	for _, format := range []string{"ollama", "openai-compat"} {
 		target := testTarget("hosted", "big-coder")
@@ -1003,7 +1386,7 @@ func TestGolemRuntimeSessionConflictEndsRunFailed(t *testing.T) {
 	ctx := context.Background()
 	const threadID = "thread-conflict"
 	store := NewMemorySessionStore()
-	if err := store.Save(ctx, conversation.Conversation{
+	if _, err := store.Save(ctx, conversation.Conversation{
 		ID:       threadID,
 		Messages: []conversation.Message{{Role: "user", Content: "seed"}},
 	}); err != nil {
@@ -1013,7 +1396,7 @@ func TestGolemRuntimeSessionConflictEndsRunFailed(t *testing.T) {
 	wrapped := &conflictOnLoadStore{
 		MemorySessionStore: store,
 		win: func(ctx context.Context) error {
-			return store.Save(ctx, conversation.Conversation{
+			_, err := store.Save(ctx, conversation.Conversation{
 				ID:       threadID,
 				Revision: 1,
 				Messages: []conversation.Message{
@@ -1021,6 +1404,7 @@ func TestGolemRuntimeSessionConflictEndsRunFailed(t *testing.T) {
 					{Role: "assistant", Content: "winning answer"},
 				},
 			})
+			return err
 		},
 	}
 

@@ -87,6 +87,32 @@ describe('parseSettingsProjection', () => {
     expect(p.providers[0].classification).toBe('remote');
   });
 
+  it('reads a capability override back, and an absent one as none', () => {
+    // #335: the projection names the role's EXPLICIT override beside the
+    // folded exposure, so the editor can tell an owner from a deriving sibling.
+    expect(parseSettingsProjection(validProjection()).models[0].capabilityOverride).toBe(undefined);
+    const value = validProjection();
+    (value.models as Record<string, unknown>[])[0].capabilityOverride = [
+      'chat',
+      'stream',
+      'tool_call',
+    ];
+    expect(parseSettingsProjection(value).models[0].capabilityOverride).toEqual([
+      'chat',
+      'stream',
+      'tool_call',
+    ]);
+  });
+
+  it('reads a fallback chain back, and an absent one as none', () => {
+    // #311: the role's own authored chain, in order, so the editor can name how
+    // a use case reaches a model it never routes to directly.
+    expect(parseSettingsProjection(validProjection()).models[0].fallbacks).toBe(undefined);
+    const value = validProjection();
+    (value.models as Record<string, unknown>[])[0].fallbacks = ['pro-m', 'mimo-m'];
+    expect(parseSettingsProjection(value).models[0].fallbacks).toEqual(['pro-m', 'mimo-m']);
+  });
+
   it.each([
     [
       'unknown state',
@@ -224,6 +250,68 @@ describe('parseSettingsProjection', () => {
         model.capabilityFacts = { caps: ['chat'], knownCaps: ['chat', 'stream'] };
         model.effectiveCapabilities = ['chat'];
         model.exposedCapabilities = ['chat', 'embed'];
+      },
+    ],
+    [
+      // The producer folds an override into exposedCapabilities, so a
+      // projection whose two disagree was not produced by it.
+      'a capability override that is not the exposed set',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].capabilityOverride = ['chat', 'stream'];
+      },
+    ],
+    [
+      // An owner resolves to its explicit set: an override beside a different
+      // effective set is a role that owns nothing dressed as one.
+      'a capability override that is not the effective set',
+      (v: Record<string, unknown>) => {
+        const model = (v.models as Record<string, unknown>[])[0];
+        model.effectiveCapabilities = ['chat', 'stream'];
+        model.capabilityFacts = {
+          caps: ['chat', 'stream'],
+          knownCaps: ['chat', 'generate', 'stream', 'embed', 'tool_call', 'thinking', 'insert'],
+        };
+        model.capabilityOverride = ['chat', 'stream', 'tool_call'];
+      },
+    ],
+    [
+      'an empty capability override',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].capabilityOverride = [];
+      },
+    ],
+    [
+      'a non-canonical capability override',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].capabilityOverride = [
+          'stream',
+          'chat',
+          'tool_call',
+        ];
+      },
+    ],
+    [
+      'a null capability override',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].capabilityOverride = null;
+      },
+    ],
+    [
+      'a fallback that is not a safe identifier',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].fallbacks = ['pro\u202Em'];
+      },
+    ],
+    [
+      'an empty fallback list',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].fallbacks = [];
+      },
+    ],
+    [
+      'a null fallback list',
+      (v: Record<string, unknown>) => {
+        (v.models as Record<string, unknown>[])[0].fallbacks = null;
       },
     ],
     [

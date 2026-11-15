@@ -147,6 +147,37 @@ describe('FileExplorer active-file reveal with lazy loading', () => {
     });
   });
 
+  describe('(c) reveal reads paths in the root syntax (#447)', () => {
+    it.each([
+      ['a POSIX root, under a folder named a\\b', '/r', '/r/a\\b', '/r/a\\b/readme.txt'],
+      ['a POSIX root named with a backslash', '/me/a\\b', '/me/a\\b/src', '/me/a\\b/src/x.ts'],
+      ['a Windows drive root', 'C:\\', 'C:\\src', 'C:\\src\\a.ts'],
+    ])('loads and expands the parent under %s', async (_label, root, parent, file) => {
+      useIDEStore.setState({
+        workspace: { name: 'r', path: root },
+        directoryTree: [dir(parent)],
+        dirtyPaths: new Set<string>(),
+        toast: null,
+      });
+      (ReadDirectoryShallow as jest.Mock).mockImplementation((path: string) =>
+        path === parent
+          ? Promise.resolve([])
+          : Promise.reject(new Error(`no such directory: ${path}`))
+      );
+
+      render(<FileExplorer />);
+      act(() => {
+        useIDEStore.setState({ activeFileId: file });
+      });
+
+      await waitFor(() => {
+        expect(useIDEStore.getState().expandedPaths.has(parent)).toBe(true);
+      });
+      expect((ReadDirectoryShallow as jest.Mock).mock.calls).toEqual([[parent, root]]);
+      expect(useIDEStore.getState().toast).toBeNull();
+    });
+  });
+
   describe('(b) reveal aborts on workspace change', () => {
     it('does not expand stale path when workspace changes mid-flight', async () => {
       let resolveB!: () => void;

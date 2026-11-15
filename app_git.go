@@ -227,14 +227,11 @@ func (a *App) GitCommitMessageAvailable() bool {
 }
 
 // GitGenerateCommitMessage produces a commit message for the staged diff via
-// the embedded golem runtime.
+// the embedded golem runtime, withholding the staged paths the AI scope policy
+// denies; the result names them for local display only (#384).
 // This is exposed to the frontend via Wails bindings.
-func (a *App) GitGenerateCommitMessage(root string) (string, error) {
+func (a *App) GitGenerateCommitMessage(root string) (git.CommitMessageResult, error) {
 	ctx, cancel := a.gitCtx(gitGenerateTimeout)
 	defer cancel()
-	diff, err := a.gitService.StagedDiff(ctx, root)
-	if err != nil {
-		return "", err
-	}
-	return a.gitMsgGen.Generate(ctx, root, diff)
+	return a.gitMsgGen.GenerateStaged(ctx, a.gitService, root)
 }

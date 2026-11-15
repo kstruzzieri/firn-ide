@@ -5,6 +5,7 @@ import {
   GolemContractError,
   type CapabilityName,
   type ModelProjection,
+  type ModelType,
 } from '../../types/golem';
 import {
   ACTIVE_PROFILE_KEY,
@@ -17,6 +18,7 @@ import {
   effectiveRoutes,
   floorShortfalls,
   governedUseCasesOf,
+  TYPE_DERIVED_CAPABILITIES,
   isDraftDirty,
   KeyVault,
   meetsUseCaseFloor,
@@ -53,6 +55,9 @@ import {
   type DraftBaseProjection,
   type DraftEvent,
   type RouteChange,
+  editReachFor,
+  reachOf,
+  withReach,
 } from '../../types/golemConfig';
 
 const corpusDir = path.resolve(
@@ -674,8 +679,11 @@ describe('projected draft normalization', () => {
     expect(projected.selectorUseCases.get('chat')).toEqual(['chat', 'summarize']);
     expect(selectorFields(projected.changes[0]).confirmUnknownUseCases).toEqual(['summarize']);
     // An override sits on the selector the current role is on, so it governs
-    // summarize too; a fork onto a selector nobody is on governs chat alone and
-    // summarize is confirmation-only (the source role is left as it was).
+    // summarize too — every override that is actually staged is applied
+    // through SetRoleOverrides, which gates every role on the selector (the
+    // editor never stages one that changes nothing: #311); a fork onto a
+    // selector nobody is on governs chat alone and summarize is
+    // confirmation-only (the source role is left as it was).
     expect(projected.governedUseCases.get('chat')).toEqual(['chat', 'summarize']);
     const forked = projectDraft(
       base,
@@ -1040,6 +1048,509 @@ describe('active profile provenance', () => {
   });
 });
 
+describe('type-derived capabilities', () => {
+  const rows = JSON.parse(
+    fs.readFileSync(
+      path.resolve(__dirname, '../../../../internal/ai/testdata/settings_type_capabilities.json'),
+      'utf8'
+    )
+  ) as { type: ModelType; capabilities: CapabilityName[] }[];
+
+  it('mirrors what go-llm derives for a model type with no explicit list', () => {
+    // #311: the backend asserts a capability override only when the exposure
+    // differs from this set (on a selector no role owns); the reducer must
+    // widen the governed set under the same rule.
+    expect(Object.keys(TYPE_DERIVED_CAPABILITIES)).toHaveLength(rows.length);
+    expect(new Set(rows.map((row) => row.type)).size).toBe(rows.length);
+    for (const row of rows) {
+      expect(TYPE_DERIVED_CAPABILITIES[row.type]).toEqual(row.capabilities);
+    }
+  });
+});
+
+describe('governed set under the asserted-override rule (#311)', () => {
+  // The v0.14.0 smoke shape: agent runs on agent-role (an owner) and falls
+  // back to pro-role, which falls back to mimo-role; analysis runs on pro-role.
+  // pro-role and mimo-role derive their sets from their types.
+  const OWNED: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+  const DERIVED: CapabilityName[] = ['chat', 'generate', 'stream'];
+  const owner = modelRow({
+    role: 'agent-role',
+    modelName: 'agent-model',
+    effectiveCapabilities: OWNED,
+    capabilityFacts: { caps: OWNED, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: OWNED,
+    capabilityOverride: OWNED,
+    routedUseCases: ['agent'],
+    fallbacks: ['pro-role'],
+  });
+  const pro = modelRow({
+    role: 'pro-role',
+    modelName: 'deepseek',
+    effectiveCapabilities: DERIVED,
+    capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: DERIVED,
+    routedUseCases: ['agent', 'analysis'],
+    fallbacks: ['mimo-role'],
+  });
+  const mimo = modelRow({
+    role: 'mimo-role',
+    modelName: 'mimo',
+    type: 'moe',
+    effectiveCapabilities: DERIVED,
+    capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+    exposedCapabilities: DERIVED,
+    routedUseCases: ['agent'],
+  });
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'agent', role: 'agent-role' },
+      { useCase: 'analysis', role: 'pro-role' },
+    ],
+    models: [owner, pro, mimo],
+  };
+  const draft = cleanDraft(REVISION_A);
+
+  it('governs the edited use case alone when a join exposes what the type derives on an unowned selector', () => {
+    // The backend sends no override for this exposure, so upstream gates the
+    // new role alone; agent's chain through mimo-role is not in play. The
+    // confirmation set stays the wide one gateRolesFor asks for.
+    const probe = probeRouteChange('analysis', mimo);
+    expect(probe.exposedCaps).toEqual(DERIVED);
+    expect(governedUseCasesOf(base, draft, probe)).toEqual(['analysis']);
+    expect(affectedUseCases(base, draft, probe)).toEqual(['analysis', 'agent']);
+  });
+
+  it('widens to the selector once a join exposes something other than the derived set', () => {
+    const probe = {
+      ...probeRouteChange('analysis', mimo),
+      exposedCaps: ['chat', 'stream'] as CapabilityName[],
+    };
+    expect(governedUseCasesOf(base, draft, probe)).toEqual(['analysis', 'agent']);
+  });
+
+  it('widens to an owned selector even when the exposure equals the owner set', () => {
+    // The owner's set is not the derived one, so a join exposing it carries
+    // the explicit list (the backend sends nil only beside a role holding the
+    // derived list, or none), and upstream gates every role on the selector.
+    const probe = probeRouteChange('analysis', owner);
+    expect(probe.exposedCaps).toEqual(OWNED);
+    expect(governedUseCasesOf(base, draft, probe)).toEqual(['analysis', 'agent']);
+  });
+
+  it('does not count a role holding the list the join type derives, the one every earlier Firn wrote', () => {
+    // Firn before #311 wrote the exposed set as an explicit list on every
+    // move, so a selector it ever moved onto reads as owned by the derived
+    // set. The backend sends nil beside such a list (the role resolves the
+    // same set either way), so the join governs itself alone. A role holding
+    // any other list, or an exposure other than the derived one, still widens.
+    const written = modelRow({ ...mimo, capabilityOverride: DERIVED });
+    const writtenBase: DraftBaseProjection = { ...base, models: [owner, pro, written] };
+    const probe = probeRouteChange('analysis', written);
+    expect(probe.exposedCaps).toEqual(DERIVED);
+    expect(governedUseCasesOf(writtenBase, draft, probe)).toEqual(['analysis']);
+    expect(affectedUseCases(writtenBase, draft, probe)).toEqual(['analysis', 'agent']);
+
+    const NARROW: CapabilityName[] = ['chat', 'stream'];
+    const narrower = modelRow({
+      ...mimo,
+      effectiveCapabilities: NARROW,
+      capabilityFacts: { caps: NARROW, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: NARROW,
+      capabilityOverride: NARROW,
+    });
+    const narrowerBase: DraftBaseProjection = { ...base, models: [owner, pro, narrower] };
+    expect(governedUseCasesOf(narrowerBase, draft, { ...probe, exposedCaps: DERIVED })).toEqual([
+      'analysis',
+      'agent',
+    ]);
+    expect(governedUseCasesOf(writtenBase, draft, { ...probe, exposedCaps: NARROW })).toEqual([
+      'analysis',
+      'agent',
+    ]);
+  });
+
+  it('counts the edited route own role when a retarget in place would take the selector only list with it', () => {
+    // chat runs on own-role, the only role on shared-model holding a list,
+    // the derived one. A type change in place is a retarget, and the backend
+    // re-sends the list rather than let SetRoleModel clear the selector's
+    // only explicit list, so the gate widens to the selector's roles. Beside
+    // a sibling holding the same list nothing is taken: the join governs
+    // itself alone.
+    const own = modelRow({
+      role: 'own-role',
+      modelName: 'shared-model',
+      effectiveCapabilities: DERIVED,
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: DERIVED,
+      capabilityOverride: DERIVED,
+      routedUseCases: ['chat'],
+    });
+    const side = modelRow({
+      role: 'side-role',
+      modelName: 'shared-model',
+      effectiveCapabilities: DERIVED,
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: DERIVED,
+      routedUseCases: ['agent'],
+    });
+    const retype = routeChange({
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'shared-model', type: 'moe' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: DERIVED,
+    });
+    const routes = [
+      { useCase: 'chat', role: 'own-role' },
+      { useCase: 'agent', role: 'side-role' },
+    ];
+    expect(governedUseCasesOf({ routes, models: [own, side] }, draft, retype)).toEqual([
+      'chat',
+      'agent',
+    ]);
+    const sideHolding = modelRow({ ...side, capabilityOverride: DERIVED });
+    expect(governedUseCasesOf({ routes, models: [own, sideHolding] }, draft, retype)).toEqual([
+      'chat',
+    ]);
+  });
+
+  it('counts list holders as the backend meets them, after earlier departures and in-place rewrites of the group', () => {
+    // Two roles hold the derived list on shared-model; agent reaches it
+    // through a fallback and needs tool_call. route:analysis sorts before
+    // route:chat. When analysis leaves first, chat is the sole holder by the
+    // time its retype runs, so the backend re-sends its list and gates the
+    // selector: agent is governed. When analysis is instead retyped in place
+    // first (not sole then: its list goes), chat is again sole at its turn.
+    const holder = (role: string, useCase: string): ModelProjection =>
+      modelRow({
+        role,
+        modelName: 'shared-model',
+        effectiveCapabilities: DERIVED,
+        capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: DERIVED,
+        capabilityOverride: DERIVED,
+        routedUseCases: [useCase],
+      });
+    const chatHolder = holder('chat-role', 'chat');
+    const analysisHolder = holder('analysis-role', 'analysis');
+    // spare-role derives its set, routes nothing itself, and is how agent
+    // reaches the selector (a holder listed as a fallback would be forked,
+    // never let go).
+    const spareRole = modelRow({
+      role: 'spare-role',
+      modelName: 'shared-model',
+      effectiveCapabilities: DERIVED,
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: DERIVED,
+      routedUseCases: ['agent'],
+    });
+    const agentRole = modelRow({
+      ...owner,
+      role: 'agent-role',
+      modelName: 'agent-model',
+      routedUseCases: ['agent'],
+      fallbacks: ['spare-role'],
+    });
+    const routes = [
+      { useCase: 'agent', role: 'agent-role' },
+      { useCase: 'analysis', role: 'analysis-role' },
+      { useCase: 'chat', role: 'chat-role' },
+    ];
+    const seqBase: DraftBaseProjection = {
+      routes,
+      models: [agentRole, analysisHolder, chatHolder, spareRole],
+    };
+    const retypeChat = routeChange({
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'shared-model', type: 'moe' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: DERIVED,
+    });
+    // Nothing else staged: two holders, chat's retype in place is not sole.
+    expect(governedUseCasesOf(seqBase, draft, retypeChat)).toEqual(['chat']);
+    // analysis leaves for another model first: chat is the sole holder by then.
+    const analysisAway = routeChange({
+      useCase: 'analysis',
+      modelFacts: { provider: 'hosted', model: 'elsewhere', type: 'dense' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: DERIVED,
+    });
+    expect(governedUseCasesOf(seqBase, stage([analysisAway, retypeChat]), retypeChat)).toEqual([
+      'chat',
+      'agent',
+    ]);
+    // analysis is retyped in place first: not sole at its turn, so its list
+    // goes, and chat is sole at its own turn. analysis-role is still on the
+    // selector then, so analysis is gated too.
+    const retypeAnalysis = routeChange({
+      useCase: 'analysis',
+      modelFacts: { provider: 'hosted', model: 'shared-model', type: 'moe' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: DERIVED,
+    });
+    expect(governedUseCasesOf(seqBase, stage([retypeAnalysis, retypeChat]), retypeChat)).toEqual([
+      'chat',
+      'agent',
+      'analysis',
+    ]);
+    // The group gates as one, on the coalesced exposure: once chat's retype
+    // asserts, the analysis change staged with it is governed wide too, even
+    // though at its own turn it was not sole (the backend gates only its role
+    // then; the wider set only ever shows more).
+    expect(
+      governedUseCasesOf(seqBase, stage([retypeAnalysis, retypeChat]), retypeAnalysis)
+    ).toEqual(['analysis', 'agent', 'chat']);
+  });
+
+  it.each([
+    ['earlier departure', 'analysis', 'other-model', false, ['chat', 'agent']],
+    ['later departure', 'summary', 'other-model', false, ['chat']],
+    ['earlier retype', 'analysis', 'shared-model', false, ['chat', 'agent', 'analysis']],
+    ['forked departure', 'analysis', 'other-model', true, ['chat']],
+    ['forked retype', 'analysis', 'shared-model', true, ['chat', 'analysis']],
+  ] as const)(
+    'counts list holders at mutation time after an %s',
+    (_name, peerUseCase, destination, referenced, expected) => {
+      const own = modelRow({
+        role: 'own-role',
+        modelName: 'shared-model',
+        effectiveCapabilities: DERIVED,
+        capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: DERIVED,
+        capabilityOverride: DERIVED,
+        routedUseCases: ['chat'],
+      });
+      const peer = modelRow({ ...own, role: 'peer-role', routedUseCases: [peerUseCase] });
+      const fallback = modelRow({
+        ...own,
+        role: 'fallback-role',
+        capabilityOverride: undefined,
+        routedUseCases: ['agent'],
+      });
+      const primary = modelRow({ ...owner, fallbacks: ['fallback-role'] });
+      const referrer = modelRow({ role: 'unrouted', routedUseCases: [], fallbacks: ['peer-role'] });
+      const currentBase: DraftBaseProjection = {
+        routes: [
+          { useCase: 'chat', role: own.role },
+          { useCase: peerUseCase, role: peer.role },
+          { useCase: 'agent', role: primary.role },
+        ],
+        models: [own, peer, fallback, primary, ...(referenced ? [referrer] : [])],
+      };
+      const retype = routeChange({
+        useCase: 'chat',
+        modelFacts: { provider: 'hosted', model: 'shared-model', type: 'moe' },
+        capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: DERIVED,
+      });
+      const prior = {
+        ...retype,
+        useCase: peerUseCase,
+        modelFacts: { ...retype.modelFacts, model: destination },
+      };
+      expect(governedUseCasesOf(currentBase, { ...draft, changes: [prior] }, retype)).toEqual(
+        expected
+      );
+    }
+  );
+
+  it('governs every route on the selector for an override, changed or not', () => {
+    // Whatever is staged as an override is applied through SetRoleOverrides,
+    // which gates every role on the selector; the EDITOR is what keeps an
+    // override that changes nothing from being staged at all.
+    const held = probeRouteChange('analysis', pro);
+    expect(governedUseCasesOf(base, draft, held)).toEqual(['analysis', 'agent']);
+    const narrowed: RouteChange = { ...held, exposedCaps: ['chat', 'stream'] };
+    expect(governedUseCasesOf(base, draft, narrowed)).toEqual(['analysis', 'agent']);
+  });
+
+  it('counts an owner only while it is still on the selector when the join runs', () => {
+    // Ownership is judged at the join's place in stable-id order, as the
+    // backend sees the document then: an owner whose only route a staged
+    // retarget moves away BEFORE the join is gone (the selector is unowned,
+    // the derived exposure asserts nothing, the join governs itself alone);
+    // one whose route leaves only AFTER the join is still there (the explicit
+    // list is sent, every role on the selector is gated).
+    const sharedOwner = (role: string, useCase: string): ModelProjection =>
+      modelRow({
+        role,
+        modelName: 'shared',
+        effectiveCapabilities: OWNED,
+        capabilityFacts: { caps: OWNED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: OWNED,
+        capabilityOverride: OWNED,
+        routedUseCases: [useCase],
+      });
+    // spare-role derives its set, routes nothing itself, and is agent-role's fallback.
+    const spare = modelRow({
+      role: 'spare-role',
+      modelName: 'shared',
+      effectiveCapabilities: DERIVED,
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: OWNED,
+      routedUseCases: ['agent'],
+    });
+    const agentRole = modelRow({ ...owner, modelName: 'agent-model', fallbacks: ['spare-role'] });
+    const away = (useCase: string): RouteChange =>
+      routeChange({
+        useCase,
+        modelFacts: { provider: 'hosted', model: 'elsewhere', type: 'dense' },
+        capabilityFacts: { caps: OWNED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps: OWNED,
+      });
+    const joinChat: RouteChange = { ...probeRouteChange('chat', spare), exposedCaps: DERIVED };
+
+    // `route:analysis` sorts before `route:chat`: the owner has left.
+    const earlier: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'analysis', role: 'analysis-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [agentRole, sharedOwner('analysis-role', 'analysis'), spare, modelRow()],
+    };
+    expect(governedUseCasesOf(earlier, stage([away('analysis')]), joinChat)).toEqual(['chat']);
+
+    // `route:planning` sorts after `route:chat`: the owner is still there,
+    // still serving planning.
+    const later: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'plan-role' },
+      ],
+      models: [agentRole, sharedOwner('plan-role', 'planning'), spare, modelRow()],
+    };
+    expect(governedUseCasesOf(later, stage([away('planning')]), joinChat)).toEqual([
+      'chat',
+      'agent',
+      'planning',
+    ]);
+  });
+});
+
+describe('governed set across a coalesced selector group (#311, round 2)', () => {
+  const OWNED: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+  const DERIVED: CapabilityName[] = ['chat', 'generate', 'stream'];
+  const WIDE: CapabilityName[] = ['chat', 'generate', 'stream', 'tool_call'];
+  const deriving = (over: Partial<ModelProjection>): ModelProjection =>
+    modelRow({
+      effectiveCapabilities: DERIVED,
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: DERIVED,
+      ...over,
+    });
+  const onto = (useCase: string, model: string, exposedCaps: CapabilityName[]): RouteChange =>
+    routeChange({
+      useCase,
+      modelFacts: { provider: 'hosted', model, type: 'dense' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps,
+    });
+
+  it('gates by the group authority exposure, not by what each change asserted before coalescing', () => {
+    // analysis joined mimo asserting tool_call; summarize then joined with the
+    // derived set and became the authority, so BOTH changes are sent with the
+    // derived set and the backend asserts nothing: agent, which reaches
+    // mimo-role through its chain, is not gated.
+    const base: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'analysis', role: 'analysis-role' },
+        { useCase: 'summarize', role: 'summarize-role' },
+      ],
+      models: [
+        modelRow({
+          role: 'agent-role',
+          modelName: 'agent-model',
+          effectiveCapabilities: OWNED,
+          capabilityFacts: { caps: OWNED, knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: OWNED,
+          capabilityOverride: OWNED,
+          routedUseCases: ['agent'],
+          fallbacks: ['mimo-role'],
+        }),
+        deriving({ role: 'mimo-role', modelName: 'mimo', routedUseCases: ['agent'] }),
+        deriving({ role: 'analysis-role', modelName: 'alpha', routedUseCases: ['analysis'] }),
+        deriving({ role: 'summarize-role', modelName: 'beta', routedUseCases: ['summarize'] }),
+      ],
+    };
+    const projected = projectDraft(
+      base,
+      stage([onto('analysis', 'mimo', WIDE), onto('summarize', 'mimo', DERIVED)])
+    );
+    expect(selectorFields(projected.changes[0]).exposedCaps).toEqual(DERIVED);
+    expect(projected.governedUseCases.get('analysis')).toEqual(['analysis', 'summarize']);
+    expect(projected.governedUseCases.get('summarize')).toEqual(['analysis', 'summarize']);
+    // The other way round the authority asserts tool_call, and agent is gated.
+    const asserting = projectDraft(
+      base,
+      stage([onto('summarize', 'mimo', DERIVED), onto('analysis', 'mimo', WIDE)])
+    );
+    expect(asserting.governedUseCases.get('summarize')).toEqual(['agent', 'analysis', 'summarize']);
+  });
+
+  it('keeps an owner that an unrouted role lists as a fallback: the backend forks it, it never leaves', () => {
+    // analysis-role owns the shared selector and routes analysis alone, but
+    // idle-role (routed by nothing) names it as a fallback: moving analysis
+    // forks the role (fallbacks[role]) and the owner stays, so a later join
+    // meets it and is gated on agent through spare-role.
+    const base: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'analysis', role: 'analysis-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [
+        modelRow({
+          role: 'agent-role',
+          modelName: 'agent-model',
+          effectiveCapabilities: OWNED,
+          capabilityFacts: { caps: OWNED, knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: OWNED,
+          capabilityOverride: OWNED,
+          routedUseCases: ['agent'],
+          fallbacks: ['spare-role'],
+        }),
+        modelRow({
+          role: 'analysis-role',
+          modelName: 'shared',
+          effectiveCapabilities: OWNED,
+          capabilityFacts: { caps: OWNED, knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: OWNED,
+          capabilityOverride: OWNED,
+          routedUseCases: ['analysis'],
+        }),
+        deriving({
+          role: 'spare-role',
+          modelName: 'shared',
+          exposedCapabilities: OWNED,
+          routedUseCases: ['agent'],
+        }),
+        deriving({
+          role: 'idle-role',
+          modelName: 'idle',
+          routedUseCases: [],
+          removable: true,
+          fallbacks: ['analysis-role'],
+        }),
+        modelRow(),
+      ],
+    };
+    const away = onto('analysis', 'elsewhere', OWNED);
+    const joinChat: RouteChange = {
+      ...probeRouteChange('chat', base.models[2]),
+      exposedCaps: DERIVED,
+    };
+    // The fork binds analysis to its copy where it runs (#474), and
+    // route:analysis sorts before route:chat: analysis has left analysis-role
+    // by the time the join is gated, which still meets agent through
+    // spare-role.
+    expect(governedUseCasesOf(base, stage([away]), joinChat)).toEqual(['chat', 'agent']);
+    expect(retargetOf(base, stagedRoutes([away]), base.models[1])).toBeUndefined();
+  });
+});
+
 describe('use-case floors', () => {
   const rows = JSON.parse(
     fs.readFileSync(
@@ -1330,10 +1841,11 @@ describe('floors across a selector (wave 4c)', () => {
     ).toEqual(['chat', 'planning']);
   });
 
-  it('keeps every use case a fork source still serves once one of its routes leaves', () => {
-    // pair-role routes planning AND summarize on gpt-5: forking planning away
-    // leaves pair-role's Defaults bound to BOTH until the binds phase, so
-    // chat joining gpt-5 still gates on everything pair-role still serves.
+  it('keeps a use case a fork moves off the selector only for a join that runs before the fork', () => {
+    // pair-role routes planning AND summarize on gpt-5. A fork binds the
+    // moved use case to its copy where the fork runs (#474), in stable-id
+    // order: route:chat sorts before route:planning, so chat joining gpt-5
+    // still meets pair-role serving both.
     const gpt5 = byRole('agent-role');
     const pairRole: ModelProjection = {
       ...gpt5,
@@ -1356,6 +1868,93 @@ describe('floors across a selector (wave 4c)', () => {
     expect(
       governedUseCasesOf(forked, stage([planningAway]), probeRouteChange('chat', pairRole))
     ).toEqual(['chat', 'planning', 'summarize']);
+
+    // route:analysis sorts before route:chat: analysis has left pair-role by
+    // the time chat's join is gated, and only summarize is still served.
+    const analysisPair: ModelProjection = {
+      ...pairRole,
+      routedUseCases: ['analysis', 'summarize'],
+    };
+    const forkedFirst: DraftBaseProjection = {
+      routes: [
+        { useCase: 'analysis', role: 'pair-role' },
+        { useCase: 'summarize', role: 'pair-role' },
+        { useCase: 'chat', role: 'chat-role' },
+      ],
+      models: [analysisPair, modelRow({ routedUseCases: ['chat'] })],
+    };
+    const analysisAway: RouteChange = { ...planningAway, useCase: 'analysis' };
+    expect(
+      governedUseCasesOf(forkedFirst, stage([analysisAway]), probeRouteChange('chat', analysisPair))
+    ).toEqual(['chat', 'summarize']);
+  });
+
+  it('keeps a use case a retarget moves off the selector for a join that runs before the retarget', () => {
+    // plan-role routes planning alone, so moving planning retargets the role
+    // itself. route:chat sorts before route:planning: when chat's join is
+    // gated, plan-role still sits on gpt-5 serving planning.
+    const gpt5 = byRole('agent-role');
+    const planRole: ModelProjection = { ...gpt5, role: 'plan-role', routedUseCases: ['planning'] };
+    const retargeted: DraftBaseProjection = {
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'plan-role' },
+      ],
+      models: [modelRow({ routedUseCases: ['chat'] }), planRole],
+    };
+    const planningAway = routeChange({
+      useCase: 'planning',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+    });
+    expect(retargetOf(retargeted, stagedRoutes([planningAway]), planRole)).toBe(planningAway);
+    expect(
+      governedUseCasesOf(retargeted, stage([planningAway]), probeRouteChange('chat', planRole))
+    ).toEqual(['chat', 'planning']);
+  });
+
+  it('drops a use case a fork moves off the selector from an override, in either staging order (#474)', () => {
+    // shared-role routes agent AND chat on gpt-5. Moving agent elsewhere
+    // forks the role and binds agent to the copy; overrides run after every
+    // route plan, so chat narrowing gpt-5 no longer governs agent — whichever
+    // of the two the user staged first.
+    const gpt5 = byRole('agent-role');
+    const shared: ModelProjection = {
+      ...gpt5,
+      role: 'shared-role',
+      routedUseCases: ['agent', 'chat'],
+    };
+    const sharedBase: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'shared-role' },
+        { useCase: 'chat', role: 'shared-role' },
+      ],
+      models: [shared],
+    };
+    const agentAway = routeChange({
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+      exposedCaps: ['chat', 'stream', 'tool_call'],
+    });
+    const narrow: RouteChange = {
+      ...probeRouteChange('chat', shared),
+      exposedCaps: ['chat', 'stream'],
+    };
+    expect(retargetOf(sharedBase, stagedRoutes([agentAway]), shared)).toBeUndefined();
+    // Without the fork, agent stays on gpt-5 and the override governs it.
+    expect(governedUseCasesOf(sharedBase, cleanDraft(REVISION_A), narrow)).toEqual([
+      'chat',
+      'agent',
+    ]);
+    for (const draft of [stage([agentAway]), stage([narrow, agentAway])]) {
+      expect(governedUseCasesOf(sharedBase, draft, narrow)).toEqual(['chat']);
+      // The confirmation set is the backend's gateRolesFor on the applied
+      // document, and stays wide.
+      expect(affectedUseCases(sharedBase, draft, narrow)).toEqual(['chat', 'agent']);
+    }
+    expect(
+      projectDraft(sharedBase, stage([narrow, agentAway])).governedUseCases.get('chat')
+    ).toEqual(['chat']);
   });
 
   it('keeps a route the draft moves off a role it reaches only as a fallback', () => {
@@ -1969,5 +2568,392 @@ describe('reach (wave 6): what a staged model change reaches, by projected confi
     );
     expect(groupOf(staying, 'gpt-5').think).toBe('auto');
     expect(groupOf(staying, 'gpt-5').sameModel).toEqual(['agent']);
+  });
+});
+
+describe('reachOf (#311)', () => {
+  // a falls back to b then c; b to d; c back to a (a cycle) and to d. d is on
+  // selector X. The shortest chain wins, ties in authored order, and a cycle
+  // terminates; an unrouted use case reaches nothing and a direct route has
+  // no "via".
+  const X = { provider: 'hosted', model: 'x-model' };
+  const row = (role: string, modelName: string, fallbacks?: string[]): ModelProjection =>
+    modelRow({
+      role,
+      modelName,
+      routedUseCases: [],
+      ...(fallbacks === undefined ? {} : { fallbacks }),
+    });
+  const base: DraftBaseProjection = {
+    routes: [
+      { useCase: 'agent', role: 'a' },
+      { useCase: 'chat', role: 'd' },
+    ],
+    models: [
+      row('a', 'a-model', ['b', 'c']),
+      row('b', 'b-model', ['d']),
+      row('c', 'c-model', ['a', 'd']),
+      row('d', 'x-model'),
+    ],
+  };
+
+  it('finds the shortest chain in authored order and terminates on a cycle', () => {
+    expect(reachOf(base, 'agent', X)).toEqual(['a', 'b', 'd']);
+  });
+
+  it('reaches nothing for an unrouted use case, and attaches no via to a direct route', () => {
+    expect(reachOf(base, 'planning', X)).toEqual([]);
+    expect(reachOf(base, 'chat', X)).toEqual(['d']);
+    expect(withReach([{ cap: 'tool_call', useCases: ['chat'] }], base, X)[0].via).toBeUndefined();
+  });
+
+  it('attaches no chain to a use case the change itself routes onto the selector', () => {
+    // Promoting a fallback model to the use case's own: after the change it
+    // runs there directly, so its applied chain is not how it gets there.
+    expect(
+      withReach([{ cap: 'tool_call', useCases: ['agent'] }], base, X)[0].via?.get('agent')
+    ).toEqual(['a', 'b', 'd']);
+    expect(
+      withReach([{ cap: 'tool_call', useCases: ['agent'] }], base, X, ['agent'])[0].via
+    ).toBeUndefined();
+  });
+});
+
+describe('reach of a route edit, not its gate (#307)', () => {
+  // The #307 reproduction: agent, analysis, chat, completion and reasoning run
+  // on cloud-pro, which falls back to cloud-flash, which falls back to
+  // cloud-mimo, so every one of them reaches cloud-mimo. cloud-mimo holds the
+  // list its type derives, the one an older Firn wrote on every move.
+  // code-review and embedding run on models no chain reaches.
+  const DERIVED: CapabilityName[] = ['chat', 'generate', 'stream'];
+  const REACHED = ['agent', 'analysis', 'chat', 'completion', 'reasoning'];
+  const chainRow = (role: string, modelName: string, over: Partial<ModelProjection> = {}) =>
+    modelRow({
+      role,
+      modelName,
+      provider: 'opencode',
+      type: 'moe',
+      effectiveCapabilities: DERIVED,
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: DERIVED,
+      routedUseCases: REACHED,
+      ...over,
+    });
+  const pro = chainRow('cloud-pro', 'deepseek-v4-pro', { fallbacks: ['cloud-flash'] });
+  const flash = chainRow('cloud-flash', 'deepseek-v4-flash', { fallbacks: ['cloud-mimo'] });
+  const mimo = chainRow('cloud-mimo', 'mimo-v2.5', { capabilityOverride: DERIVED });
+  const base: DraftBaseProjection = {
+    routes: [
+      ...REACHED.map((useCase) => ({ useCase, role: 'cloud-pro' })),
+      { useCase: 'code-review', role: 'review-role' },
+      { useCase: 'embedding', role: 'embed-role' },
+    ],
+    models: [
+      pro,
+      flash,
+      mimo,
+      chainRow('review-role', 'glm-review', { routedUseCases: ['code-review'] }),
+      chainRow('embed-role', 'embed-model', {
+        type: 'embedding',
+        effectiveCapabilities: ['embed'],
+        capabilityFacts: { caps: ['embed'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: ['embed'],
+        routedUseCases: ['embedding'],
+      }),
+    ],
+  };
+  const marked = (projected: ProjectedDraft) =>
+    [...projected.routeRows]
+      .filter(([, markers]) => markers.modified || markers.affected === true)
+      .map(([useCase, markers]) => [useCase, markers.modified ? 'modified' : 'affected']);
+
+  it('marks only the edited route when the join changes nothing on the model it picks', () => {
+    // Regression pin for #307's first defect, which no longer reproduces: rows
+    // are marked by reach (the destination selector's changed roles), not by
+    // the confirmation set, which still names the fork source's use cases and
+    // cloud-mimo's because Go's verifyRouteConfirmations compares it whole.
+    const join = probeRouteChange('analysis', mimo);
+    const projected = projectDraft(base, stage([join]));
+    expect(marked(projected)).toEqual([['analysis', 'modified']]);
+    expect(projected.selectorUseCases.get('analysis')).toEqual(REACHED);
+  });
+
+  it('marks the routes that fall back to the model affected, never modified, once the join changes it', () => {
+    const join = {
+      ...probeRouteChange('analysis', mimo),
+      exposedCaps: [...DERIVED, 'tool_call'] as CapabilityName[],
+    };
+    const projected = projectDraft(base, stage([join]));
+    expect(marked(projected)).toEqual([
+      ['analysis', 'modified'],
+      ['agent', 'affected'],
+      ['chat', 'affected'],
+      ['completion', 'affected'],
+      ['reasoning', 'affected'],
+    ]);
+  });
+
+  it('reports what the edit changes, which the gate it is checked against can exceed', () => {
+    const draft = cleanDraft(REVISION_A);
+    const noOp = probeRouteChange('analysis', mimo);
+    const reach = editReachFor(base, draft, noOp);
+    expect(reach?.group).toMatchObject({ model: 'mimo-v2.5', sameModel: [], fallback: [] });
+    expect(reach?.group.affectedRoles).toEqual([]);
+
+    const widened = { ...noOp, exposedCaps: [...DERIVED, 'tool_call'] as CapabilityName[] };
+    expect(editReachFor(base, draft, widened)?.group.fallback).toEqual([
+      'agent',
+      'chat',
+      'completion',
+      'reasoning',
+    ]);
+
+    // An owner's set is not the derived one, so a join exposing exactly it is
+    // gated against every route on the selector, yet changes none of them.
+    const OWNED: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    const owned = chainRow('cloud-mimo', 'mimo-v2.5', {
+      effectiveCapabilities: OWNED,
+      exposedCapabilities: OWNED,
+      capabilityOverride: OWNED,
+    });
+    const ownedBase: DraftBaseProjection = { ...base, models: [pro, flash, owned] };
+    const join = probeRouteChange('analysis', owned);
+    expect(governedUseCasesOf(ownedBase, draft, join)).toEqual([
+      'analysis',
+      'agent',
+      'chat',
+      'completion',
+      'reasoning',
+    ]);
+    expect(editReachFor(ownedBase, draft, join)?.group).toMatchObject({
+      sameModel: [],
+      fallback: [],
+    });
+  });
+
+  it('reaches no other role on the model when the join writes no capability list there', () => {
+    // Codex round 1: embedding and an unrouted role sit on mixed-model and
+    // derive embed from their type. chat joins it declared dense, exposing what
+    // dense derives, so the backend sends no list and both keep embed. Neither
+    // the rows nor the editor may say they change.
+    const embedRow = (role: string, routedUseCases: string[]) =>
+      modelRow({
+        role,
+        modelName: 'mixed-model',
+        type: 'embedding',
+        effectiveCapabilities: ['embed'],
+        capabilityFacts: { caps: ['embed'], knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: ['embed'],
+        routedUseCases,
+      });
+    const mixed: DraftBaseProjection = {
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'embedding', role: 'embed-role' },
+      ],
+      models: [modelRow(), embedRow('embed-role', ['embedding']), embedRow('unused-embed', [])],
+    };
+    const join = routeChange({
+      modelFacts: { provider: 'hosted', model: 'mixed-model', type: 'dense' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: DERIVED,
+    });
+    const projected = projectDraft(mixed, stage([join]));
+    expect(marked(projected)).toEqual([['chat', 'modified']]);
+    expect(projected.roleRows.size).toBe(0);
+    expect(editReachFor(mixed, cleanDraft(REVISION_A), join)?.group).toMatchObject({
+      sameModel: [],
+      affectedRoles: [],
+    });
+    // An empty exposure (hand-built only; the editor never stages one) writes
+    // no list either, as selectorGroups' gates skips it.
+    const empty = projectDraft(mixed, stage([{ ...join, exposedCaps: [] }]));
+    expect(marked(empty)).toEqual([['chat', 'modified']]);
+    expect(empty.roleRows.size).toBe(0);
+    // A list it does write reaches both.
+    const asserted = { ...join, exposedCaps: ['chat', 'stream'] as CapabilityName[] };
+    expect(projectDraft(mixed, stage([asserted])).reachGroups[0]).toMatchObject({
+      sameModel: ['embedding'],
+      affectedRoles: ['unused-embed'],
+    });
+  });
+
+  it('reaches the roles a departing owner leaves to derive their own set, when the join writes no list', () => {
+    // Project review round 2: agent-role is gpt-5's only list holder (OWN) and
+    // routes only agent; planning-role derives and shows the folded OWN.
+    // agent retargets to claude, so the list leaves with it, and chat joins
+    // gpt-5 with the derived set, which the backend sends without a list:
+    // after Apply planning-role derives DERIVED, and its row says so.
+    const OWN: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    const onGpt5 = (over: Partial<ModelProjection>) =>
+      modelRow({
+        modelName: 'gpt-5',
+        capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+        effectiveCapabilities: DERIVED,
+        exposedCapabilities: OWN,
+        ...over,
+      });
+    const leaving: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'planning-role' },
+      ],
+      models: [
+        onGpt5({
+          role: 'agent-role',
+          effectiveCapabilities: OWN,
+          capabilityOverride: OWN,
+          routedUseCases: ['agent'],
+        }),
+        modelRow(),
+        onGpt5({ role: 'planning-role', routedUseCases: ['planning'] }),
+      ],
+    };
+    const retarget = routeChange({
+      useCase: 'agent',
+      modelFacts: { provider: 'hosted', model: 'claude', type: 'dense' },
+      exposedCaps: OWN,
+    });
+    const join = routeChange({
+      modelFacts: { provider: 'hosted', model: 'gpt-5', type: 'dense' },
+      capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: DERIVED,
+    });
+    expect(projectDraft(leaving, stage([retarget, join])).routeRows.get('planning')).toMatchObject({
+      modified: true,
+    });
+    // The editor measures from the rest of the draft, where the retarget
+    // already takes the list away: the join itself moves nothing more.
+    expect(editReachFor(leaving, stage([retarget]), join)?.group.sameModel).toEqual([]);
+    // With the owner staying, a join must expose its set (another is refused
+    // as a selector conflict, #335) and changes nothing for planning.
+    expect(
+      projectDraft(leaving, stage([{ ...join, exposedCaps: OWN }])).routeRows.get('planning')
+    ).toBeUndefined();
+  });
+
+  it('derives a role retyped in place from its new type once the model has no list left', () => {
+    // Codex round 3: analysis-role (dense) and summary-role (embedding) both
+    // hold embed on shared-model. analysis is retyped in place to embedding
+    // without a list (the other holder still holds embed), then summarize
+    // leaves. After Apply analysis-role derives embed from its NEW type: no
+    // capability changes on the model.
+    const EMBED: CapabilityName[] = ['embed'];
+    const holder = (role: string, type: ModelType, useCase: string) =>
+      modelRow({
+        role,
+        modelName: 'shared-model',
+        type,
+        effectiveCapabilities: EMBED,
+        capabilityFacts: { caps: EMBED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCapabilities: EMBED,
+        capabilityOverride: EMBED,
+        routedUseCases: [useCase],
+      });
+    const twoHolders: DraftBaseProjection = {
+      routes: [
+        { useCase: 'analysis', role: 'analysis-role' },
+        { useCase: 'summarize', role: 'summary-role' },
+      ],
+      models: [
+        holder('analysis-role', 'dense', 'analysis'),
+        holder('summary-role', 'embedding', 'summarize'),
+      ],
+    };
+    const retype = routeChange({
+      useCase: 'analysis',
+      modelFacts: { provider: 'hosted', model: 'shared-model', type: 'embedding' },
+      capabilityFacts: { caps: EMBED, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: EMBED,
+    });
+    const departure = routeChange({
+      useCase: 'summarize',
+      modelFacts: { provider: 'hosted', model: 'gpt-5-mini', type: 'dense' },
+    });
+    const group = projectDraft(twoHolders, stage([retype, departure])).reachGroups.find(
+      (candidate) => candidate.model === 'shared-model'
+    );
+    expect(group).toMatchObject({ addedCaps: [], removedCaps: [], sameModel: [] });
+  });
+
+  it('names the capability change of an in-place retype on a model that holds no list', () => {
+    // Codex round 4: analysis-role, the only role on solo-model, derives
+    // chat, generate, stream as dense. Retyped in place to embedding with
+    // embed (what embedding derives), it sends no list, and after Apply it
+    // derives embed: the Apply summary names that delta, as develop did.
+    const base: DraftBaseProjection = {
+      routes: [{ useCase: 'analysis', role: 'analysis-role' }],
+      models: [
+        modelRow({
+          role: 'analysis-role',
+          modelName: 'solo-model',
+          effectiveCapabilities: DERIVED,
+          capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: DERIVED,
+          routedUseCases: ['analysis'],
+        }),
+      ],
+    };
+    const retype = routeChange({
+      useCase: 'analysis',
+      modelFacts: { provider: 'hosted', model: 'solo-model', type: 'embedding' },
+      capabilityFacts: { caps: ['embed'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: ['embed'],
+    });
+    expect(projectDraft(base, stage([retype])).reachGroups[0]).toMatchObject({
+      addedCaps: ['embed'],
+      removedCaps: ['chat', 'generate', 'stream'],
+    });
+  });
+
+  it('measures the edit from the rest of the draft, not from the applied document', () => {
+    // planning runs on gpt-5, which derives its set from its type. agent is
+    // already staged onto gpt-5 with a list of its own, so the draft already
+    // shows planning that list. chat joining with the same values changes
+    // nothing more; chat joining with the derived set takes the list off
+    // again, which moves planning and the staged agent back.
+    const OWN: CapabilityName[] = ['chat', 'stream', 'tool_call'];
+    const gpt5 = { provider: 'hosted', model: 'gpt-5', type: 'dense' } as const;
+    const onGpt5: DraftBaseProjection = {
+      routes: [
+        { useCase: 'agent', role: 'agent-role' },
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'planning', role: 'planning-role' },
+      ],
+      models: [
+        modelRow({ role: 'agent-role', modelName: 'gpt-4o', routedUseCases: ['agent'] }),
+        modelRow(),
+        modelRow({
+          role: 'planning-role',
+          modelName: 'gpt-5',
+          effectiveCapabilities: DERIVED,
+          capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: DERIVED,
+          routedUseCases: ['planning'],
+        }),
+      ],
+    };
+    const join = (useCase: string, exposedCaps: CapabilityName[]) =>
+      routeChange({
+        useCase,
+        modelFacts: gpt5,
+        capabilityFacts: { caps: DERIVED, knownCaps: [...CAPABILITY_NAMES] },
+        exposedCaps,
+      });
+    const draft = stage([join('agent', OWN)]);
+    // Against the applied document planning changes either way.
+    expect(projectDraft(onGpt5, stage([join('agent', OWN), join('chat', OWN)]))).toMatchObject({
+      reachGroups: [{ sameModel: ['planning'] }],
+    });
+
+    expect(editReachFor(onGpt5, draft, join('chat', OWN))).toMatchObject({
+      group: { sameModel: [], fallback: [], affectedRoles: [] },
+      peersChange: false,
+    });
+    expect(editReachFor(onGpt5, draft, join('chat', DERIVED))).toMatchObject({
+      group: { sameModel: ['planning'] },
+      peersChange: true,
+    });
   });
 });

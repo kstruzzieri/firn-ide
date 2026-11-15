@@ -40,6 +40,8 @@ import styles from './CodeMirrorEditor.module.css';
 interface CodeMirrorEditorProps {
   /** Unique identifier for the file */
   fileId: string;
+  /** Changed only by explicit file-tab clicks, not passive file selection. */
+  focusRevision?: number;
   /** Filename used for language detection */
   filename: string;
   /** Initial content of the file */
@@ -76,6 +78,7 @@ interface CodeMirrorEditorProps {
  */
 export const CodeMirrorEditor = memo(function CodeMirrorEditor({
   fileId,
+  focusRevision = 0,
   filename,
   content,
   readOnly = false,
@@ -93,6 +96,7 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
 }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<EditorView | null>(null);
+  const consumedFocusRevision = useRef(focusRevision);
   const fileIdRef = useRef(fileId);
   const hasAppliedInitialCursorRef = useRef(false);
   const hasAppliedInitialScrollRef = useRef(false);
@@ -279,6 +283,14 @@ export const CodeMirrorEditor = memo(function CodeMirrorEditor({
     prevFileIdRef.current = fileId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
+
+  // Focus after the file state is installed and its pane is visible. Seeding
+  // the consumed revision on mount prevents replaying an old tab click.
+  useEffect(() => {
+    if (consumedFocusRevision.current === focusRevision) return;
+    consumedFocusRevision.current = focusRevision;
+    editorRef.current?.focus();
+  }, [focusRevision]);
 
   // Language chunks load independently of state construction. The same view
   // serves every tab, so each effect generation must reject late results.

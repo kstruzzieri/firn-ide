@@ -625,8 +625,21 @@ export interface ModelProjection {
   effectiveCapabilities: CapabilityName[];
   capabilityFacts: CapabilityFacts;
   exposedCapabilities: CapabilityName[];
+  /**
+   * This role's own EXPLICIT capability override (#335); absent for a role
+   * that derives its set from its type, even on a selector another role
+   * overrides — `exposedCapabilities` shows the folded override either way.
+   * Per role, like `thinkMode`, because the editor's pre-check needs to know
+   * which siblings OWN the lock. Equals `exposedCapabilities` whenever present.
+   */
+  capabilityOverride?: CapabilityName[];
   thinkMode: ThinkMode;
   routedUseCases: string[];
+  /**
+   * The role's own authored fallback chain, in order; absent when it has none
+   * (#311: how a use case reaches a model it never routes to directly).
+   */
+  fallbacks?: string[];
   /** Existence facts only — a retarget drops these, the values never cross. */
   hasThinkTags: boolean;
   hasSlots: boolean;
@@ -916,8 +929,10 @@ function readModel(value: unknown): ModelProjection | null {
       'effectiveCapabilities',
       'capabilityFacts',
       'exposedCapabilities',
+      'capabilityOverride',
       'thinkMode',
       'routedUseCases',
+      'fallbacks',
       'hasThinkTags',
       'hasSlots',
       'removable',
@@ -991,6 +1006,40 @@ function readModel(value: unknown): ModelProjection | null {
   )
     return null;
 
+  let capabilityOverride: CapabilityName[] | undefined;
+  if (hasPresentKey(value, 'capabilityOverride')) {
+    const override = readCappedArray(value.capabilityOverride, CAPABILITY_NAMES.length, (cap) =>
+      isOneOf(cap, CAPABILITY_NAMES) ? cap : null
+    );
+    // An owner's resolved set IS its explicit set (ResolvedCapabilities), and
+    // the producer folds that set into exposedCapabilities and omits the key
+    // rather than sending an empty list: a projection whose override differs
+    // from either, or that names an empty override, was not produced by it.
+    const sameAs = (caps: readonly CapabilityName[]): boolean =>
+      override !== null &&
+      override.length === caps.length &&
+      override.every((cap, index) => cap === caps[index]);
+    if (
+      override === null ||
+      override.length === 0 ||
+      !sameAs(exposedCapabilities) ||
+      !sameAs(effectiveCapabilities)
+    )
+      return null;
+    capabilityOverride = override;
+  }
+
+  let fallbacks: string[] | undefined;
+  if (hasPresentKey(value, 'fallbacks')) {
+    // Authored order, role names: the producer omits the key for an empty
+    // chain, so an empty list was not produced by it.
+    const chain = readCappedArray(value.fallbacks, MAX_PROJECTION_ENTRIES, (role) =>
+      isIdentifier(role) ? role : null
+    );
+    if (chain === null || chain.length === 0) return null;
+    fallbacks = chain;
+  }
+
   return {
     role,
     modelName,
@@ -1003,8 +1052,10 @@ function readModel(value: unknown): ModelProjection | null {
     effectiveCapabilities,
     capabilityFacts,
     exposedCapabilities,
+    ...(capabilityOverride === undefined ? {} : { capabilityOverride }),
     thinkMode,
     routedUseCases,
+    ...(fallbacks === undefined ? {} : { fallbacks }),
     hasThinkTags,
     hasSlots,
     removable,

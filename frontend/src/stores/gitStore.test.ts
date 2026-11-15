@@ -31,6 +31,7 @@ import {
   GitApplyHunk,
   ReadFile,
 } from '../wails/bindings';
+import type { git } from '../wails/bindings';
 import { CancellablePromise } from '../wails/runtime';
 import { useGitStore, GIT_REFRESH_DEBOUNCE_MS } from './gitStore';
 import { useIDEStore } from './ideStore';
@@ -280,12 +281,67 @@ describe('gitStore operations', () => {
     expect(useGitStore.getState().branches).toEqual(['main', 'feature/x']);
   });
 
-  it('generateMessage fills commitMessage when golem responds', async () => {
-    mockGenerate.mockResolvedValue('feat: generated subject');
+  it('generateMessage returns the message and records the paths withheld from the AI', async () => {
+    mockGenerate.mockResolvedValue({
+      message: 'feat: generated subject',
+      withheld: ['.env'],
+    } as git.CommitMessageResult);
+
+    useGitStore.getState().setCommitMessage('my draft');
+    const message = await useGitStore.getState().generateMessage();
+
+    expect(message).toBe('feat: generated subject');
+    expect(useGitStore.getState().commitMessage).toBe('my draft');
+    expect(useGitStore.getState().withheldFromAI).toEqual({ paths: ['.env'], allWithheld: false });
+  });
+
+  it('generateMessage clears a stale withheld list when nothing is withheld', async () => {
+    useGitStore.setState({ withheldFromAI: { paths: ['.env'], allWithheld: false } });
+    mockGenerate.mockResolvedValue({
+      message: 'feat: generated subject',
+      withheld: [],
+    } as git.CommitMessageResult);
 
     await useGitStore.getState().generateMessage();
 
-    expect(useGitStore.getState().commitMessage).toBe('feat: generated subject');
+    expect(useGitStore.getState().withheldFromAI).toBeNull();
+  });
+
+  it('generateMessage keeps the draft and reports when every staged path was withheld', async () => {
+    useGitStore.getState().setCommitMessage('my draft');
+    mockGenerate.mockResolvedValue({
+      message: '',
+      withheld: ['.env', 'deploy.key'],
+    } as git.CommitMessageResult);
+
+    await useGitStore.getState().generateMessage();
+
+    expect(useGitStore.getState().commitMessage).toBe('my draft');
+    expect(useGitStore.getState().withheldFromAI).toEqual({
+      paths: ['.env', 'deploy.key'],
+      allWithheld: true,
+    });
+    expect(useGitStore.getState().lastError).toBeNull();
+  });
+
+  it('generateMessage clears the withheld list when a retry fails', async () => {
+    useGitStore.setState({ withheldFromAI: { paths: ['.env'], allWithheld: true } });
+    mockGenerate.mockRejectedValue(new Error('model unavailable'));
+
+    await useGitStore.getState().generateMessage();
+
+    expect(useGitStore.getState().withheldFromAI).toBeNull();
+    expect(useGitStore.getState().lastError).toContain('model unavailable');
+  });
+
+  it('commit clears the withheld list', async () => {
+    useGitStore.setState({ withheldFromAI: { paths: ['.env'], allWithheld: false } });
+    mockGitCommit.mockResolvedValue('[main abc1234] feat: x\n 1 file changed');
+    useGitStore.getState().setCommitMessage('feat: x');
+
+    await useGitStore.getState().commit(false);
+
+    expect(useGitStore.getState().withheldFromAI).toBeNull();
   });
 
   it('probeAiAvailable stores availability', async () => {

@@ -3,31 +3,66 @@ import type { WorkspaceAccent, FileEntry } from '../stores/ideStore';
 import type { workspace } from '../wails/bindings';
 
 /**
+ * True when `root` is spelled as a Windows path: a drive letter (`C:\`, `c:/`)
+ * or a UNC share (`\\server\share`, `//server/share`). Only these read a
+ * backslash as a separator; on macOS and Linux it is an ordinary name character.
+ */
+export function isWindowsPathSyntax(root: string): boolean {
+  return /^[a-z]:[\\/]|^\\\\|^\/\//i.test(root);
+}
+
+/**
+ * The form tree lookups compare `path` in: a Windows path through
+ * normalizePathForComparison (either separator, drive-letter case), any other
+ * path as it is, so a POSIX folder `a\b` is not its twin `a/b` (#447).
+ */
+export function treePathKey(path: string): string {
+  return isWindowsPathSyntax(path) ? normalizePathForComparison(path) : path;
+}
+
+/**
  * Repo-relative, forward-slash path for `absPath` under `repoRoot`.
  * Returns '' for the repo root itself, and null for paths outside the root.
  *
- * Uses normalizePathForComparison (from lspUri) so containment checks share the
- * same cross-platform semantics as the rest of the app: backslashes are
- * converted to forward slashes and Windows drive-letter paths compare
- * case-insensitively. The returned slice preserves the original case.
+ * Paths are read in the root's syntax (#447). Under a Windows root (a drive
+ * letter or UNC share) containment uses normalizePathForComparison, so
+ * backslashes are separators and drive-letter case folds; the trailing slash
+ * is stripped only after that, so the drive root `C:\` contains `c:\src`.
+ * Under a POSIX root a backslash is part of a name and stays in the result.
+ * The returned slice preserves the original case.
  */
 export function relativePathFromRoot(absPath: string, repoRoot: string): string | null {
   if (!absPath || !repoRoot) return null;
 
-  const toFwd = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '');
-  const path = toFwd(absPath);
-  const root = toFwd(repoRoot);
-
-  const cmpPath = normalizePathForComparison(path);
-  const cmpRoot = normalizePathForComparison(root);
+  const windows = isWindowsPathSyntax(repoRoot);
+  // Repeated separators count as one; a leading pair (a UNC prefix) stays.
+  const trim = (p: string): string => p.replace(/([^/])\/{2,}/g, '$1/').replace(/\/+$/, '');
+  const compare = (p: string): string => trim(windows ? normalizePathForComparison(p) : p);
+  const cmpPath = compare(absPath);
+  const cmpRoot = compare(repoRoot);
 
   if (cmpPath === cmpRoot) return '';
-  if (cmpPath.startsWith(cmpRoot + '/')) {
-    // normalizePathForComparison preserves length, so slicing the original
-    // forward-slashed path by the root length yields the correct-case suffix.
-    return path.slice(root.length + 1);
-  }
-  return null;
+  if (!cmpPath.startsWith(cmpRoot + '/')) return null;
+  // Take the original path's segments past the root, counted rather than
+  // measured: lowercasing can lengthen a name (İ) and normalizing drops a
+  // URI-form path's leading slash, but neither adds or removes a separator.
+  const depth = cmpPath.split('/').length - cmpRoot.split('/').length;
+  const path = trim(windows ? absPath.replace(/\\/g, '/') : absPath);
+  return path.split('/').slice(-depth).join('/');
+}
+
+/**
+ * Absolute path of the forward-slash `relPath` under `root`, spelled in the
+ * root's syntax: the inverse of relativePathFromRoot. A Windows root written
+ * with backslashes joins with backslashes, and a drive root's slash is not
+ * doubled (`C:\` and `src` give `C:\src`). An empty `relPath` is the root.
+ */
+export function pathUnderRoot(root: string, relPath: string): string {
+  if (!relPath) return root;
+  const windows = isWindowsPathSyntax(root);
+  const separator = windows && root.includes('\\') ? '\\' : '/';
+  const base = root.replace(windows ? /[\\/]+$/ : /\/+$/, '');
+  return `${base}${separator}${relPath.split('/').join(separator)}`;
 }
 
 /**
@@ -43,7 +78,7 @@ export function relativePathFromRoot(absPath: string, repoRoot: string): string 
 export function treeLoadLevels(root: string, paths: Iterable<string>): string[][] {
   const levels: string[][] = [[root]];
   const seen = new Set<string>();
-  const windows = /^[a-z]:[\\/]|^\\\\|^\/\//i.test(root);
+  const windows = isWindowsPathSyntax(root);
   const compare = (path: string) => (windows ? normalizePathForComparison(path) : path);
   const rootKey = compare(root).replace(/\/+$/, '');
   for (const path of paths) {

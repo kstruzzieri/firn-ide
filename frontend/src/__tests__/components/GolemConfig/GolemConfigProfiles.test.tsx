@@ -566,6 +566,60 @@ describe('Save as profile', () => {
     expect(trigger).toHaveAttribute('title', 'A save is already in progress.');
   });
 
+  it.each([false, true])(
+    'recovers Apply focus during a pending Save without stealing a user focus move (%s)',
+    async (moveFocus) => {
+      let finishSave!: (result: unknown) => void;
+      (SaveGolemProfileAs as jest.Mock).mockReturnValue(
+        new Promise((resolve) => {
+          finishSave = resolve;
+        })
+      );
+      let finishApply!: (result: unknown) => void;
+      (ApplyGolemSettings as jest.Mock).mockReturnValue(
+        new Promise((resolve) => {
+          finishApply = resolve;
+        })
+      );
+      await mountReady();
+      if (moveFocus) render(<button type="button">Other pane</button>);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Edit provider llama-swap' }));
+      await user.type(screen.getByLabelText('Endpoint'), '/rc');
+      await user.click(screen.getByRole('button', { name: 'Done' }));
+      await openMenu(user);
+      await user.type(screen.getByLabelText('Profile name'), 'mine');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      await user.keyboard('{Escape}');
+
+      expect(sourceTrigger()).toBeDisabled();
+      const apply = screen.getByRole('button', { name: 'Apply' });
+      expect(apply).toBeEnabled();
+      await user.click(apply);
+      const focusTarget = moveFocus
+        ? screen.getByRole('button', { name: 'Other pane' })
+        : screen.getByRole('heading', { name: 'Golem Configuration' });
+      if (moveFocus) await user.click(focusTarget);
+      await act(async () => {
+        finishApply({ status: 'applied', projection: { ...readyProjection, revision: REV('f') } });
+      });
+      await waitFor(() =>
+        expect(screen.getByTestId('golem-config-notice-announcement')).toHaveTextContent(
+          'Configuration applied.'
+        )
+      );
+      expect(sourceTrigger()).toBeDisabled();
+      expect(document.activeElement?.tagName).toBe(moveFocus ? 'BUTTON' : 'H2');
+      expect(focusTarget).toHaveFocus();
+
+      await act(async () => {
+        finishSave({ status: 'saved', profile: { id: 'user/mine', revision: REV('c') } });
+      });
+      await waitFor(() => expect(sourceTrigger()).toBeEnabled());
+      expect(focusTarget).toHaveFocus();
+    }
+  );
+
   it('saves the applied configuration create-only and reports success', async () => {
     (SaveGolemProfileAs as jest.Mock).mockResolvedValue({
       status: 'saved',

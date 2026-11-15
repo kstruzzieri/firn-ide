@@ -1,6 +1,7 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RoutingCard, routeRowKey } from '../../../components/GolemConfig/RoutingCard';
+import { RoutingCard } from '../../../components/GolemConfig/RoutingCard';
+import { routeRowKey } from '../../../components/GolemConfig/routingRows';
 import {
   CAPABILITY_NAMES,
   type ModelProjection,
@@ -51,6 +52,7 @@ it('keeps an unstaged route edit mounted when Edit is clicked again', async () =
       roleRows={new Map()}
       selectorUseCases={new Map()}
       routeReach={new Map()}
+      reachGroups={[]}
       diagnostics={[]}
       editable
       onStage={() => {}}
@@ -90,6 +92,7 @@ it('keeps an unstaged route assignment mounted when Assign is clicked again', as
       roleRows={new Map()}
       selectorUseCases={new Map()}
       routeReach={new Map()}
+      reachGroups={[]}
       diagnostics={[]}
       editable
       onStage={() => {}}
@@ -127,6 +130,7 @@ describe('route editor Done (firn-ide#284)', () => {
     roleRows: new Map(),
     selectorUseCases: new Map(),
     routeReach: new Map(),
+    reachGroups: [],
     diagnostics: [],
     editable: true,
     onStage: jest.fn(),
@@ -405,6 +409,7 @@ const renderProjected = (
       roleRows={projected.roleRows}
       selectorUseCases={projected.selectorUseCases}
       routeReach={projected.routeReach}
+      reachGroups={projected.reachGroups}
       diagnostics={[]}
       editable
       onStage={() => {}}
@@ -715,6 +720,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
       roleRows: projected.roleRows,
       selectorUseCases: projected.selectorUseCases,
       routeReach: projected.routeReach,
+      reachGroups: projected.reachGroups,
       diagnostics: [],
       editable: true,
       onStage: () => {},
@@ -737,6 +743,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
         rows={plain.routeRows}
         roleRows={plain.roleRows}
         routeReach={plain.routeReach}
+        reachGroups={plain.reachGroups}
       />
     );
     const reached = screen.getByTestId('route-row-completion');
@@ -819,6 +826,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
         roleRows={projected.roleRows}
         selectorUseCases={projected.selectorUseCases}
         routeReach={projected.routeReach}
+        reachGroups={projected.reachGroups}
         diagnostics={[]}
         editable
         onStage={() => {}}
@@ -884,6 +892,7 @@ describe('selector-wide siblings (firn-ide#315, wave 6 reach)', () => {
         roleRows={new Map()}
         selectorUseCases={new Map()}
         routeReach={new Map()}
+        reachGroups={[]}
         diagnostics={[]}
         editable
         onStage={() => {}}
@@ -916,6 +925,7 @@ describe('Defined models — Assign (wave 4d)', () => {
     roleRows: new Map(),
     selectorUseCases: new Map(),
     routeReach: new Map(),
+    reachGroups: [],
     diagnostics: [],
     editable: true,
     onStage: jest.fn(),
@@ -967,6 +977,7 @@ describe('Defined models — Assign (wave 4d)', () => {
           rows={projected.routeRows}
           selectorUseCases={projected.selectorUseCases}
           routeReach={projected.routeReach}
+          reachGroups={projected.reachGroups}
         />
       );
       await userEvent.click(assign());
@@ -1055,6 +1066,41 @@ describe('Defined models — Assign (wave 4d)', () => {
     expect(p.onStage).toHaveBeenCalledTimes(1);
     expect(p.onStage.mock.calls[0][0][0].modelFacts.model).toBe('spare-m');
     expect(p.onStage.mock.calls[0][0][0].useCase).toBe('chat');
+  });
+
+  it('names the chain in a reason when a use case reaches the model through a fallback', async () => {
+    // [#311] agent runs on agent-role and falls back to mid-role, a second
+    // role on spare-m. Joining chat onto spare-m with its own set (not what
+    // dense derives) is an override that gates mid-role, which agent
+    // reaches: the reason says so, and how.
+    const p = props();
+    const agentRole: ModelProjection = {
+      ...model,
+      role: 'agent-role',
+      modelName: 'agent-model',
+      effectiveCapabilities: ['chat', 'stream', 'tool_call'],
+      capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: ['chat', 'stream', 'tool_call'],
+      routedUseCases: ['agent'],
+      fallbacks: ['mid-role'],
+    };
+    const mid: ModelProjection = {
+      ...spare,
+      role: 'mid-role',
+      routedUseCases: ['agent'],
+      removable: false,
+    };
+    render(
+      <RoutingCard
+        {...p}
+        routes={[...p.routes, { useCase: 'agent', role: 'agent-role' }]}
+        models={[model, agentRole, mid, spare]}
+      />
+    );
+    await userEvent.click(assign());
+    expect(
+      within(optionNamed('chat')).getByText('agent (via agent-role → mid-role) needs tool_call')
+    ).toBeInTheDocument();
   });
 
   it('walks the list with the arrows, closes on Escape and returns focus to Assign', async () => {
@@ -1181,6 +1227,7 @@ describe('Defined models — Assign (wave 4d)', () => {
         rows={projected.routeRows}
         selectorUseCases={projected.selectorUseCases}
         routeReach={projected.routeReach}
+        reachGroups={projected.reachGroups}
       />
     );
     await user.click(assign());
@@ -1311,6 +1358,7 @@ describe('the role a routing row runs through (#344)', () => {
         roleRows={new Map()}
         selectorUseCases={new Map()}
         routeReach={new Map()}
+        reachGroups={[]}
         diagnostics={[]}
         editable
         onStage={() => {}}

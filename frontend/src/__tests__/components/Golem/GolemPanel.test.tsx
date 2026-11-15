@@ -467,8 +467,7 @@ describe('GolemPanel live indicator', () => {
     });
     await flush();
 
-    const notice =
-      'Golem stopped after 1 tool call: it reached its tool-call limit. It did not answer.';
+    const notice = 'Golem stopped: it reached its tool-call limit. It did not answer.';
     expect(screen.getByText(notice)).toBeInTheDocument();
     expect(liveRegion()).toHaveTextContent(`Golem error. ${notice}`);
     expect(store().conversations[CONV].activeRunId).toBeNull();

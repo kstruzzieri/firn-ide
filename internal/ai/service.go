@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -341,6 +342,188 @@ func (s *Service) clearConsentDegraded() bool {
 // bookkeeping, which also tracks transient persist failures (spec D2).
 func (s *Service) DestinationPolicy() provider.DestinationPolicy {
 	return s.consent.DestinationPolicy()
+}
+
+// StagedScope is what commit-message generation applies to the staged paths
+// of one git working tree, relative to its top level. It mirrors git.StagedScope
+// field for field, so the app converts one to the other.
+type StagedScope struct {
+	// Guard denies a path that may not reach the model.
+	Guard agenttools.ScopeGuard
+	// Protected reports a path whose content the policy protects: inside the
+	// open project the full policy, outside it the floor alone.
+	Protected func(path string) bool
+	// ConfigPath is the go-llm config source Guard protects.
+	ConfigPath string
+}
+
+// StagedScope returns the scope commit-message generation applies to the git
+// working tree at gitRoot (#384): the bound repository's own chat policy, over
+// paths relative to gitRoot, and the go-llm config source that policy now
+// protects, for the runtime to load. One policy instance serves both features,
+// so they cannot drift: the floor, the manifests (reloaded here, so an edit
+// applies without a watcher event), and the config source as discovery finds
+// it now, not as a cached snapshot recorded it. The guard reads live policy
+// state, so it denies everything once the repository is unbound or replaced,
+// and it denies a staged path outside the bound root, which chat cannot see
+// either. No bound repository, a closing service, or a config source that
+// cannot be resolved or protected is an error, and generation sends nothing.
+func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
+	top, err := filepath.EvalSymlinks(gitRoot)
+	if err != nil {
+		return StagedScope{}, fmt.Errorf("%w: canonicalizing the repository: %w", ErrWorkspaceUnavailable, err)
+	}
+	// ponytail: "" means discovery found no file, and golem.New then
+	// discovers again; a config created and staged between the two is not
+	// protected. go-llm has no option to pin "no config".
+	configPath, err := currentConfigSource()
+	if err != nil {
+		return StagedScope{}, err
+	}
+	guard, boundRoot, warningsChanged, err := s.stagedPolicy(configPath)
+	if warningsChanged {
+		s.emit(EventGolemStatusChanged, nil)
+	}
+	if err != nil {
+		return StagedScope{}, err
+	}
+	// isConfigSource reports the config source itself or a hard link to it.
+	// A path that no longer exists matches by name alone.
+	isConfigSource := func(string) bool { return false }
+	if configPath != "" {
+		configInfo, configErr := filesystem.Lstat(s.fs, configPath)
+		// Windows loads a file ID lazily, by path; SameFile on itself loads
+		// it now, before anything can replace the file.
+		if configErr == nil && !os.SameFile(configInfo, configInfo) {
+			configErr = errors.New("config source identity unavailable")
+		}
+		isConfigSource = func(abs string) bool {
+			if abs == configPath {
+				return true
+			}
+			info, err := filesystem.Lstat(s.fs, abs)
+			return err == nil && configErr == nil && os.SameFile(info, configInfo)
+		}
+	}
+	// toBound maps a top-relative path onto the bound root; ok is false
+	// outside it. A bound root at or below the git top level is located by
+	// identity and spelled as git reports it: on a case-insensitive
+	// filesystem the bound root keeps the case the project was opened with
+	// while git reports the case on disk.
+	var toBound func(rel string) (string, bool)
+	switch below, ok := boundBelow(s.fs, top, boundRoot); {
+	case ok && below == "":
+		toBound = func(rel string) (string, bool) { return rel, true }
+	case ok:
+		prefix := below + "/"
+		toBound = func(rel string) (string, bool) {
+			if !strings.HasPrefix(rel, prefix) {
+				return "", false
+			}
+			return rel[len(prefix):], true
+		}
+	default:
+		toBound = func(rel string) (string, bool) {
+			bound, err := filepath.Rel(boundRoot, filepath.Join(top, filepath.FromSlash(rel)))
+			if err != nil || !filepath.IsLocal(bound) {
+				return "", false
+			}
+			return filepath.ToSlash(bound), true
+		}
+	}
+	return StagedScope{
+		Guard: func(rel string, write bool) error {
+			bound, ok := toBound(rel)
+			if !ok {
+				return errPolicyDenied
+			}
+			return guard(bound, write)
+		},
+		// Outside the bound root the floor applies, and so does the config
+		// source by path or identity, as inside; manifest rules describe the
+		// project alone.
+		Protected: func(rel string) bool {
+			if bound, ok := toBound(rel); ok {
+				return guard(bound, false) != nil
+			}
+			return floorDenies(rel) || isConfigSource(filepath.Join(top, filepath.FromSlash(rel)))
+		},
+		ConfigPath: configPath,
+	}, nil
+}
+
+// boundBelow returns the bound root's path below top, slash-separated, with
+// each level named as its parent directory lists it, when the bound root is
+// top or lies below it by identity; "" is top itself. A level whose listed
+// name differs by more than case is not found, and ok is false.
+func boundBelow(fsys filesystem.FileSystem, top, bound string) (string, bool) {
+	topInfo, err := filesystem.Lstat(fsys, top)
+	if err != nil {
+		return "", false
+	}
+	var names []string
+	for dir := bound; ; dir = filepath.Dir(dir) {
+		info, err := filesystem.Lstat(fsys, dir)
+		if err != nil {
+			return "", false
+		}
+		if os.SameFile(info, topInfo) {
+			slices.Reverse(names)
+			return strings.Join(names, "/"), true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		name, ok := listedName(fsys, parent, info)
+		if !ok {
+			return "", false
+		}
+		names = append(names, name)
+	}
+}
+
+// listedName returns the name parent lists for the directory info.
+func listedName(fsys filesystem.FileSystem, parent string, info fs.FileInfo) (string, bool) {
+	entries, err := fsys.ReadDir(parent)
+	if err != nil {
+		return "", false
+	}
+	for _, entry := range entries {
+		if !strings.EqualFold(entry.Name(), info.Name()) {
+			continue
+		}
+		listed, err := filesystem.Lstat(fsys, filepath.Join(parent, entry.Name()))
+		if err == nil && os.SameFile(listed, info) {
+			return entry.Name(), true
+		}
+	}
+	return "", false
+}
+
+// stagedPolicy issues the current binding's guard under the binding gate's
+// read side, the way chat admission does: reload the manifests, protect the
+// config source, then issue. warningsChanged tells the caller to announce a
+// status change once the gate is released.
+func (s *Service) stagedPolicy(configPath string) (guard agenttools.ScopeGuard, boundRoot string, warningsChanged bool, err error) {
+	s.bindingGate.RLock()
+	defer s.bindingGate.RUnlock()
+	if s.isClosing() {
+		return nil, "", false, fmt.Errorf("%w: commit message generation rejected", errServiceClosing)
+	}
+	b := s.currentBinding()
+	if b == nil {
+		return nil, "", false, fmt.Errorf("commit message generation needs the repository open in Firn: %w", errPolicyDetached)
+	}
+	warnings := b.policy.Warnings()
+	b.policy.Reload()
+	warningsChanged = !slices.Equal(warnings, b.policy.Warnings())
+	if configPath != "" {
+		if err := b.policy.ProtectConfigSource(configPath); err != nil {
+			return nil, "", warningsChanged, fmt.Errorf("%w: config source could not be protected: %w", ErrAgentConfigInvalid, err)
+		}
+	}
+	return b.policy.Guard(""), b.repoRoot, warningsChanged, nil
 }
 
 // BindRepository makes repoPath the current repository incarnation and returns

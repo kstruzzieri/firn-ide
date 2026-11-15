@@ -99,6 +99,24 @@ describe('openWorkspaceByPath on the already-active path (#256)', () => {
     expect(useIDEStore.getState().recentWorkspacesVersion).toBe(7);
   });
 
+  it('treats c:/ over an open drive root C:\\ as a tree-only refresh (#447)', async () => {
+    const workspace = { name: 'C:', path: 'C:\\' };
+    useIDEStore.setState({
+      workspace,
+      directoryTree: [],
+      expandedPaths: new Set(),
+    });
+    mockRead.mockResolvedValue([]);
+
+    act(() => {
+      openWorkspaceByPath('c:/');
+    });
+    await waitFor(() => expect(mockRead).toHaveBeenCalledWith('C:\\', 'C:\\'));
+
+    expect(useIDEStore.getState().workspace).toBe(workspace);
+    expect(useIDEStore.getState().recentWorkspacesVersion).toBe(7);
+  });
+
   // On macOS and Linux a backslash is an ordinary filename character, so
   // `/tmp/a\b` is a different folder from `/tmp/a/b` and opening it must
   // switch projects, as v0.13.0's exact comparison did.

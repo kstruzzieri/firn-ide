@@ -6,6 +6,41 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * CommitMessageResult is a generated message and the staged paths the scope
+ * policy withheld from the model, each "path" or "old -> new". Withheld is for
+ * local display only and never reaches the model. Message is empty when every
+ * staged path was withheld: no request was made.
+ */
+export class CommitMessageResult {
+    "message": string;
+    "withheld": string[];
+
+    /** Creates a new CommitMessageResult instance. */
+    constructor($$source: Partial<CommitMessageResult> = {}) {
+        if (!("message" in $$source)) {
+            this["message"] = "";
+        }
+        if (!("withheld" in $$source)) {
+            this["withheld"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CommitMessageResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): CommitMessageResult {
+        const $$createField1_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("withheld" in $$parsedSource) {
+            $$parsedSource["withheld"] = $$createField1_0($$parsedSource["withheld"]);
+        }
+        return new CommitMessageResult($$parsedSource as Partial<CommitMessageResult>);
+    }
+}
+
+/**
  * ConflictGuardResult reports the outcome of a guarded conflict mutation.
  * Applied=false is the ordinary "someone else changed the file" outcome and
  * mutates nothing; SourceVersion always carries the live version so the caller

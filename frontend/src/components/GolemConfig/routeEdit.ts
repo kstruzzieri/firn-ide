@@ -7,7 +7,9 @@
  * (`facetsOf`) feeds it and the test oracle `snapshotOf`: every facet that
  * differs is named by a clause (the model's identity facets share one), and
  * routeEdit.test.ts pins that biconditional. A new stageable field belongs in
- * `facetsOf` first, then in `pendingOf`'s wording.
+ * `facetsOf` first, then in `pendingOf`'s wording. Beside it, the helpers the
+ * editor's notices and the model cards read: `usedByOf` for the routes a model
+ * runs, `editReachOf` for who else an edit changes on the model it picks.
  */
 import {
   CAPABILITY_NAMES,
@@ -18,7 +20,7 @@ import {
   type RouteProjection,
   type ThinkMode,
 } from '../../types/golem';
-import { modelFactsOf } from '../../types/golemConfig';
+import { modelFactsOf, type EditReachGroup } from '../../types/golemConfig';
 import { formatContextWindow } from '../../utils/formatContextWindow';
 
 /** A hand-declared model: authoritative facts, not detected ones (§4.4). */
@@ -89,6 +91,42 @@ export const usedByOf = (routes: readonly RouteProjection[], roles: readonly str
     ...new Set(routes.filter((route) => roles.includes(route.role)).map((route) => route.useCase)),
   ].sort(compareString);
 
+/** Who else a route edit changes on the model it picks, by how each reaches the model. Sorted. */
+export interface EditReach {
+  /** The model's name, as the sentence names it. */
+  model: string;
+  /** Routes that run on the model: other routes staged onto it, applied routes whose role on it changes. */
+  uses: string[];
+  /** Routes whose own model stays but whose fallback chain reaches a changed role on the model. */
+  fallsBack: string[];
+  /** Roles on the model that route nothing (the Defined models list) whose values change. */
+  definedAs: string[];
+}
+
+/**
+ * [#307][#349] `usedByOf`'s counterpart for the editor's reach sentence: who
+ * else an edit to `useCase` changes, read from `editReachFor` — the reach the
+ * row markers and the Defined models list read, measured from the rest of the
+ * draft — so the notice names what Done changes and nothing it leaves as the
+ * draft already shows it. `definedAs` is the model's unrouted roles a
+ * selector-wide write rewrites, which no route row shows. Undefined when the
+ * edit changes nothing beyond its own route.
+ */
+export const editReachOf = (
+  reach: EditReachGroup | undefined,
+  useCase: string
+): EditReach | undefined => {
+  if (reach === undefined) return undefined;
+  const { group, peersChange } = reach;
+  const peers = peersChange
+    ? group.edited.map((edit) => edit.useCase).filter((other) => other !== useCase)
+    : [];
+  const uses = [...peers, ...group.sameModel].sort(compareString);
+  return uses.length + group.fallback.length + group.affectedRoles.length === 0
+    ? undefined
+    : { model: group.model, uses, fallsBack: group.fallback, definedAs: group.affectedRoles };
+};
+
 /** A card's abilities as one line; the line never reads empty. */
 export const abilitiesLine = (caps: readonly CapabilityName[]): string =>
   caps.length === 0 ? '—' : caps.join(' ');
@@ -99,13 +137,18 @@ export const noteOf = (
 ): string | undefined => descriptions[0]?.description;
 
 /**
- * The Think mode Done would stage: a mode is meaningless without the
- * capability that justifies it, so the select's value counts only while
- * `thinking` is exposed. Unticking `thinking` clears it; re-ticking finds it
- * where it was left.
+ * The Think mode Done would stage. The select's value counts while `thinking`
+ * is exposed; unticking a `thinking` the selected model ARRIVED with is an
+ * actual removal and clears the mode (re-ticking finds it where it was left).
+ * [#311] A mode held BEHIND an unexposed `thinking` (go-llm ties think_mode
+ * to no capability) is preserved as long as nothing removed `thinking`: an
+ * untouched editor stages nothing, a model chosen above keeps its own
+ * authored mode, and picking the applied model back over a staged change
+ * that exposed `thinking` elsewhere removes nothing from it. `arrival` is the
+ * exposure the selected model came with — what the checklist seeded from.
  */
-const effectiveThink = (seed: Seed): ThinkMode =>
-  seed.exposed.includes('thinking') ? seed.think : '';
+export const effectiveThink = (seed: Seed, arrival: Seed): ThinkMode =>
+  seed.exposed.includes('thinking') || !arrival.exposed.includes('thinking') ? seed.think : '';
 
 /**
  * Which side of the comparison a seed stands on. The editor's state is read
@@ -139,7 +182,7 @@ interface EditFacets {
   ackDrops: boolean;
 }
 
-const facetsOf = (seed: Seed, side: Side): EditFacets => {
+const facetsOf = (seed: Seed, side: Side, arrival: Seed = seed): EditFacets => {
   const facts = seed.defined === null ? null : modelFactsOf(seed.defined);
   // A list model that carries none of the optional facts reads exactly like a
   // hand declaration of it: both stage {provider, model, type}.
@@ -153,14 +196,15 @@ const facetsOf = (seed: Seed, side: Side): EditFacets => {
       : '',
     caps: seed.manual?.caps ?? seed.defined?.capabilityFacts.caps ?? [],
     exposed: seed.exposed,
-    think: side === 'stage' ? effectiveThink(seed) : seed.think,
+    think: side === 'stage' ? effectiveThink(seed, arrival) : seed.think,
     ackUnknown: seed.ackUnknown,
     ackDrops: seed.ackDrops,
   };
 };
 
 /** One side as a comparable string — the test oracle for `pendingOf`'s emptiness. */
-export const snapshotOf = (seed: Seed, side: Side): string => JSON.stringify(facetsOf(seed, side));
+export const snapshotOf = (seed: Seed, side: Side, arrival: Seed = seed): string =>
+  JSON.stringify(facetsOf(seed, side, arrival));
 
 const shown = (value: string): string => value || '—';
 /** The declare form's own Type label, or the placeholder while none is chosen. */
@@ -212,8 +256,8 @@ const setDelta = (
  * the acknowledgements. Empty
  * exactly when `snapshotOf(now, 'stage')` equals `snapshotOf(was, 'row')`.
  */
-export const pendingOf = (now: Seed, was: Seed): string[] => {
-  const a = facetsOf(now, 'stage');
+export const pendingOf = (now: Seed, was: Seed, arrival: Seed = was): string[] => {
+  const a = facetsOf(now, 'stage', arrival);
   const b = facetsOf(was, 'row');
   const pending: string[] = [];
   if (a.provider !== b.provider)
@@ -241,9 +285,13 @@ export const pendingOf = (now: Seed, was: Seed): string[] => {
     pending.push(`Type: ${typeLabel(a.type)} (was ${typeLabel(b.type)})`);
   pending.push(...setDelta('Capabilities', a.exposed, b.exposed));
   if (a.think !== b.think) {
-    // The select reads "Default" while it is on screen; once `thinking` is
-    // unticked there is no select, and Done clears the mode.
-    const nowLabel = now.exposed.includes('thinking') ? THINK_LABEL[a.think] : 'cleared';
+    // The select reads "Default" while it is on screen; once `thinking` the
+    // row had exposed is unticked there is no select, and Done clears the
+    // mode. A mode kept behind a `thinking` neither side exposes is named.
+    const nowLabel =
+      now.exposed.includes('thinking') || !arrival.exposed.includes('thinking')
+        ? THINK_LABEL[a.think]
+        : 'cleared';
     // A row holding no model shows no Think either.
     const wasLabel = b.model === '' ? '—' : THINK_LABEL[b.think];
     pending.push(`Think mode: ${nowLabel} (was ${wasLabel})`);

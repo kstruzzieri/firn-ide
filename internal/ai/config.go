@@ -155,6 +155,25 @@ func discoverAgentConfigSource() (string, sourceOrigin, error) {
 	return "", originNone, fmt.Errorf("%w: no configuration found at any discovery location", ErrAgentConfigMissing)
 }
 
+// currentConfigSource is the canonical config source discovery finds now,
+// the file golem.New will load; "" when there is none, where go-llm falls
+// back to its built-in local provider.
+func currentConfigSource() (string, error) {
+	source, _, err := discoverAgentConfigSource()
+	if errors.Is(err, ErrAgentConfigMissing) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	resolved, err := canonicalizeConfigSource(source)
+	if err != nil {
+		log.Print("ai: agent config source rejected")
+		return "", fmt.Errorf("%w: source is not a readable regular file", ErrAgentConfigInvalid)
+	}
+	return resolved, nil
+}
+
 // canonicalizeConfigSource resolves a discovered source to an absolute,
 // symlink-free regular file.
 func canonicalizeConfigSource(path string) (string, error) {

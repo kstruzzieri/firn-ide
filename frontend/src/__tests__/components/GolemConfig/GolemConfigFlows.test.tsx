@@ -350,7 +350,7 @@ describe('Apply bar', () => {
     await clickApply();
     expect(await screen.findByText('Configuration applied.', { selector: 'p' })).toBeVisible();
     expect(screen.queryByLabelText('Endpoint')).not.toBeInTheDocument();
-    expect(document.body).toHaveFocus();
+    expect(sourceTrigger()).toHaveFocus();
   });
 
   it('blocks Apply while an editor holds unstaged fields', async () => {
@@ -1100,8 +1100,10 @@ describe('nonterminal apply results', () => {
     expect(await screen.findByText(/could not be cancelled/, { selector: 'p' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Confirm destination' })).toBeInTheDocument();
     // #314: the failure is announced, not only shown.
-    expect(screen.getByTestId('golem-config-notice-announcement')).toHaveTextContent(
-      /could not be cancelled/
+    await waitFor(() =>
+      expect(screen.getByTestId('golem-config-notice-announcement')).toHaveTextContent(
+        /could not be cancelled/
+      )
     );
   });
 });
@@ -1493,9 +1495,104 @@ describe('notice announcements (#314)', () => {
     await clickApply();
 
     await waitFor(() => expect(region).toHaveTextContent('Configuration applied.'));
+    expect(sourceTrigger()).toHaveFocus();
     expect(screen.getByText('Configuration applied.', { selector: 'p' })).not.toHaveAttribute(
       'role'
     );
+  });
+
+  it('recovers focus before publishing Apply completion, without repeating on navigation', async () => {
+    let finish!: (result: unknown) => void;
+    (ApplyGolemSettings as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    await mountWorkspace();
+    await stageKey();
+    const region = announcement();
+    await clickApply();
+    expect(region).toBeEmptyDOMElement();
+    const statusAtFocus: (string | null)[] = [];
+    sourceTrigger().addEventListener('focus', () => statusAtFocus.push(region.textContent), {
+      once: true,
+    });
+
+    // Capture the actual live-region mutation, rather than only its final text.
+    const published: { text: string | null; focus: Element | null }[] = [];
+    const observer = new MutationObserver(() => {
+      if (region.textContent !== '')
+        published.push({ text: region.textContent, focus: document.activeElement });
+    });
+    observer.observe(region, { childList: true, subtree: true, characterData: true });
+    try {
+      await act(async () => {
+        finish({
+          status: 'applied',
+          projection: { ...readyProjection, revision: movedRevision },
+        });
+      });
+      await waitFor(() => expect(published).toHaveLength(1));
+      expect(statusAtFocus).toEqual(['']);
+      expect(published[0]).toEqual({ text: 'Configuration applied.', focus: sourceTrigger() });
+      expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument();
+
+      await userEvent.tab();
+      await userEvent.tab();
+      await userEvent.tab();
+      expect(published).toHaveLength(1);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
+  it('keeps a user-selected focus target when Apply finishes', async () => {
+    let finish!: (result: unknown) => void;
+    (ApplyGolemSettings as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    await mountWorkspace();
+    await stageKey();
+    await clickApply();
+    const title = screen.getByRole('heading', { name: 'Golem Configuration' });
+    act(() => title.focus());
+    await act(async () => {
+      finish({ status: 'applied', projection: { ...readyProjection, revision: movedRevision } });
+    });
+    await waitFor(() => expect(announcement()).toHaveTextContent('Configuration applied.'));
+    expect(title).toHaveFocus();
+  });
+
+  it('speaks a second successful Apply after an empty settling interval', async () => {
+    applyReturns({
+      status: 'applied',
+      projection: { ...readyProjection, revision: movedRevision },
+    });
+    await mountWorkspace();
+    await stageKey();
+    const region = announcement();
+    await clickApply();
+    await waitFor(() => expect(region).toHaveTextContent('Configuration applied.'));
+
+    // A next-task refill of identical text stays silent in WebKit, so the empty
+    // interval has to outlast its settling delay.
+    const updates: { text: string | null; at: number }[] = [];
+    const observer = new MutationObserver(() => {
+      updates.push({ text: region.textContent, at: performance.now() });
+    });
+    observer.observe(region, { childList: true, subtree: true, characterData: true });
+    try {
+      await stageKey();
+      await clickApply();
+      await waitFor(() =>
+        expect(updates.map(({ text }) => text)).toEqual(['', 'Configuration applied.'])
+      );
+      expect(updates[1].at - updates[0].at).toBeGreaterThanOrEqual(350);
+    } finally {
+      observer.disconnect();
+    }
   });
 
   it('announces a grant notice through the same region', async () => {
@@ -1508,7 +1605,7 @@ describe('notice announcements (#314)', () => {
 
     const notice = await screen.findByTestId('golem-grant-notice');
     expect(notice).not.toHaveAttribute('role');
-    expect(region).toHaveTextContent(notice.textContent ?? '');
+    await waitFor(() => expect(region).toHaveTextContent(notice.textContent ?? ''));
   });
 
   it('announces a repeated busy result again', async () => {
@@ -1522,9 +1619,9 @@ describe('notice announcements (#314)', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
-    // A new node, not the old text node left in place, so it is spoken again.
+    // Cleared and published again, not the old text left in place.
     await waitFor(() => expect(region.firstElementChild).not.toBe(first));
-    expect(region).toHaveTextContent(/Nothing was written; retry when idle/);
+    await waitFor(() => expect(region).toHaveTextContent(/Nothing was written; retry when idle/));
   });
 
   it('announces a repeated local refusal again', async () => {
@@ -1541,7 +1638,7 @@ describe('notice announcements (#314)', () => {
     await clickApply();
 
     await waitFor(() => expect(region.firstElementChild).not.toBe(first));
-    expect(region).toHaveTextContent(/A staged change is invalid/);
+    await waitFor(() => expect(region).toHaveTextContent(/A staged change is invalid/));
   });
 
   it('does not announce an old outcome again when a failed reload recovers', async () => {
@@ -2341,6 +2438,7 @@ describe('route picker floors (wave 4c)', () => {
     capabilityFacts: { caps: ['chat', 'stream', 'tool_call'], knownCaps: [...CAPABILITY_NAMES] },
     exposedCapabilities: ['chat', 'stream', 'tool_call'],
     routedUseCases: ['agent'],
+    fallbacks: ['reason-role'],
     hasThinkTags: false,
   });
   // agent falls back to reason-role, so the backend lists it among deepseek's routed use cases.
@@ -2370,33 +2468,37 @@ describe('route picker floors (wave 4c)', () => {
     return card;
   };
 
-  it('cannot pick a model a sibling floor refuses, and says which sibling', async () => {
+  it('offers the applied model clean, and names the sibling and its chain once a change breaks it', async () => {
     reload(projection);
     await mountWorkspace();
     await openRoute('reasoning');
 
-    // Keeping deepseek is an override of reason-role's selector, which agent
-    // reaches through its fallback: agent's floor governs it, and the applied
-    // model is short of it. gpt-5-mini is a fork of reasoning alone onto
-    // chat-role's selector — agent stays on reason-role — so it is eligible.
+    // [#311] Keeping deepseek stages nothing, so agent's floor does not govern
+    // it: every card is offered and nothing is refused at open. gpt-5-mini is
+    // a fork of reasoning alone onto chat-role's selector — agent stays on
+    // reason-role — so it is eligible as before.
     expect(screen.getByText('Model — every card below can serve reasoning')).toBeInTheDocument();
     expect(
       grid()
         .getAllByRole('option')
         .map((card) => within(card).getByText(/gpt|deepseek/).textContent)
-    ).toEqual(['gpt-5', 'gpt-5-mini']);
-    expect(screen.getByText(/does not declare/)).toHaveTextContent(
-      'deepseek does not declare tool_call: agent needs tool_call.'
-    );
+    ).toEqual(['gpt-5', 'gpt-5-mini', 'deepseek']);
+    expect(screen.queryByText(/does not declare|takes it from/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /not eligible/ })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /1 model is not eligible/ }));
-    expect(within(cardNamed('deepseek')).getByText('agent needs tool_call')).toBeInTheDocument();
+    // Another card, then the applied one again: nothing to stage.
     await pickModel('gpt-5');
     expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5');
-    expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();
-    // A blocked card is shown for its reason, never chosen: the readout keeps the choice.
     await userEvent.click(cardNamed('deepseek'));
-    expect(screen.getByTestId('model-detail')).toHaveTextContent('gpt-5');
+    expect(screen.getByTestId('model-detail')).toHaveTextContent('deepseek');
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+
+    // A real removal: agent needs stream and reaches deepseek through its
+    // fallback to reason-role, so the refusal names agent and that chain.
+    await userEvent.click(screen.getByLabelText(/^stream/));
+    expect(screen.getByText(/takes it from/)).toHaveTextContent(
+      'Unticking stream takes it from every route on deepseek: agent (via agent-role → reason-role) needs stream.'
+    );
   });
 });
 

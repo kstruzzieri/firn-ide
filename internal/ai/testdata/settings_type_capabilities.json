@@ -1,0 +1,5 @@
+[
+  { "type": "dense", "capabilities": ["chat", "generate", "stream"] },
+  { "type": "moe", "capabilities": ["chat", "generate", "stream"] },
+  { "type": "embedding", "capabilities": ["embed"] }
+]

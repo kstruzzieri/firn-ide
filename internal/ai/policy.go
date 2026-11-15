@@ -82,11 +82,11 @@ var firnSensitiveFloor = []string{
 	"**/*secret*",
 	"**/*secret*/**",
 	// go-llm v0.5.0's credential set (agent/interceptor IsCredentialPath),
-	// which its read_file invariant refuses and its search skips. v0.3.0's
-	// invariant covers only .env and the four directories, and its search
-	// skips none. Firn builds its own orchestrator without go-llm's
-	// interceptors, so the floor carries the set. A trailing "**" also
-	// matches zero segments: "**/.ssh/**" denies the directory itself.
+	// which its read_file invariant refuses and its search skips.
+	// newGolemRunner installs that invariant, but it inspects read_file only
+	// and nothing in go-llm filters list or glob, so the floor carries the set
+	// for every tool and backs the invariant up on read_file. A trailing "**"
+	// also matches zero segments: "**/.ssh/**" denies the directory itself.
 	"**/.netrc",
 	"**/_netrc",
 	"**/.npmrc",
@@ -416,21 +416,8 @@ func (p *ScopePolicy) check(prefixes [][]string, workspaceRel, rel string) error
 		}
 	}
 	for _, segs := range candidates {
-		// Keep manifest glob rune counts intact; aliases only widen the immutable floor.
-		joined := strings.Join(segs, "/")
-		folded := floorPathAliases.Replace(joined)
-		foldedSegs := segs
-		if folded != joined {
-			var ok bool
-			foldedSegs, ok = candidateSegments(nil, folded)
-			if !ok {
-				return errPolicyDenied
-			}
-		}
-		for _, pat := range floorPatterns {
-			if matchPattern(pat, segs) || (folded != joined && matchPattern(pat, foldedSegs)) {
-				return errPolicyDenied
-			}
+		if floorMatches(segs) {
+			return errPolicyDenied
 		}
 		for _, pat := range p.additive {
 			if matchPattern(pat, segs) {
@@ -439,6 +426,36 @@ func (p *ScopePolicy) check(prefixes [][]string, workspaceRel, rel string) error
 		}
 	}
 	return nil
+}
+
+// floorMatches reports whether the immutable floor denies segs, lowercase
+// path segments. Aliases only widen the floor; manifest globs keep their rune
+// counts. Unfoldable input counts as denied.
+func floorMatches(segs []string) bool {
+	joined := strings.Join(segs, "/")
+	folded := floorPathAliases.Replace(joined)
+	foldedSegs := segs
+	if folded != joined {
+		var ok bool
+		if foldedSegs, ok = candidateSegments(nil, folded); !ok {
+			return true
+		}
+	}
+	for _, pat := range floorPatterns {
+		if matchPattern(pat, segs) || (folded != joined && matchPattern(pat, foldedSegs)) {
+			return true
+		}
+	}
+	return false
+}
+
+// floorDenies reports whether the immutable floor denies rel, a slash path
+// relative to any directory. The floor is name patterns, so it applies with
+// no repository bound, unlike manifest rules. Malformed input counts as
+// denied.
+func floorDenies(rel string) bool {
+	segs, ok := candidateSegments(nil, rel)
+	return !ok || floorMatches(segs)
 }
 
 // workspacePrefix normalizes a repo-relative workspace directory into
