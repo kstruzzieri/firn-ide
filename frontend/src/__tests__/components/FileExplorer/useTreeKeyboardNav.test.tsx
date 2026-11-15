@@ -81,4 +81,25 @@ describe('useTreeKeyboardNav', () => {
     act(() => hook.result.current.onKeyDown(key(' ')));
     expect(actions.select).toHaveBeenCalledWith(rows[2]);
   });
+
+  it.each([
+    ['the row that took its place', '/repo/src', [rows[0], rows[2]], '/repo/b.ts'],
+    ['the row above it when it was last', '/repo/b.ts', [rows[0], rows[1]], '/repo/src'],
+    [
+      'the first row when none of its neighbours is left',
+      '/repo/src',
+      [mkRow({ key: '/x.ts' })],
+      '/x.ts',
+    ],
+  ])('falls back to %s when the active row goes', (_case, active, next, expected) => {
+    const actions = { toggle: jest.fn(), select: jest.fn(), open: jest.fn() };
+    const hook = renderHook(({ shown }) => useTreeKeyboardNav({ rows: shown, actions }), {
+      initialProps: { shown: rows },
+    });
+    act(() => hook.result.current.setActiveKey(active));
+
+    hook.rerender({ shown: next });
+
+    expect(hook.result.current.activeKey).toBe(expected);
+  });
 });
