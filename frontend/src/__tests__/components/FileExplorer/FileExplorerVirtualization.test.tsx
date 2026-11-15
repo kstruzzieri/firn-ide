@@ -146,4 +146,78 @@ describe('FileExplorer virtualization', () => {
     expect(tree.scrollTop).toBe(0);
     expect(screen.getAllByRole('treeitem').length).toBeLessThan(100);
   });
+
+  describe('when the active row is removed from outside the tree', () => {
+    const changes = {
+      deleted: () => makeFlatTree(5000).filter((entry) => entry.name !== 'file-4998.ts'),
+      renamed: () =>
+        makeFlatTree(5000).map((entry) =>
+          entry.name === 'file-4998.ts'
+            ? ({ ...entry, name: 'moved.ts', path: '/repo/moved.ts' } as filesystem.FileEntry)
+            : entry
+        ),
+    };
+
+    // Focus file-4998 near the bottom, then scroll part way back up.
+    async function focusRowAndScrollUp() {
+      const user = userEvent.setup();
+      act(() =>
+        useIDEStore.setState({
+          workspace: { name: 'repo', path: '/repo' },
+          directoryTree: makeFlatTree(5000),
+          selectedPath: null,
+          activeFileId: null,
+          isRootExpanded: true,
+          isLoadingTree: false,
+          treeError: null,
+        })
+      );
+      render(<FileExplorer />);
+      const tree = screen.getByRole('tree');
+      Object.defineProperty(tree, 'scrollHeight', { configurable: true, value: 5001 * 28 });
+      tree.scrollTo = (options) => {
+        tree.scrollTop = (options as ScrollToOptions).top ?? 0;
+        queueMicrotask(() => fireEvent.scroll(tree));
+      };
+      await user.click(screen.getByRole('treeitem', { name: 'file-0.ts' }));
+      await user.keyboard('{End}{ArrowUp}');
+      expect(screen.getByRole('treeitem', { name: 'file-4998.ts' })).toHaveFocus();
+      fireEvent.scroll(tree, { target: { scrollTop: 50000 } });
+      return { user, tree };
+    }
+
+    it.each(Object.entries(changes))(
+      'focuses the nearest row and keeps the viewport when the focused row is %s',
+      async (_change, nextTree) => {
+        const { user, tree } = await focusRowAndScrollUp();
+
+        act(() => useIDEStore.setState({ directoryTree: nextTree() }));
+
+        const nearest = screen.getByRole('treeitem', { name: 'file-4999.ts' });
+        expect(nearest).toHaveFocus();
+        expect(tree.scrollTop).toBe(50000);
+        // The next arrow key brings the focused row into view.
+        await user.keyboard('{ArrowDown}');
+        expect(nearest).toHaveFocus();
+        expect(tree.scrollTop).toBeGreaterThan(100000);
+      }
+    );
+
+    it.each(Object.entries(changes))(
+      'keeps focus on the tree and the viewport when the active row is %s after a scrollbar press',
+      async (_change, nextTree) => {
+        const { user, tree } = await focusRowAndScrollUp();
+        // A press on the scrollbar focuses the tree itself.
+        act(() => tree.focus());
+
+        act(() => useIDEStore.setState({ directoryTree: nextTree() }));
+
+        expect(tree).toHaveFocus();
+        expect(tree.scrollTop).toBe(50000);
+        await user.keyboard('{ArrowDown}');
+        expect(screen.getByRole('treeitem', { name: 'file-4999.ts' })).toHaveFocus();
+        expect(tree.scrollTop).toBeGreaterThan(100000);
+      }
+    );
+  });
 });

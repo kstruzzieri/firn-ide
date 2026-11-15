@@ -291,32 +291,39 @@ export function FileExplorer() {
   }, []);
 
   const lastNavigation = useRef({ activeKey, navigationVersion });
+  // No dependencies: removal recovery must also run when the tree an error
+  // replaced comes back with the same rows (#522).
   useLayoutEffect(() => {
-    const navigated =
-      lastNavigation.current.activeKey !== activeKey ||
-      lastNavigation.current.navigationVersion !== navigationVersion;
+    const last = lastNavigation.current;
     lastNavigation.current = { activeKey, navigationVersion };
     const tree = scrollRef.current;
+    if (!tree || activeKey === null) return;
     const focusedElement = focusedElementRef.current;
-    const focusedRowRemoved =
+    if (
       document.activeElement === document.body &&
       focusedElement !== null &&
-      !focusedElement.isConnected;
-    // A refresh can shift the active row's index without moving focus: the row
-    // keeps its DOM node by key, and the viewport stays where the user left it.
-    if (!navigated && !focusedRowRemoved) return;
-    // Editor-driven reveals update the entry tab stop without taking focus
-    // from the editor or controls used to switch workspaces. A removed focused
-    // row drops browser focus to body, so carry that focus to a surviving row.
-    if (
-      !tree ||
-      activeKey === null ||
-      (!tree.contains(document.activeElement) && !focusedRowRemoved)
-    )
+      !focusedElement.isConnected
+    ) {
+      // A removed focused row, or a tree an error replaced, drops browser focus
+      // to the page. Carry it once to the active row, which stands nearest the
+      // removed one, and leave the viewport where it is (#521): the virtualizer
+      // restores a replaced tree's scroll, and the next arrow key scrolls the
+      // row into view. Focusing the row records it again.
+      focusedElementRef.current = null;
+      document.getElementById(rowDomId(activeKey))?.focus({ preventScroll: true });
       return;
+    }
+    // A refresh can shift the active row's index, or remove it so the active
+    // key falls back to a neighbour, without moving focus or the viewport.
+    const navigated =
+      last.navigationVersion !== navigationVersion ||
+      (last.activeKey !== activeKey && rows.some((row) => row.key === last.activeKey));
+    // Editor-driven reveals update the entry tab stop without taking focus
+    // from the editor or controls used to switch workspaces.
+    if (!navigated || !tree.contains(document.activeElement)) return;
     virtualizer.scrollToIndex(activeIndex, { align: 'auto' });
     document.getElementById(rowDomId(activeKey))?.focus({ preventScroll: true });
-  }, [activeKey, activeIndex, navigationVersion, virtualizer]);
+  });
 
   const handleActivate = useCallback(
     (kind: 'root' | 'entry', path?: string) => {

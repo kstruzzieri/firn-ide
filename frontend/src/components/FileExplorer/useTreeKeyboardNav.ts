@@ -25,24 +25,53 @@ export interface TreeKeyboardNav {
 }
 
 /**
+ * Of the rows around `key` in `previous`, the first still shown after it, which
+ * now stands where it stood, else the last still shown before it.
+ */
+function nearestShownKey(
+  previous: FlatRow[],
+  key: string | null,
+  shown: Set<string>
+): string | null {
+  const index = previous.findIndex((row) => row.key === key);
+  if (index < 0) return null;
+  for (let i = index + 1; i < previous.length; i++) {
+    if (shown.has(previous[i].key)) return previous[i].key;
+  }
+  for (let i = index - 1; i >= 0; i--) {
+    if (shown.has(previous[i].key)) return previous[i].key;
+  }
+  return null;
+}
+
+/**
  * WAI-ARIA tree keyboard navigation over the flat row list. The explorer moves
  * DOM focus and scrolls after this hook changes the active row.
  */
 export function useTreeKeyboardNav({ rows, actions }: UseTreeKeyboardNavArgs): TreeKeyboardNav {
   const [storedKey, setStoredKey] = useState<string | null>(rows[0]?.key ?? null);
   const [navigationVersion, requestNavigation] = useReducer((version: number) => version + 1, 0);
+  // The rows of the last render, where a row that has since gone still stands.
+  const [previousRows, setPreviousRows] = useState(rows);
 
   // Derive the effective active key in-render: if storedKey is no longer in the
-  // visible row list (rows collapsed, workspace changed), fall back to the first row.
-  // This avoids calling setState inside an effect, satisfying react-hooks/set-state-in-effect.
+  // visible row list (deleted or renamed, an ancestor collapsed, workspace
+  // changed), fall back to the nearest row that is still shown (#521), else the
+  // first row. This avoids calling setState inside an effect, satisfying
+  // react-hooks/set-state-in-effect.
   const rowKeySet = useMemo(() => new Set(rows.map((r) => r.key)), [rows]);
   const activeKey =
-    storedKey !== null && rowKeySet.has(storedKey) ? storedKey : (rows[0]?.key ?? null);
+    storedKey !== null && rowKeySet.has(storedKey)
+      ? storedKey
+      : (nearestShownKey(previousRows, storedKey, rowKeySet) ?? rows[0]?.key ?? null);
 
   // Sync storedKey when activeKey was derived to a different value.
   // We keep storedKey === activeKey so future renders don't repeat the derivation cost.
   if (storedKey !== activeKey) {
     setStoredKey(activeKey);
+  }
+  if (previousRows !== rows) {
+    setPreviousRows(rows);
   }
 
   // Ref gives callbacks non-stale access to the latest row list without
