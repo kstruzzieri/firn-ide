@@ -13,7 +13,7 @@ import { Create as $Create } from "@wailsio/runtime";
  */
 export class CommitMessageResult {
     "message": string;
-    "withheld": string[];
+    "withheld": WithheldPath[];
 
     /** Creates a new CommitMessageResult instance. */
     constructor($$source: Partial<CommitMessageResult> = {}) {
@@ -31,7 +31,7 @@ export class CommitMessageResult {
      * Creates a new CommitMessageResult instance from a string or object.
      */
     static createFrom($$source: any = {}): CommitMessageResult {
-        const $$createField1_0 = $$createType0;
+        const $$createField1_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("withheld" in $$parsedSource) {
             $$parsedSource["withheld"] = $$createField1_0($$parsedSource["withheld"]);
@@ -151,9 +151,9 @@ export class ConflictRegion {
      * Creates a new ConflictRegion instance from a string or object.
      */
     static createFrom($$source: any = {}): ConflictRegion {
-        const $$createField3_0 = $$createType0;
-        const $$createField4_0 = $$createType0;
-        const $$createField5_0 = $$createType0;
+        const $$createField3_0 = $$createType2;
+        const $$createField4_0 = $$createType2;
+        const $$createField5_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("ours" in $$parsedSource) {
             $$parsedSource["ours"] = $$createField3_0($$parsedSource["ours"]);
@@ -205,7 +205,7 @@ export class ConflictSnapshot {
      * Creates a new ConflictSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): ConflictSnapshot {
-        const $$createField3_0 = $$createType2;
+        const $$createField3_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("regions" in $$parsedSource) {
             $$parsedSource["regions"] = $$createField3_0($$parsedSource["regions"]);
@@ -252,9 +252,9 @@ export class ConflictStages {
      * Creates a new ConflictStages instance from a string or object.
      */
     static createFrom($$source: any = {}): ConflictStages {
-        const $$createField1_0 = $$createType4;
-        const $$createField2_0 = $$createType4;
-        const $$createField3_0 = $$createType4;
+        const $$createField1_0 = $$createType6;
+        const $$createField2_0 = $$createType6;
+        const $$createField3_0 = $$createType6;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("base" in $$parsedSource) {
             $$parsedSource["base"] = $$createField1_0($$parsedSource["base"]);
@@ -310,9 +310,9 @@ export class ConflictState {
      * Creates a new ConflictState instance from a string or object.
      */
     static createFrom($$source: any = {}): ConflictState {
-        const $$createField0_0 = $$createType5;
-        const $$createField1_0 = $$createType7;
-        const $$createField2_0 = $$createType9;
+        const $$createField0_0 = $$createType7;
+        const $$createField1_0 = $$createType9;
+        const $$createField2_0 = $$createType11;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("stages" in $$parsedSource) {
             $$parsedSource["stages"] = $$createField0_0($$parsedSource["stages"]);
@@ -422,7 +422,7 @@ export class FileHunks {
      * Creates a new FileHunks instance from a string or object.
      */
     static createFrom($$source: any = {}): FileHunks {
-        const $$createField1_0 = $$createType11;
+        const $$createField1_0 = $$createType13;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("hunks" in $$parsedSource) {
             $$parsedSource["hunks"] = $$createField1_0($$parsedSource["hunks"]);
@@ -530,8 +530,8 @@ export class MergeHeads {
      * Creates a new MergeHeads instance from a string or object.
      */
     static createFrom($$source: any = {}): MergeHeads {
-        const $$createField1_0 = $$createType12;
-        const $$createField2_0 = $$createType12;
+        const $$createField1_0 = $$createType14;
+        const $$createField2_0 = $$createType14;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("ours" in $$parsedSource) {
             $$parsedSource["ours"] = $$createField1_0($$parsedSource["ours"]);
@@ -596,7 +596,7 @@ export class RepoStatus {
      * Creates a new RepoStatus instance from a string or object.
      */
     static createFrom($$source: any = {}): RepoStatus {
-        const $$createField6_0 = $$createType14;
+        const $$createField6_0 = $$createType16;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("files" in $$parsedSource) {
             $$parsedSource["files"] = $$createField6_0($$parsedSource["files"]);
@@ -642,19 +642,52 @@ export class StageBlob {
     }
 }
 
+/**
+ * WithheldPath is one staged change withheld from the model, "path" or
+ * "old -> new". Outside is true when every withheld side of it lies outside
+ * the open folder and no rule protects it; false means Golem's file access
+ * rules deny it (#513).
+ */
+export class WithheldPath {
+    "path": string;
+    "outside": boolean;
+
+    /** Creates a new WithheldPath instance. */
+    constructor($$source: Partial<WithheldPath> = {}) {
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("outside" in $$source)) {
+            this["outside"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new WithheldPath instance from a string or object.
+     */
+    static createFrom($$source: any = {}): WithheldPath {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new WithheldPath($$parsedSource as Partial<WithheldPath>);
+    }
+}
+
 // Private type creation functions
-const $$createType0 = $Create.Array($Create.Any);
-const $$createType1 = ConflictRegion.createFrom;
-const $$createType2 = $Create.Array($$createType1);
-const $$createType3 = StageBlob.createFrom;
-const $$createType4 = $Create.Nullable($$createType3);
-const $$createType5 = ConflictStages.createFrom;
-const $$createType6 = ConflictSnapshot.createFrom;
-const $$createType7 = $Create.Nullable($$createType6);
-const $$createType8 = MergeHeads.createFrom;
+const $$createType0 = WithheldPath.createFrom;
+const $$createType1 = $Create.Array($$createType0);
+const $$createType2 = $Create.Array($Create.Any);
+const $$createType3 = ConflictRegion.createFrom;
+const $$createType4 = $Create.Array($$createType3);
+const $$createType5 = StageBlob.createFrom;
+const $$createType6 = $Create.Nullable($$createType5);
+const $$createType7 = ConflictStages.createFrom;
+const $$createType8 = ConflictSnapshot.createFrom;
 const $$createType9 = $Create.Nullable($$createType8);
-const $$createType10 = Hunk.createFrom;
-const $$createType11 = $Create.Array($$createType10);
-const $$createType12 = MergeHead.createFrom;
-const $$createType13 = FileChange.createFrom;
-const $$createType14 = $Create.Array($$createType13);
+const $$createType10 = MergeHeads.createFrom;
+const $$createType11 = $Create.Nullable($$createType10);
+const $$createType12 = Hunk.createFrom;
+const $$createType13 = $Create.Array($$createType12);
+const $$createType14 = MergeHead.createFrom;
+const $$createType15 = FileChange.createFrom;
+const $$createType16 = $Create.Array($$createType15);

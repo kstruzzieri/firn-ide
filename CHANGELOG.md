@@ -192,6 +192,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files, staging a hunk, diffs and the merge view. Generation broke in 0.15.0;
   the rest was broken before. (#511)
 
+- With a subfolder of a repository open, the Git panel lists a staged file
+  outside that folder under "Outside the open folder" when Generate withholds
+  it from the AI, apart from the files under "Denied by Golem's file access
+  rules". It used to say Golem's file access rules withheld it, as though an
+  ordinary source file were protected. Such a file is still withheld, and when
+  it is the only one staged no request is sent. A `.env`, key or credentials
+  file outside the folder stays under the rules. (#513)
+
 ### Security
 
 - A `models.json` in the folder Firn was started from can no longer read

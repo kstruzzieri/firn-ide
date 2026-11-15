@@ -284,7 +284,7 @@ describe('gitStore operations', () => {
   it('generateMessage returns the message and records the paths withheld from the AI', async () => {
     mockGenerate.mockResolvedValue({
       message: 'feat: generated subject',
-      withheld: ['.env'],
+      withheld: [{ path: '.env', outside: false }],
     } as git.CommitMessageResult);
 
     useGitStore.getState().setCommitMessage('my draft');
@@ -292,11 +292,35 @@ describe('gitStore operations', () => {
 
     expect(message).toBe('feat: generated subject');
     expect(useGitStore.getState().commitMessage).toBe('my draft');
-    expect(useGitStore.getState().withheldFromAI).toEqual({ paths: ['.env'], allWithheld: false });
+    expect(useGitStore.getState().withheldFromAI).toEqual({
+      outside: [],
+      denied: ['.env'],
+      allWithheld: false,
+    });
+  });
+
+  // #513: a file outside the open folder is not one the rules deny.
+  it('generateMessage keeps files outside the open folder apart from denied files', async () => {
+    mockGenerate.mockResolvedValue({
+      message: '',
+      withheld: [
+        { path: 'backend/main.go', outside: true },
+        { path: 'frontend/.env', outside: false },
+        { path: 'backend/util.go -> frontend/util.go', outside: true },
+      ],
+    } as git.CommitMessageResult);
+
+    await useGitStore.getState().generateMessage();
+
+    expect(useGitStore.getState().withheldFromAI).toEqual({
+      outside: ['backend/main.go', 'backend/util.go -> frontend/util.go'],
+      denied: ['frontend/.env'],
+      allWithheld: true,
+    });
   });
 
   it('generateMessage clears a stale withheld list when nothing is withheld', async () => {
-    useGitStore.setState({ withheldFromAI: { paths: ['.env'], allWithheld: false } });
+    useGitStore.setState({ withheldFromAI: { outside: [], denied: ['.env'], allWithheld: false } });
     mockGenerate.mockResolvedValue({
       message: 'feat: generated subject',
       withheld: [],
@@ -311,21 +335,25 @@ describe('gitStore operations', () => {
     useGitStore.getState().setCommitMessage('my draft');
     mockGenerate.mockResolvedValue({
       message: '',
-      withheld: ['.env', 'deploy.key'],
+      withheld: [
+        { path: '.env', outside: false },
+        { path: 'deploy.key', outside: false },
+      ],
     } as git.CommitMessageResult);
 
     await useGitStore.getState().generateMessage();
 
     expect(useGitStore.getState().commitMessage).toBe('my draft');
     expect(useGitStore.getState().withheldFromAI).toEqual({
-      paths: ['.env', 'deploy.key'],
+      outside: [],
+      denied: ['.env', 'deploy.key'],
       allWithheld: true,
     });
     expect(useGitStore.getState().lastError).toBeNull();
   });
 
   it('generateMessage clears the withheld list when a retry fails', async () => {
-    useGitStore.setState({ withheldFromAI: { paths: ['.env'], allWithheld: true } });
+    useGitStore.setState({ withheldFromAI: { outside: [], denied: ['.env'], allWithheld: true } });
     mockGenerate.mockRejectedValue(new Error('model unavailable'));
 
     await useGitStore.getState().generateMessage();
@@ -335,7 +363,7 @@ describe('gitStore operations', () => {
   });
 
   it('commit clears the withheld list', async () => {
-    useGitStore.setState({ withheldFromAI: { paths: ['.env'], allWithheld: false } });
+    useGitStore.setState({ withheldFromAI: { outside: [], denied: ['.env'], allWithheld: false } });
     mockGitCommit.mockResolvedValue('[main abc1234] feat: x\n 1 file changed');
     useGitStore.getState().setCommitMessage('feat: x');
 

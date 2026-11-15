@@ -59,7 +59,9 @@ type MessageGenerator struct {
 // StagedScope decides which staged paths of one git working tree may reach
 // the model (#384). Paths are relative to the git top level.
 type StagedScope struct {
-	// Guard denies a path that may not reach the model.
+	// Guard denies a path that may not reach the model, with
+	// ai.ErrOutsideProject when it does so only because the path lies
+	// outside the open folder.
 	Guard agenttools.ScopeGuard
 	// Protected reports a path whose content the policy protects, as opposed
 	// to one Guard denies only for lying outside the open project. Unmodified
@@ -80,8 +82,17 @@ func NewMessageGenerator() *MessageGenerator { return &MessageGenerator{} }
 // local display only and never reaches the model. Message is empty when every
 // staged path was withheld: no request was made.
 type CommitMessageResult struct {
-	Message  string   `json:"message"`
-	Withheld []string `json:"withheld"`
+	Message  string         `json:"message"`
+	Withheld []WithheldPath `json:"withheld"`
+}
+
+// WithheldPath is one staged change withheld from the model, "path" or
+// "old -> new". Outside is true when every withheld side of it lies outside
+// the open folder and no rule protects it; false means Golem's file access
+// rules deny it (#513).
+type WithheldPath struct {
+	Path    string `json:"path"`
+	Outside bool   `json:"outside"`
 }
 
 // SetScopeSource injects what decides which staged paths may reach the model
@@ -174,18 +185,23 @@ func memoize(protected func(string) bool) func(string) bool {
 
 // partitionStaged applies guard to each staged change. allowed holds every
 // path the diff may name, both sides of an allowed rename or copy; withheld
-// holds each withheld change for display, "path" or "old -> new"; excluded
-// holds every withheld path, both sides, which the diff leaves out.
-func partitionStaged(changes []StagedChange, guard agenttools.ScopeGuard) (allowed, withheld, excluded []string) {
-	withheld = []string{}
+// holds each withheld change for display, "path" or "old -> new", and why;
+// excluded holds every withheld path, both sides, which the diff leaves out.
+func partitionStaged(changes []StagedChange, guard agenttools.ScopeGuard) (allowed []string, withheld []WithheldPath, excluded []string) {
+	withheld = []WithheldPath{}
 	for _, change := range changes {
 		paths := []string{change.Path}
 		if change.OldPath != "" {
 			paths = append(paths, change.OldPath)
 		}
-		denied := false
+		// Every side is asked: a side the rules deny outweighs one that is
+		// only outside the open folder.
+		denied, outside := false, true
 		for _, path := range paths {
-			denied = denied || guard(path, false) != nil
+			if err := guard(path, false); err != nil {
+				denied = true
+				outside = outside && errors.Is(err, ai.ErrOutsideProject)
+			}
 		}
 		if !denied {
 			allowed = append(allowed, paths...)
@@ -195,7 +211,7 @@ func partitionStaged(changes []StagedChange, guard agenttools.ScopeGuard) (allow
 		if change.OldPath != "" {
 			name = change.OldPath + " -> " + change.Path
 		}
-		withheld = append(withheld, name)
+		withheld = append(withheld, WithheldPath{Path: name, Outside: outside})
 		excluded = append(excluded, paths...)
 	}
 	return allowed, withheld, excluded

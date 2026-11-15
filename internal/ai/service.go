@@ -339,6 +339,10 @@ func (s *Service) clearConsentDegraded() bool {
 	return was != nil
 }
 
+// ErrOutsideProject is StagedScope's Guard denying a path only because it lies
+// outside the open folder, which Golem chat cannot see either (#513).
+var ErrOutsideProject = errors.New("outside the open folder")
+
 // StagedScope is what commit-message generation applies to the staged paths
 // of one git working tree, relative to its top level. It mirrors git.StagedScope
 // field for field, so the app converts one to the other.
@@ -423,22 +427,30 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 			return filepath.ToSlash(bound), true
 		}
 	}
+	// Outside the bound root the floor applies, and so does the config source
+	// by path or identity, as inside; manifest rules describe the project
+	// alone.
+	protectedOutside := func(rel string) bool {
+		return floorDenies(rel) || isConfigSource(filepath.Join(top, filepath.FromSlash(rel)))
+	}
 	return StagedScope{
+		// Outside the bound root every path is denied; one the rules protect
+		// there is denied as theirs, the rest only for lying outside.
 		Guard: func(rel string, write bool) error {
 			bound, ok := toBound(rel)
 			if !ok {
-				return errPolicyDenied
+				if protectedOutside(rel) {
+					return errPolicyDenied
+				}
+				return ErrOutsideProject
 			}
 			return guard(bound, write)
 		},
-		// Outside the bound root the floor applies, and so does the config
-		// source by path or identity, as inside; manifest rules describe the
-		// project alone.
 		Protected: func(rel string) bool {
 			if bound, ok := toBound(rel); ok {
 				return guard(bound, false) != nil
 			}
-			return floorDenies(rel) || isConfigSource(filepath.Join(top, filepath.FromSlash(rel)))
+			return protectedOutside(rel)
 		},
 		Model:   &GolemModel{target: *target, orchestrator: orchestrator, consent: s.consent},
 		Release: transport.CloseIdleConnections,

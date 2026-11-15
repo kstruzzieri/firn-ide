@@ -189,6 +189,46 @@ func TestStagedScope_MapsGitTopLevelOntoBoundRoot(t *testing.T) {
 	})
 }
 
+// The guard says when a path is denied only for lying outside the open
+// folder, so the Git panel can tell that apart from Golem's file access rules
+// (#513). Outside the folder the rules still protect what Protected names
+// there, the floor and the config source, so such a path is theirs.
+func TestStagedScope_GuardNamesPathsOutsideTheOpenFolder(t *testing.T) {
+	top := t.TempDir()
+	bound := filepath.Join(top, "app")
+	writeFile(t, filepath.Join(bound, "ai-kit.yaml"), "sensitive_paths:\n  - private/**\n")
+	config := filepath.Join(top, "models.json")
+	writeFile(t, config, stagedConfig)
+	t.Setenv("GO_LLM_CONFIG", config)
+	svc := newStagedGuardService(t)
+	bindStaged(t, svc, bound)
+
+	scope, err := svc.StagedScope(top)
+
+	if err != nil {
+		t.Fatalf("StagedScope: %v", err)
+	}
+	for path, outside := range map[string]bool{
+		"other/main.go":        true,
+		"README.md":            true,
+		"private/data.csv":     true, // the manifest describes the open folder alone
+		".env":                 false,
+		"certs/server.key":     false,
+		"models.json":          false,
+		"app/private/data.csv": false,
+		"app/.env":             false,
+	} {
+		err := scope.Guard(path, false)
+		if err == nil {
+			t.Errorf("guard(%q) = nil, want denied", path)
+			continue
+		}
+		if got := errors.Is(err, ErrOutsideProject); got != outside {
+			t.Errorf("guard(%q) = %v; outside the open folder = %v, want %v", path, err, got, outside)
+		}
+	}
+}
+
 func TestStagedScope_UnresolvableConfigIsAnError(t *testing.T) {
 	outsideConfig(t)
 	svc := newStagedGuardService(t)

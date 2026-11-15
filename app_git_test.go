@@ -126,8 +126,8 @@ func TestGitGenerateCommitMessage_Binding(t *testing.T) {
 	if result.Message != "feat: add f.txt" {
 		t.Errorf("Message = %q", result.Message)
 	}
-	if !slices.Equal(result.Withheld, []string{".env"}) {
-		t.Errorf("Withheld = %q, want [.env]", result.Withheld)
+	if !slices.Equal(result.Withheld, []git.WithheldPath{{Path: ".env"}}) {
+		t.Errorf("Withheld = %+v, want [.env]", result.Withheld)
 	}
 	if request := string(<-provider.Requests); strings.Contains(request, "hunter2") || strings.Contains(request, "a/.env") {
 		t.Errorf("provider request carries the withheld file:\n%s", request)
