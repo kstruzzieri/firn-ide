@@ -186,6 +186,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configuration. To use the file as it is, set `GO_LLM_CONFIG` to its path. A
   Firn opened from Finder or the Dock starts in `/` and was not exposed. (#524)
 
+- In Golem Configuration, moving a route onto a model another route already
+  uses, with the capabilities that model's type gives it, no longer marks the
+  other route Incompatible. Apply leaves that route's capabilities as they are,
+  and now its row, its route editor and the editor's model list show them too.
+  A route whose capabilities Apply does change, such as one left without the
+  capability list it ran on when another route moves away, is marked
+  Incompatible before Apply instead of only being refused by it. (#512)
+
 ## [0.15.0] - 2026-11-14
 
 In Golem Configuration, the route editor no longer refuses the model a route

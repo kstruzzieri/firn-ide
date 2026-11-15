@@ -1232,6 +1232,64 @@ describe('RouteEditor', () => {
     expect(onUnstagedChange).toHaveBeenLastCalledWith(routeRowKey('agent'), false);
   });
 
+  it('opens a route a join leaves alone on its own capabilities, clean (#512)', async () => {
+    // chat joins shared-model declared Dense with what Dense derives; nothing
+    // on the selector holds a list, so Apply sends no override and embedding's
+    // role keeps deriving embed. Its editor says so and stages nothing.
+    const derivedDense: CapabilityName[] = ['chat', 'generate', 'stream'];
+    const embedModel = model({
+      role: 'embed-role',
+      modelName: 'shared-model',
+      type: 'embedding',
+      effectiveCapabilities: ['embed'],
+      capabilityFacts: { caps: ['embed'], knownCaps: [...CAPABILITY_NAMES] },
+      exposedCapabilities: ['embed'],
+      routedUseCases: ['embedding'],
+    });
+    const join: RouteChange = {
+      kind: 'route',
+      useCase: 'chat',
+      modelFacts: { provider: 'hosted', model: 'shared-model', type: 'dense' },
+      capabilityFacts: { caps: derivedDense, knownCaps: [...CAPABILITY_NAMES] },
+      exposedCaps: derivedDense,
+      thinkMode: '',
+      confirmUnknown: false,
+    };
+    const { onUnstagedChange } = renderRouting({
+      routes: [
+        { useCase: 'chat', role: 'chat-role' },
+        { useCase: 'embedding', role: 'embed-role' },
+      ],
+      models: [
+        model({
+          modelName: 'chat-model',
+          effectiveCapabilities: derivedDense,
+          capabilityFacts: { caps: derivedDense, knownCaps: [...CAPABILITY_NAMES] },
+          exposedCapabilities: derivedDense,
+        }),
+        embedModel,
+        model({ ...embedModel, role: 'spare-role', modelName: 'spare-embed', routedUseCases: [] }),
+      ],
+      draft: draftWith(join),
+    });
+    await openRoute('embedding');
+    expect(screen.getByRole('checkbox', { name: /^embed/ })).toBeChecked();
+    expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    expect(onUnstagedChange).toHaveBeenLastCalledWith(routeRowKey('embedding'), false);
+    // The band judges its own model by the same values: eligible, not hidden.
+    const band = within(screen.getByRole('listbox', { name: 'Models for embedding' }));
+    expect(band.getByRole('option', { name: /shared-model/ })).toBeInTheDocument();
+
+    // Choosing another model and then its own back re-seeds the same way.
+    await pickModel('spare-embed');
+    expect(onUnstagedChange).toHaveBeenLastCalledWith(routeRowKey('embedding'), true);
+    await pickModel('shared-model');
+    expect(screen.getByRole('checkbox', { name: /^embed/ })).toBeChecked();
+    expect(screen.queryByText(/does not declare/)).not.toBeInTheDocument();
+    expect(onUnstagedChange).toHaveBeenLastCalledWith(routeRowKey('embedding'), false);
+  });
+
   it.each([
     ['hosted', 'fresh-model', true],
     ['other-provider', 'fresh-model', false],

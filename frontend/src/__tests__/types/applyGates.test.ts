@@ -20,6 +20,7 @@ import {
   USE_CASE_FLOORS,
   affectedUseCases,
   cleanDraft,
+  exposureAfter,
   floorShortfalls,
   governedUseCasesOf,
   projectDraft,
@@ -44,6 +45,8 @@ interface GateCase {
   refused: string[];
   picker: string[];
   refusedForEveryCard?: string;
+  /** #512: use case → the capabilities its route runs with once the change is applied. */
+  exposed?: Record<string, CapabilityName[]>;
 }
 
 const { cases } = read<{ cases: GateCase[] }>('cases.json');
@@ -90,5 +93,21 @@ describe('the shared gate fixture', () => {
     const card = { type: gate.card.type } as ModelProjection;
     expect(golemModelVerdict(card, short).eligible).toBe(gate.picker.length === 0);
     if (gate.refusedForEveryCard === undefined) expect(gate.picker).toEqual(gate.refused);
+
+    // #512: what each routing row shows — its own staged change's exposure,
+    // else its applied role's after the draft — is what Apply writes.
+    if (gate.exposed !== undefined) {
+      const { changes } = projectDraft(base, stageChange(draft, change, new KeyVault(new Map())));
+      for (const [useCase, want] of Object.entries(gate.exposed)) {
+        const own = changes.find(
+          (staged): staged is RouteChange => staged.kind === 'route' && staged.useCase === useCase
+        );
+        const role = base.routes.find((route) => route.useCase === useCase)?.role;
+        const applied = base.models.find((model) => model.role === role);
+        const shown =
+          own?.exposedCaps ?? (applied === undefined ? [] : exposureAfter(base, changes, applied));
+        expect({ useCase, exposed: [...shown] }).toEqual({ useCase, exposed: want });
+      }
+    }
   });
 });

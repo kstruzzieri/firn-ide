@@ -57,6 +57,7 @@ import {
   affectedUseCases,
   narrowingFor,
   changeStableID,
+  exposureAfter,
   floorShortfalls,
   governedUseCasesOf,
   isFallbackTarget,
@@ -327,7 +328,8 @@ function seedFrom(
   staged: Change | undefined,
   current: ModelProjection | null,
   models: readonly ModelProjection[],
-  authority: RouteChange | undefined
+  authority: RouteChange | undefined,
+  held?: readonly CapabilityName[]
 ): Seed {
   // [W4-7] The exposure seeds EXACTLY from what is staged or applied. A floor
   // cap the model lacks is never added here: go-llm takes an asserted cap as
@@ -376,12 +378,15 @@ function seedFrom(
     // hand the group whatever Done stages here, so open on the group's own
     // exposure and Think — a Done that touches neither keeps them for the
     // group. For a row a JOIN governs, that Done is itself a change to the
-    // row's own Think, and the footer names it (see `heldSeed`).
+    // row's own Think, and the footer names it (see `heldSeed`). [#512] The
+    // route's own model opens on what its role `held` exposes after the rest
+    // of the draft (`exposureAfter`): a join Apply sends without a list
+    // leaves it as it is.
     return {
       provider: current.provider,
       defined: current,
       manual: null,
-      exposed: canonicalCaps(authority?.exposedCaps ?? current.exposedCapabilities),
+      exposed: canonicalCaps(held ?? authority?.exposedCaps ?? current.exposedCapabilities),
       think: authority?.thinkMode ?? current.thinkMode,
       ackUnknown: false,
       ackDrops: false,
@@ -401,12 +406,13 @@ function seedFrom(
 /**
  * What the ROW holds — the baseline the footer compares against. Its own
  * staged route, as coalesced; a staged unassignment holds nothing; otherwise
- * the applied model with the selector group's exposure (selector-wide, so the
- * row already shows it) but the group's Think only when the group OVERRIDES
- * the selector — a join writes no Think onto a neighbour, and RoutingCard
- * reads the row the same way. The editor still OPENS on the group's Think
- * ([W5-5], `seedFrom`), so a Done from here that carries a join's Think is a
- * change the summary names rather than a clean footer that hides it.
+ * the applied model with the exposure its role holds after the rest of the
+ * draft (`exposureAfter`, as the row shows it, #512), and the group's Think
+ * only when the group OVERRIDES the selector — a join writes no Think onto a
+ * neighbour, and RoutingCard reads the row the same way. The editor still
+ * OPENS on the group's Think ([W5-5], `seedFrom`), so a Done from here that
+ * carries a join's Think is a change the summary names rather than a clean
+ * footer that hides it.
  */
 function heldSeed(
   staged: Change | undefined,
@@ -417,7 +423,13 @@ function heldSeed(
 ): Seed {
   if (staged?.kind === 'route-unassign') return seedFrom(undefined, null, models, undefined);
   const authority = selectorAuthority(current, others);
-  const seed = seedFrom(staged, current, models, authority);
+  const seed = seedFrom(
+    staged,
+    current,
+    models,
+    authority,
+    current === null ? undefined : exposureAfter(base, others, current)
+  );
   if (staged?.kind === 'route' || current === null) return seed;
   const overrides = overridesSelector(base, others, {
     provider: current.provider,
@@ -470,13 +482,35 @@ export function RouteEditor({
   const others = draft.changes.filter(
     (change) => !(change.kind === 'route' && change.useCase === useCase)
   );
+  /**
+   * [#512] The route's own model arrives with what its role exposes after the
+   * draft (`exposureAfter`), as the editor opens on it and the band judges its
+   * card (`cardProbe`): a join Apply sends without a list leaves it as it is.
+   * The route's own staging counts while it stays on this model (a re-pick
+   * restores it), never once it moves elsewhere (a re-pick returns).
+   */
+  const ownHeld = useMemo(() => {
+    if (current === null) return undefined;
+    const kept = draft.changes.filter(
+      (change) =>
+        !(
+          change.kind === 'route' &&
+          change.useCase === useCase &&
+          (change.modelFacts.provider !== current.provider ||
+            change.modelFacts.model !== current.modelName)
+        )
+    );
+    return canonicalCaps(exposureAfter(base, kept, current));
+  }, [current, base, draft, useCase]);
   const seed = useMemo(
     () =>
       seedFrom(
         preselect === undefined ? staged : undefined,
         preselect ?? current,
         models,
-        selectorAuthority(preselect ?? current, draft.changes)
+        selectorAuthority(preselect ?? current, draft.changes),
+        // A preselected model is one the route would join: the group's exposure.
+        preselect === undefined ? ownHeld : undefined
       ),
     // Derived once, at mount: the row remounts when the document moves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -561,7 +595,11 @@ export function RouteEditor({
    */
   const authority = selectorAuthority(defined, draft.changes);
   const offeredCaps =
-    authority?.exposedCaps ?? defined?.exposedCapabilities ?? capabilityFacts?.caps ?? [];
+    (defined === current ? ownHeld : undefined) ??
+    authority?.exposedCaps ??
+    defined?.exposedCapabilities ??
+    capabilityFacts?.caps ??
+    [];
 
   // Choosing a different model re-seeds the checklist from ITS exposure. Manual
   // joins adopt exact staged selectors in onManual; intermediate name edits do
@@ -1035,6 +1073,16 @@ export function RouteEditor({
     [current]
   );
 
+  /** [#512] A card's probe; the route's own model arrives with `ownHeld`, as a re-pick seeds it. */
+  const cardProbe = useCallback(
+    (model: ModelProjection): RouteChange => {
+      const role = cardRole(model);
+      const probe = probeRouteChange(useCase, role, draft.changes);
+      return role === current && ownHeld !== undefined ? { ...probe, exposedCaps: ownHeld } : probe;
+    },
+    [cardRole, useCase, draft, current, ownHeld]
+  );
+
   /**
    * [K6] One verdict per card, cached by role for the life of the draft: the
    * band re-renders on every keystroke in the declare form, and every verdict
@@ -1045,7 +1093,7 @@ export function RouteEditor({
     return (model: ModelProjection): readonly FloorShortfall[] => {
       const cached = cache.get(model.role);
       if (cached !== undefined) return cached;
-      const probe = probeRouteChange(useCase, cardRole(model), draft.changes);
+      const probe = cardProbe(model);
       const verdict = withReach(
         floorShortfalls(probe.exposedCaps, governedBy(probe)),
         base,
@@ -1055,7 +1103,7 @@ export function RouteEditor({
       cache.set(model.role, verdict);
       return verdict;
     };
-  }, [base, draft, useCase, governedBy, cardRole]);
+  }, [base, draft, useCase, governedBy, cardProbe]);
 
   /**
    * [rev 7] What a card WOULD expose, and the floor it would meet, for the
@@ -1071,7 +1119,7 @@ export function RouteEditor({
     return (model: ModelProjection) => {
       const cached = cache.get(model.role);
       if (cached !== undefined) return cached;
-      const probe = probeRouteChange(useCase, cardRole(model), draft.changes);
+      const probe = cardProbe(model);
       const governedByCard = governedBy(probe);
       const verdict = {
         required: [...unionFloor(governedByCard)],
@@ -1081,7 +1129,7 @@ export function RouteEditor({
       cache.set(model.role, verdict);
       return verdict;
     };
-  }, [draft, useCase, cardRole, governedBy]);
+  }, [cardProbe, governedBy]);
 
   /**
    * #490: the picker's strip for whichever card it reads out — what that card
