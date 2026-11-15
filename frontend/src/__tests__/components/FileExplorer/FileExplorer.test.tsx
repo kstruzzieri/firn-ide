@@ -476,6 +476,22 @@ describe('FileExplorer', () => {
       expect(screen.getByRole('treeitem', { name: 'App.tsx' })).toHaveFocus();
     });
 
+    it('recovers focus when a refresh refills a tree that emptied', async () => {
+      const user = userEvent.setup();
+      render(<FileExplorer />);
+      await user.click(screen.getByRole('treeitem', { name: 'App.tsx' }));
+      await user.keyboard('{ArrowDown}');
+
+      act(() => useIDEStore.setState({ directoryTree: [] }));
+      expect(screen.getByText(/no files in workspace/i)).toBeInTheDocument();
+      expect(document.body).toHaveFocus();
+      // Only the root row outlives the empty tree, so it is the active row when
+      // the tree returns. The selected App.tsx stays away, so no reveal runs.
+      act(() => useIDEStore.setState({ directoryTree: [mockDirectoryTree[1]] }));
+
+      expect(screen.getAllByRole('treeitem')[0]).toHaveFocus();
+    });
+
     it('does not pull focus back into a restored tree after focus leaves it', async () => {
       const user = userEvent.setup();
       render(<FileExplorer />);
