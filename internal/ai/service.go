@@ -350,7 +350,8 @@ type StagedScope struct {
 	// Guard denies a path that may not reach the model.
 	Guard agenttools.ScopeGuard
 	// Protected reports a path whose content the policy protects: inside the
-	// open project the full policy, outside it the floor alone.
+	// open project the full policy, outside it the floor and the config
+	// source, as discovered and as loaded, hard links included.
 	Protected func(path string) bool
 	// Model is the Golem model generation sends to (#491).
 	Model *GolemModel

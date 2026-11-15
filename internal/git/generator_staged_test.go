@@ -184,6 +184,9 @@ func TestPartitionStaged_ReportsWhyEachChangeIsWithheld(t *testing.T) {
 		{Status: 'R', OldPath: "backend/util.go", Path: "frontend/util.go"},
 		{Status: 'R', OldPath: "backend/a.go", Path: "backend/b.go"},
 		{Status: 'R', OldPath: "frontend/.env.old", Path: "backend/settings.txt"},
+		// The denied side asked first, the outside side last.
+		{Status: 'R', OldPath: "backend/old.txt", Path: "frontend/.env.local"},
+		{Status: 'C', OldPath: "backend/settings.txt", Path: "frontend/.env"},
 	}
 
 	allowed, withheld, _ := partitionStaged(changes, guard)
@@ -194,6 +197,8 @@ func TestPartitionStaged_ReportsWhyEachChangeIsWithheld(t *testing.T) {
 		{Path: "backend/util.go -> frontend/util.go", Outside: true},
 		{Path: "backend/a.go -> backend/b.go", Outside: true},
 		{Path: "frontend/.env.old -> backend/settings.txt"},
+		{Path: "backend/old.txt -> frontend/.env.local"},
+		{Path: "backend/settings.txt -> frontend/.env"},
 	}
 	if !slices.Equal(withheld, want) {
 		t.Errorf("withheld = %+v\nwant %+v", withheld, want)
