@@ -420,19 +420,85 @@ describe('FileExplorer', () => {
       expect(editor).toHaveFocus();
     });
 
-    it('keeps focus in the tree when its focused row is removed', async () => {
+    it('moves focus to the nearest row when its focused row is removed', async () => {
       const user = userEvent.setup();
       render(<FileExplorer />);
       await user.click(screen.getByRole('treeitem', { name: 'App.tsx' }));
       const removed = screen.getByRole('treeitem', { name: 'App.tsx' });
       expect(removed).toHaveFocus();
 
+      // src goes with App.tsx, so the nearest surviving row is the one after them.
       act(() => useIDEStore.setState({ directoryTree: [mockDirectoryTree[1]] }));
 
       expect(removed).not.toBeInTheDocument();
-      expect(screen.getAllByRole('treeitem')[0]).toHaveFocus();
-      await user.keyboard('{ArrowDown}');
       expect(screen.getByRole('treeitem', { name: 'package.json' })).toHaveFocus();
+      await user.keyboard('{ArrowUp}');
+      expect(screen.getAllByRole('treeitem')[0]).toHaveFocus();
+    });
+
+    it('moves focus to the nearest row when a row entered by keyboard is removed', async () => {
+      const user = userEvent.setup();
+      act(() => useIDEStore.setState({ selectedPath: '/workspace/src/App.tsx' }));
+      render(<FileExplorer />);
+      const removed = screen.getByRole('treeitem', { name: 'App.tsx' });
+      await waitFor(() => expect(removed).toHaveAttribute('tabindex', '0'));
+      act(() => screen.getByRole('button', { name: 'Hide Panel' }).focus());
+      await user.tab();
+      expect(removed).toHaveFocus();
+
+      act(() => useIDEStore.setState({ directoryTree: [mockDirectoryTree[1]] }));
+
+      expect(removed).not.toBeInTheDocument();
+      expect(screen.getByRole('treeitem', { name: 'package.json' })).toHaveFocus();
+    });
+
+    it('does not reclaim focus that fell to the page before its focused row was removed', async () => {
+      const user = userEvent.setup();
+      render(<FileExplorer />);
+      await user.click(screen.getByRole('treeitem', { name: 'App.tsx' }));
+      act(() => screen.getByRole('treeitem', { name: 'App.tsx' }).blur());
+      expect(document.body).toHaveFocus();
+
+      act(() => useIDEStore.setState({ directoryTree: [mockDirectoryTree[1]] }));
+
+      expect(document.body).toHaveFocus();
+    });
+
+    it('recovers focus when a refresh restores the tree an error removed unchanged', async () => {
+      const user = userEvent.setup();
+      render(<FileExplorer />);
+      await user.click(screen.getByRole('treeitem', { name: 'App.tsx' }));
+
+      act(() => useIDEStore.setState({ treeError: 'read failed' }));
+      expect(document.body).toHaveFocus();
+      act(() => useIDEStore.setState({ treeError: null }));
+
+      expect(screen.getByRole('treeitem', { name: 'App.tsx' })).toHaveFocus();
+    });
+
+    it('does not pull focus back into a restored tree after focus leaves it', async () => {
+      const user = userEvent.setup();
+      render(<FileExplorer />);
+      await user.click(screen.getByRole('treeitem', { name: 'App.tsx' }));
+      act(() => useIDEStore.setState({ treeError: 'read failed' }));
+      act(() => useIDEStore.setState({ treeError: null }));
+      act(() => (document.activeElement as HTMLElement).blur());
+      expect(document.body).toHaveFocus();
+
+      act(() =>
+        useIDEStore.setState({
+          directoryTree: [
+            filesystem.FileEntry.createFrom({
+              name: 'aaa.txt',
+              path: '/workspace/aaa.txt',
+              isDir: false,
+            }),
+            ...mockDirectoryTree,
+          ],
+        })
+      );
+
+      expect(document.body).toHaveFocus();
     });
 
     it('recovers focus when an error removed the tree and a later refresh only shifts the row', async () => {
