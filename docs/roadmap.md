@@ -48,16 +48,40 @@ This section supersedes the archived delivery narrative below for current priori
 
 ### Repository health
 
-- `v0.14.0` is live from `main` at `3c821ec` (PR #464, 2026-10-25). The release workflow, Build, Tests, and Lint passed. macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published, all built with go1.27.3 (#465).
-- Releases now run on a three-week train, each with a contract in [`docs/releases/`](releases/README.md): `v0.14.0` shipped 2026-10-25, five days after its planned 2026-10-20 (its contract records why), and `v0.15.0` ships 2026-11-10. A patch release is cut only for a regression or data loss.
+- `v0.15.0` is live from `main` at `6fd3aae` (PR #576, 2026-11-14). The release workflow, Build, Tests, and Lint passed. macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published, all built with go1.27.4 (#574).
+- Releases now run on a three-week train, each with a contract in [`docs/releases/`](releases/README.md): `v0.15.0` shipped 2026-11-14, four days after its planned 2026-11-10 (its contract records why), and `v0.16.0` targets 2026-12-01. A patch release is cut only for a regression or data loss.
 - #39 removed the eager all-language chunk: initial static JavaScript fell from **541,248 gzip bytes to 399,225 gzip bytes** (26.24%) with a manifest regression gate.
 - Git, LSP, search, commands, and merge-session state already have dedicated seams. Do not run #41 as a big-bang refactor; extract only the run domain if #146 directly needs it.
-- Release documentation and install examples now target `v0.14.0`.
+- Release documentation and install examples now target `v0.15.0`.
 - PR #228 raised the module to **Go 1.25** and switched every workflow from a repeated `go-version` literal to `go-version-file: 'go.mod'`, so the module is the single source of truth for future upgrades. The pinned `golangci-lint` v2.11.4 is built with go1.26.1 and therefore analyzes a 1.25 module without complaint. Workflow Wails installs now pin `wails3` to the module's `v3.0.0-beta.16`; cross-platform PR verification remains a future release-engineering improvement. #373 (PR #420, 2026-10-10) moved the `toolchain` line to go1.27.2 after Go 1.25 left security support; the `go 1.25.0` directive stays, golangci-lint is pinned at v2.14.0 (the first release that reads go1.27.2 export data), the Taskfiles name garble v0.18.0 for obfuscated builds, and the generated bindings were regenerated (Go 1.27 routes `json.RawMessage` through `encoding/json/jsontext`).
 - #194 removed the linked-worktree Git-environment safety gate; new worktrees may branch from current `develop` after verifying a clean baseline.
 - The merge-resolution MVP (#164 Phase 2) generated its own follow-up backlog — #219-#223 — and the Phase 3 confidence layer added #240-#242, rather than any observed regression. Treat those as scoped enhancements, not defects.
 
 ### Latest delivery wave
+
+**v0.15.0 (2026-11-14)** shipped what `develop` held at the 2026-11-04 freeze,
+plus the post-freeze fixes its [contract](releases/v0.15.0.md) admitted:
+
+1. **Golem configuration:** the route editor no longer refuses the model a
+   route already uses, and a refusal names the use case that fails instead of
+   a role (#311, #338, #335); an override and a move off a shared model apply
+   together (#474); and the editor's notices name only what an edit changes
+   and every defined role it rewrites (#307, #349).
+2. **Golem runtime and commit messages:** go-llm v0.5.0 with its default tool
+   guards (#418), and a local chat endpoint dialed on loopback only (#427).
+   Commit message generation withholds the staged files Golem's file access
+   rules deny (#384), works with OpenCode Go and shows its progress (#505).
+3. **File tree, editor and diff:** paths read in the project folder's own
+   syntax (#447), tree rows that no longer select their text on double-click
+   (#462), a file tab click that focuses the editor (#505), diff-pane
+   scrollbars kept in sight (#448), and welcome-screen shortcut hints that
+   match the keys (#454). PRs #514 and #517 fixed two regressions from #505
+   after the freeze: a click on the tree's blank space and a press on its
+   scrollbar (#516) give it keyboard focus again.
+4. **Accessibility:** VoiceOver speaks a successful Apply, a repeated route
+   refusal and each file tree row (#505).
+5. **Platform and build:** release builds moved to go1.27.4 for GO-2026-6859
+   (#574).
 
 **v0.14.0 (2026-10-25)** shipped what `develop` held at the 2026-10-13 freeze,
 plus the post-freeze fixes its [contract](releases/v0.14.0.md) admitted:
