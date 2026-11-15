@@ -1685,5 +1685,154 @@
     ],
     "sourceOrigin": "env",
     "state": "ready"
+  },
+  "shared-join": {
+    "diagnostics": [],
+    "editable": true,
+    "models": [
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "stream",
+            "tool_call"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "capabilityOverride": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "effectiveCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "stream",
+          "tool_call"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "agent-model",
+        "provider": "ollama",
+        "removable": false,
+        "role": "agent-m",
+        "routedUseCases": [
+          "agent"
+        ],
+        "thinkMode": "",
+        "type": "dense"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "chat",
+            "generate",
+            "stream"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "effectiveCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "exposedCapabilities": [
+          "chat",
+          "generate",
+          "stream"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "chat-model",
+        "provider": "ollama",
+        "removable": false,
+        "role": "chat-m",
+        "routedUseCases": [
+          "chat"
+        ],
+        "thinkMode": "",
+        "type": "dense"
+      },
+      {
+        "capabilityFacts": {
+          "caps": [
+            "embed"
+          ],
+          "knownCaps": [
+            "chat",
+            "generate",
+            "stream",
+            "embed",
+            "tool_call",
+            "thinking",
+            "insert"
+          ]
+        },
+        "effectiveCapabilities": [
+          "embed"
+        ],
+        "exposedCapabilities": [
+          "embed"
+        ],
+        "hasSlots": false,
+        "hasThinkTags": false,
+        "modelName": "shared-model",
+        "provider": "ollama",
+        "removable": false,
+        "role": "emb-m",
+        "routedUseCases": [
+          "embedding"
+        ],
+        "thinkMode": "",
+        "type": "embedding"
+      }
+    ],
+    "providers": [
+      {
+        "apiFormat": "ollama",
+        "classification": "local",
+        "credentialState": "none",
+        "endpoint": "http://localhost:11434",
+        "name": "ollama"
+      }
+    ],
+    "readOnly": false,
+    "revision": "1604ff31eebd1f4ea27ce592ee5e1b91bbb6566370da1b0f305ab062960234f6",
+    "routes": [
+      {
+        "role": "agent-m",
+        "useCase": "agent"
+      },
+      {
+        "role": "chat-m",
+        "useCase": "chat"
+      },
+      {
+        "role": "emb-m",
+        "useCase": "embedding"
+      }
+    ],
+    "sourceOrigin": "env",
+    "state": "ready"
   }
 }

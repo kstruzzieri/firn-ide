@@ -30,6 +30,7 @@ import {
 } from '../../types/golem';
 import {
   changeStableID,
+  exposureAfter,
   floorShortfalls,
   governedUseCasesOf,
   leavingRoutes,
@@ -428,12 +429,12 @@ export function RoutingCard({
   /**
    * [W4-1][#315] The staged route change whose selector `applied` shares, and
    * whether its group is an OVERRIDE (a change onto the model its use case
-   * already has — the full facts, as the backend classifies it). Capabilities
-   * are one override per selector, so any change onto the selector leaves this
-   * row exposing them; think is written selector-wide only by an override
+   * already has — the full facts, as the backend classifies it). It decides
+   * the row's Think: written selector-wide only by an override
    * (SetRoleOverrides) — a role joining the selector leaves a neighbour with
    * no staged change of its own alone (a staged neighbour takes the group's
-   * coalesced Think, on its own row). A sibling the projection marks only
+   * coalesced Think, on its own row). Capabilities follow Apply's own rule
+   * instead (`exposureAfter`, #512). A sibling the projection marks only
    * through its ROLE — the
    * source role a retarget forks away from, a fallback chain — keeps every
    * applied value: §5.2b, siblings never change silently.
@@ -559,12 +560,11 @@ export function RoutingCard({
               provider: applied.provider,
               model: applied.modelName,
               think: governing?.override === true ? governing.change.thinkMode : applied.thinkMode,
-              // Never empty: the editor and both request parsers refuse an
-              // empty exposure [W5-1].
-              caps:
-                governing !== undefined
-                  ? governing.change.exposedCaps
-                  : applied.exposedCapabilities,
+              // [#512] The group's exposure only where Apply writes it onto
+              // the selector: a join it sends without a list leaves this
+              // role on its own set. Never empty: the editor and both
+              // request parsers refuse an empty exposure [W5-1].
+              caps: exposureAfter(base, changes, applied),
             };
     const markers = rows.get(useCase);
     const reach = routeReach.get(useCase);

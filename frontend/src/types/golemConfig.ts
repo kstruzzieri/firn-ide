@@ -1917,6 +1917,21 @@ const selectorValuesOf = (
   });
 };
 
+/**
+ * [#512] What `role` exposes once `changes` are applied — what its routing row
+ * shows and its route editor opens on: the selector group's exposure only
+ * where the group writes a list onto the selector (an override, or a join the
+ * backend's `assertedCapabilities` sends one for), else the role's own
+ * (`selectorValuesOf`). A join that writes no list leaves the selector's other
+ * roles on the set they derive.
+ */
+export const exposureAfter = (
+  base: DraftBaseProjection,
+  changes: readonly Change[],
+  role: ModelProjection
+): readonly CapabilityName[] =>
+  selectorValuesOf(base, changes, { provider: role.provider, model: role.modelName })(role).exposed;
+
 const appliedValues = (role: ModelProjection): RoleValues => ({
   exposed: role.exposedCapabilities,
   think: role.thinkMode,
