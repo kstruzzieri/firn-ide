@@ -296,7 +296,7 @@ describe('GolemPanel destination', () => {
     expect(screen.queryByText('Local')).not.toBeInTheDocument();
   });
 
-  it('states the fixed Phase 1 context scope', async () => {
+  it('states the fixed prompt-only context scope', async () => {
     hydrate();
     selectFocused();
     render(<GolemPanel visible />);

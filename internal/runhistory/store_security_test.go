@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const phase2CValidIndexRecordJSON = `{"historyId":"01900000-0000-7000-8000-000000000001","kind":"ordinary","profileId":"build","profileName":"Build","state":"success","exitCode":0,"startedAt":1,"completedAt":2,"outputAvailable":true,"size":1,"modifiedAt":1}`
+const validIndexRecordJSON = `{"historyId":"01900000-0000-7000-8000-000000000001","kind":"ordinary","profileId":"build","profileName":"Build","state":"success","exitCode":0,"startedAt":1,"completedAt":2,"outputAvailable":true,"size":1,"modifiedAt":1}`
 
 // Windows only grants SeCreateSymbolicLinkPrivilege under Developer Mode or
 // elevation. Probe the capability once, up front, so an unsupported host skips
@@ -42,7 +42,7 @@ func requireSymlinks(t *testing.T) {
 	}
 }
 
-func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
+func TestStore_RefusesSymlinkedArchiveDirectory(t *testing.T) {
 	requireSymlinks(t)
 	historyID, err := uuid.NewV7()
 	if err != nil {
@@ -50,18 +50,18 @@ func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
 	}
 	tests := map[string]func(*Store) error{
 		"Snapshot": func(store *Store) error {
-			_, err := store.Snapshot(phase2CWorkspacePath)
+			_, err := store.Snapshot(historyWorkspacePath)
 			return err
 		},
 		"Append": func(store *Store) error {
-			_, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 1, "secret"))
+			_, err := store.Append(historyWorkspacePath, ordinaryInput("build", 1, "secret"))
 			return err
 		},
 		"ClearRecord": func(store *Store) error {
-			return store.ClearRecord(phase2CWorkspacePath, historyID.String())
+			return store.ClearRecord(historyWorkspacePath, historyID.String())
 		},
 		"ClearAll": func(store *Store) error {
-			return store.ClearAll(phase2CWorkspacePath)
+			return store.ClearAll(historyWorkspacePath)
 		},
 	}
 	for component := range map[string]struct{}{"firn": {}, "run-history": {}, "workspace": {}} {
@@ -75,7 +75,7 @@ func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
 				}
 				firnDir := filepath.Join(home, "firn")
 				store := NewStore(filesystem.NewOS(), firnDir)
-				dir, err := store.workspaceDir(phase2CWorkspacePath)
+				dir, err := store.workspaceDir(historyWorkspacePath)
 				if err != nil {
 					t.Fatalf("workspaceDir: %v", err)
 				}
@@ -119,7 +119,7 @@ func TestStorePhase2C_RefusesSymlinkedArchiveDirectory(t *testing.T) {
 // are typed by Lstat during reconciliation before any open happens. Asserting
 // the umbrella hid that split, and hid that the "index" case is the only one
 // here that exercises openReadNoFollow at all.
-func TestStorePhase2C_RefusesSymlinkedOwnedFiles(t *testing.T) {
+func TestStore_RefusesSymlinkedOwnedFiles(t *testing.T) {
 	requireSymlinks(t)
 	tests := map[string]error{
 		"index":     filesystem.ErrSymlinkRefused,
@@ -130,7 +130,7 @@ func TestStorePhase2C_RefusesSymlinkedOwnedFiles(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			store := NewStore(filesystem.NewOS(), home)
-			dir, err := store.workspaceDir(phase2CWorkspacePath)
+			dir, err := store.workspaceDir(historyWorkspacePath)
 			if err != nil {
 				t.Fatalf("workspaceDir: %v", err)
 			}
@@ -158,7 +158,7 @@ func TestStorePhase2C_RefusesSymlinkedOwnedFiles(t *testing.T) {
 				t.Fatalf("Symlink: %v", err)
 			}
 
-			if _, err := store.Snapshot(phase2CWorkspacePath); !errors.Is(err, wantErr) {
+			if _, err := store.Snapshot(historyWorkspacePath); !errors.Is(err, wantErr) {
 				t.Fatalf("Snapshot error = %v, want %v", err, wantErr)
 			}
 			data, err := os.ReadFile(target)
@@ -172,12 +172,12 @@ func TestStorePhase2C_RefusesSymlinkedOwnedFiles(t *testing.T) {
 	}
 }
 
-func TestStorePhase2C_RefusesOwnedDirectories(t *testing.T) {
+func TestStore_RefusesOwnedDirectories(t *testing.T) {
 	for _, name := range []string{"index", "canonical", "temp"} {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			store := NewStore(filesystem.NewOS(), home)
-			dir, err := store.workspaceDir(phase2CWorkspacePath)
+			dir, err := store.workspaceDir(historyWorkspacePath)
 			if err != nil {
 				t.Fatalf("workspaceDir: %v", err)
 			}
@@ -201,14 +201,14 @@ func TestStorePhase2C_RefusesOwnedDirectories(t *testing.T) {
 				t.Fatalf("Mkdir(owned path): %v", err)
 			}
 
-			if _, err := store.Snapshot(phase2CWorkspacePath); !errors.Is(err, filesystem.ErrPathTypeMismatch) {
+			if _, err := store.Snapshot(historyWorkspacePath); !errors.Is(err, filesystem.ErrPathTypeMismatch) {
 				t.Fatalf("Snapshot error = %v, want ErrPathTypeMismatch", err)
 			}
 		})
 	}
 }
 
-func TestStorePhase2C_FIFOsReturnPromptly(t *testing.T) {
+func TestStore_FIFOsReturnPromptly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("FIFOs are not portable on Windows")
 	}
@@ -221,7 +221,7 @@ func TestStorePhase2C_FIFOsReturnPromptly(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			store := NewStore(filesystem.NewOS(), home)
-			dir, err := store.workspaceDir(phase2CWorkspacePath)
+			dir, err := store.workspaceDir(historyWorkspacePath)
 			if err != nil {
 				t.Fatalf("workspaceDir: %v", err)
 			}
@@ -242,7 +242,7 @@ func TestStorePhase2C_FIFOsReturnPromptly(t *testing.T) {
 
 			done := make(chan error, 1)
 			go func() {
-				_, err := store.Snapshot(phase2CWorkspacePath)
+				_, err := store.Snapshot(historyWorkspacePath)
 				done <- err
 			}()
 			select {
@@ -262,19 +262,19 @@ func TestStorePhase2C_FIFOsReturnPromptly(t *testing.T) {
 	}
 }
 
-func TestStorePhase2C_CanonicalRecordLimitSelfHeals(t *testing.T) {
+func TestStore_CanonicalRecordLimitSelfHeals(t *testing.T) {
 	home := t.TempDir()
 	seed := NewStore(filesystem.NewOS(), home)
 	seed.canonicalRecordLimit = 3
 	for i := 1; i <= 3; i++ {
-		if _, err := seed.Append(phase2CWorkspacePath, phase2COrdinaryInput("profile", int64(i), "saved")); err != nil {
+		if _, err := seed.Append(historyWorkspacePath, ordinaryInput("profile", int64(i), "saved")); err != nil {
 			t.Fatalf("seed Append %d: %v", i, err)
 		}
 	}
 
 	store := NewStore(filesystem.NewOS(), home)
 	store.canonicalRecordLimit = 2
-	snapshot, err := store.Snapshot(phase2CWorkspacePath)
+	snapshot, err := store.Snapshot(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot one over limit: %v", err)
 	}
@@ -283,19 +283,19 @@ func TestStorePhase2C_CanonicalRecordLimitSelfHeals(t *testing.T) {
 		snapshot.Summaries[1].CompletedAt != 3 {
 		t.Fatalf("reconciled summaries = %#v, want newest two", snapshot.Summaries)
 	}
-	if _, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("profile", 4, "saved")); err != nil {
+	if _, err := store.Append(historyWorkspacePath, ordinaryInput("profile", 4, "saved")); err != nil {
 		t.Fatalf("Append over limit: %v", err)
 	}
-	snapshot, err = store.Snapshot(phase2CWorkspacePath)
+	snapshot, err = store.Snapshot(historyWorkspacePath)
 	if err != nil || len(snapshot.Summaries) != 2 || snapshot.Summaries[1].CompletedAt != 4 {
 		t.Fatalf("post-Append Snapshot = %#v, err = %v", snapshot, err)
 	}
-	if err := store.ClearAll(phase2CWorkspacePath); err != nil {
+	if err := store.ClearAll(historyWorkspacePath); err != nil {
 		t.Fatalf("ClearAll after pruning: %v", err)
 	}
 }
 
-func TestStorePhase2C_DecodersRejectExcessiveCardinality(t *testing.T) {
+func TestStore_DecodersRejectExcessiveCardinality(t *testing.T) {
 	var record strings.Builder
 	record.WriteString(`{"version":1,"historyId":"01900000-0000-7000-8000-000000000001","kind":"ordinary","profileId":"build","profileName":"Build","state":"completed","outputAvailable":true,"entries":[`)
 	for i := 0; i < maxEntries+1; i++ {
@@ -316,7 +316,7 @@ func TestStorePhase2C_DecodersRejectExcessiveCardinality(t *testing.T) {
 		if i > 0 {
 			index.WriteByte(',')
 		}
-		index.WriteString(phase2CValidIndexRecordJSON)
+		index.WriteString(validIndexRecordJSON)
 	}
 	index.WriteString(`]}`)
 	if _, err := decodeIndex([]byte(index.String()), maxCanonicalRecords); err == nil ||
@@ -325,18 +325,18 @@ func TestStorePhase2C_DecodersRejectExcessiveCardinality(t *testing.T) {
 	}
 }
 
-func TestStorePhase2C_DecodeIndexRejectsDuplicateRecordArrays(t *testing.T) {
+func TestStore_DecodeIndexRejectsDuplicateRecordArrays(t *testing.T) {
 	data := []byte(
-		`{"version":1,"records":[` + phase2CValidIndexRecordJSON + `,` +
-			phase2CValidIndexRecordJSON + `],"records":[` +
-			phase2CValidIndexRecordJSON + `,` + phase2CValidIndexRecordJSON + `]}`,
+		`{"version":1,"records":[` + validIndexRecordJSON + `,` +
+			validIndexRecordJSON + `],"records":[` +
+			validIndexRecordJSON + `,` + validIndexRecordJSON + `]}`,
 	)
 	if _, err := decodeIndex(data, 2); err == nil {
 		t.Fatal("decodeIndex accepted duplicate records arrays that reset the cardinality limit")
 	}
 }
 
-func TestStorePhase2C_DecoderRejectsInvalidDurableSchemas(t *testing.T) {
+func TestStore_DecoderRejectsInvalidDurableSchemas(t *testing.T) {
 	valid := Record{
 		Version: storeVersion,
 		Summary: Summary{
@@ -347,7 +347,7 @@ func TestStorePhase2C_DecoderRejectsInvalidDurableSchemas(t *testing.T) {
 			State:           "completed",
 			OutputAvailable: true,
 		},
-		WorkingDir: phase2CWorkspacePath,
+		WorkingDir: historyWorkspacePath,
 		Entries:    []OutputEntry{{Stream: "stdout", Text: "ok"}},
 	}
 	tests := map[string]Record{
@@ -388,7 +388,7 @@ func TestStorePhase2C_DecoderRejectsInvalidDurableSchemas(t *testing.T) {
 // uuid.Parse also accepts the "urn:uuid:", braced, and unhyphenated encodings of
 // a v7 UUID. Each names a different file under recordPath, and ':' opens an NTFS
 // alternate data stream on Windows, so only the canonical form is a valid ID.
-func TestStorePhase2C_RejectsNonCanonicalHistoryIDEncodings(t *testing.T) {
+func TestStore_RejectsNonCanonicalHistoryIDEncodings(t *testing.T) {
 	// Hex letters in every group so the uppercase encoding is a distinct string.
 	canonical := "019abcde-0000-7000-8abc-0000000000ff"
 	if err := validateHistoryID(canonical); err != nil {
@@ -433,7 +433,7 @@ func TestStorePhase2C_RejectsNonCanonicalHistoryIDEncodings(t *testing.T) {
 // ~/.firn predates run history on any install that ran a managed language
 // server, and MkdirAll leaves an existing directory's mode alone. A 0755 parent
 // leaves the whole 0700 archive tree traversable by other local accounts.
-func TestStorePhase2C_TightensAPreexistingLooseFirnTree(t *testing.T) {
+func TestStore_TightensAPreexistingLooseFirnTree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows os.Chmod models only the read-only attribute, not POSIX mode bits")
 	}
@@ -444,7 +444,7 @@ func TestStorePhase2C_TightensAPreexistingLooseFirnTree(t *testing.T) {
 	}
 
 	store := NewStore(filesystem.NewOS(), firnDir)
-	if _, err := store.Append(phase2CWorkspacePath, RecordInput{
+	if _, err := store.Append(historyWorkspacePath, RecordInput{
 		Kind: RecordKindOrdinary, ProfileID: "build", ProfileName: "Build", State: "success",
 	}); err != nil {
 		t.Fatalf("Append: %v", err)
@@ -463,11 +463,11 @@ func TestStorePhase2C_TightensAPreexistingLooseFirnTree(t *testing.T) {
 
 // Output dropped to fit the record budget must be marked, or the archived run
 // renders as complete and Diff invents a tail difference against a full run.
-func TestStorePhase2C_MarksTruncatedOutput(t *testing.T) {
+func TestStore_MarksTruncatedOutput(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(filesystem.NewOS(), home)
 
-	small, err := store.Append(phase2CWorkspacePath, RecordInput{
+	small, err := store.Append(historyWorkspacePath, RecordInput{
 		Kind: RecordKindOrdinary, ProfileID: "build", ProfileName: "Build", State: "success",
 		Entries: []OutputEntry{{Stream: "stdout", Text: "short"}},
 	})
@@ -483,7 +483,7 @@ func TestStorePhase2C_MarksTruncatedOutput(t *testing.T) {
 	for i := range oversized {
 		oversized[i] = OutputEntry{Stream: "stdout", Text: strings.Repeat("x", 1<<20)}
 	}
-	big, err := store.Append(phase2CWorkspacePath, RecordInput{
+	big, err := store.Append(historyWorkspacePath, RecordInput{
 		Kind: RecordKindOrdinary, ProfileID: "build", ProfileName: "Build", State: "success",
 		Entries: oversized,
 	})
@@ -496,7 +496,7 @@ func TestStorePhase2C_MarksTruncatedOutput(t *testing.T) {
 
 	// The flag must survive the round trip, and reconciliation must read it back
 	// off the index rather than losing it.
-	record, err := store.GetRecord(phase2CWorkspacePath, big.HistoryID)
+	record, err := store.GetRecord(historyWorkspacePath, big.HistoryID)
 	if err != nil {
 		t.Fatalf("GetRecord: %v", err)
 	}
@@ -515,7 +515,7 @@ func TestStorePhase2C_MarksTruncatedOutput(t *testing.T) {
 	if savedBytes >= sourceBytes {
 		t.Fatalf("nothing was actually dropped: saved %d of %d bytes", savedBytes, sourceBytes)
 	}
-	snapshot, err := store.Snapshot(phase2CWorkspacePath)
+	snapshot, err := store.Snapshot(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -528,10 +528,10 @@ func TestStorePhase2C_MarksTruncatedOutput(t *testing.T) {
 
 // A caller that already dropped output before crossing the binding reports it,
 // and redaction clears a flag that no longer describes anything.
-func TestStorePhase2C_CarriesCallerTruncationAndClearsItOnRedaction(t *testing.T) {
+func TestStore_CarriesCallerTruncationAndClearsItOnRedaction(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(filesystem.NewOS(), home)
-	saved, err := store.Append(phase2CWorkspacePath, RecordInput{
+	saved, err := store.Append(historyWorkspacePath, RecordInput{
 		Kind: RecordKindOrdinary, ProfileID: "build", ProfileName: "Build", State: "success",
 		Entries: []OutputEntry{{Stream: "stdout", Text: "kept"}}, Truncated: true,
 	})
@@ -541,10 +541,10 @@ func TestStorePhase2C_CarriesCallerTruncationAndClearsItOnRedaction(t *testing.T
 	if !saved.Truncated {
 		t.Fatal("caller-reported truncation was dropped")
 	}
-	if err := store.ClearRecord(phase2CWorkspacePath, saved.HistoryID); err != nil {
+	if err := store.ClearRecord(historyWorkspacePath, saved.HistoryID); err != nil {
 		t.Fatalf("ClearRecord: %v", err)
 	}
-	record, err := store.GetRecord(phase2CWorkspacePath, saved.HistoryID)
+	record, err := store.GetRecord(historyWorkspacePath, saved.HistoryID)
 	if err != nil {
 		t.Fatalf("GetRecord: %v", err)
 	}

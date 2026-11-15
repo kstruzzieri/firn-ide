@@ -15,41 +15,41 @@ import (
 )
 
 const (
-	phase2CMaxRecordBytes  = 10 << 20
-	phase2CWorkspaceTarget = 20 << 20
+	historyMaxRecordBytes = 10 << 20
+	workspaceTarget       = 20 << 20
 )
 
-var phase2CWorkspacePath = filepath.FromSlash("/repo")
+var historyWorkspacePath = filepath.FromSlash("/repo")
 
 // Golden, not recomputed. The workspace ID names a directory on disk in every
 // install that has ever recorded a run; changing how it is derived orphans that
 // history silently, with no error and no migration. Recomputing sha256 here
 // would assert only that the code does what the code does. The value differs per
 // platform because the derivation hashes the cleaned native path.
-var phase2CWorkspaceIDForRepo = map[string]string{
+var workspaceIDForRepo = map[string]string{
 	"windows": "c6642de6e88ccf8d", // sha256(`\repo`)[:8]
 }[runtime.GOOS]
 
 func init() {
-	if phase2CWorkspaceIDForRepo == "" {
-		phase2CWorkspaceIDForRepo = "816fc349d3faebf8" // sha256("/repo")[:8]
+	if workspaceIDForRepo == "" {
+		workspaceIDForRepo = "816fc349d3faebf8" // sha256("/repo")[:8]
 	}
 }
 
-func phase2CWorkspaceDir(t *testing.T, store *Store) string {
+func historyWorkspaceDir(t *testing.T, store *Store) string {
 	t.Helper()
-	dir, err := store.workspaceDir(phase2CWorkspacePath)
+	dir, err := store.workspaceDir(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("workspaceDir: %v", err)
 	}
 	return dir
 }
 
-func phase2CExpectedWorkspaceDir(home string) string {
-	return filepath.Join(home, "run-history", phase2CWorkspaceIDForRepo)
+func expectedWorkspaceDir(home string) string {
+	return filepath.Join(home, "run-history", workspaceIDForRepo)
 }
 
-func phase2COrdinaryInput(profileID string, completedAt int64, text string) RecordInput {
+func ordinaryInput(profileID string, completedAt int64, text string) RecordInput {
 	input := RecordInput{
 		Kind:        RecordKindOrdinary,
 		ProfileID:   profileID,
@@ -58,7 +58,7 @@ func phase2COrdinaryInput(profileID string, completedAt int64, text string) Reco
 		ExitCode:    0,
 		StartedAt:   completedAt - 100,
 		CompletedAt: completedAt,
-		WorkingDir:  phase2CWorkspacePath,
+		WorkingDir:  historyWorkspacePath,
 		Entries: []OutputEntry{{
 			Stream:    "stdout",
 			Text:      text,
@@ -70,7 +70,7 @@ func phase2COrdinaryInput(profileID string, completedAt int64, text string) Reco
 	return input
 }
 
-func phase2CRecordFiles(t *testing.T, workspaceDir string) []string {
+func recordFiles(t *testing.T, workspaceDir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(workspaceDir)
 	if err != nil {
@@ -86,7 +86,7 @@ func phase2CRecordFiles(t *testing.T, workspaceDir string) []string {
 	return paths
 }
 
-func phase2CAssertNoSensitiveSchemaKeys(t *testing.T, value any) {
+func assertNoSensitiveSchemaKeys(t *testing.T, value any) {
 	t.Helper()
 	switch value := value.(type) {
 	case map[string]any:
@@ -100,20 +100,20 @@ func phase2CAssertNoSensitiveSchemaKeys(t *testing.T, value any) {
 				strings.Contains(lower, "launchseq") {
 				t.Fatalf("persisted history contains forbidden schema key %q", key)
 			}
-			phase2CAssertNoSensitiveSchemaKeys(t, child)
+			assertNoSensitiveSchemaKeys(t, child)
 		}
 	case []any:
 		for _, child := range value {
-			phase2CAssertNoSensitiveSchemaKeys(t, child)
+			assertNoSensitiveSchemaKeys(t, child)
 		}
 	}
 }
 
-func TestStorePhase2C_WritesPrivateVersionedLazyRecordAndDerivedIndex(t *testing.T) {
+func TestStore_WritesPrivateVersionedLazyRecordAndDerivedIndex(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(filesystem.NewOS(), home)
 
-	input := phase2COrdinaryInput("build", 1_000, "ok\n")
+	input := ordinaryInput("build", 1_000, "ok\n")
 	inputData, err := json.Marshal(input)
 	if err != nil {
 		t.Fatalf("Marshal(input): %v", err)
@@ -126,7 +126,7 @@ func TestStorePhase2C_WritesPrivateVersionedLazyRecordAndDerivedIndex(t *testing
 		t.Fatalf("input workspaceEpoch = %#v, want 77", inputSchema["workspaceEpoch"])
 	}
 
-	saved, err := store.Append(phase2CWorkspacePath, input)
+	saved, err := store.Append(historyWorkspacePath, input)
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -135,8 +135,8 @@ func TestStorePhase2C_WritesPrivateVersionedLazyRecordAndDerivedIndex(t *testing
 		t.Fatalf("history ID = %q, want UUIDv7: %v", saved.HistoryID, err)
 	}
 
-	workspaceDir := phase2CExpectedWorkspaceDir(home)
-	if actual := phase2CWorkspaceDir(t, store); actual != workspaceDir {
+	workspaceDir := expectedWorkspaceDir(home)
+	if actual := historyWorkspaceDir(t, store); actual != workspaceDir {
 		t.Fatalf("workspaceDir = %q, want %q", actual, workspaceDir)
 	}
 	dirInfo, err := os.Stat(workspaceDir)
@@ -168,9 +168,9 @@ func TestStorePhase2C_WritesPrivateVersionedLazyRecordAndDerivedIndex(t *testing
 	if schema["version"] != float64(1) {
 		t.Fatalf("record version = %#v, want 1", schema["version"])
 	}
-	phase2CAssertNoSensitiveSchemaKeys(t, schema)
+	assertNoSensitiveSchemaKeys(t, schema)
 
-	snapshot, err := store.Snapshot(phase2CWorkspacePath)
+	snapshot, err := store.Snapshot(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -193,34 +193,34 @@ func TestStorePhase2C_WritesPrivateVersionedLazyRecordAndDerivedIndex(t *testing
 	if err := json.Unmarshal(indexData, &indexSchema); err != nil {
 		t.Fatalf("index is not valid JSON: %v", err)
 	}
-	phase2CAssertNoSensitiveSchemaKeys(t, indexSchema)
+	assertNoSensitiveSchemaKeys(t, indexSchema)
 	if _, hasEntries := indexSchema["entries"]; hasEntries {
 		t.Fatalf("derived index eagerly contains rich output: %s", indexData)
 	}
-	record, err := store.GetRecord(phase2CWorkspacePath, saved.HistoryID)
+	record, err := store.GetRecord(historyWorkspacePath, saved.HistoryID)
 	if err != nil || len(record.Entries) != 1 || record.Entries[0].Text != "ok\n" {
 		t.Fatalf("lazy GetRecord = %#v, err = %v", record, err)
 	}
 }
 
-func TestStorePhase2C_AppendRejectsInvalidBoundedRecordBeforePublishing(t *testing.T) {
+func TestStore_AppendRejectsInvalidBoundedRecordBeforePublishing(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(filesystem.NewOS(), home)
-	input := phase2COrdinaryInput("build", 1_500, "must not persist\n")
+	input := ordinaryInput("build", 1_500, "must not persist\n")
 	input.State = ""
 
-	if _, err := store.Append(phase2CWorkspacePath, input); err == nil {
+	if _, err := store.Append(historyWorkspacePath, input); err == nil {
 		t.Error("Append accepted an invalid persisted record")
 	}
-	workspaceDir := phase2CWorkspaceDir(t, store)
+	workspaceDir := historyWorkspaceDir(t, store)
 	if _, err := os.Stat(workspaceDir); err == nil {
-		if files := phase2CRecordFiles(t, workspaceDir); len(files) != 0 {
+		if files := recordFiles(t, workspaceDir); len(files) != 0 {
 			t.Errorf("Append published %d canonical record files, want 0", len(files))
 		}
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("stat run history workspace: %v", err)
 	}
-	snapshot, err := store.Snapshot(phase2CWorkspacePath)
+	snapshot, err := store.Snapshot(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -229,24 +229,24 @@ func TestStorePhase2C_AppendRejectsInvalidBoundedRecordBeforePublishing(t *testi
 	}
 }
 
-func TestStorePhase2C_ReconcilesStaleIndexAndUsesStableSameMillisecondOrder(t *testing.T) {
+func TestStore_ReconcilesStaleIndexAndUsesStableSameMillisecondOrder(t *testing.T) {
 	home := t.TempDir()
 	first := NewStore(filesystem.NewOS(), home)
 	second := NewStore(filesystem.NewOS(), home)
-	inputA := phase2COrdinaryInput("build", 2_000, "a\n")
-	inputB := phase2COrdinaryInput("build", 2_000, "b\n")
+	inputA := ordinaryInput("build", 2_000, "a\n")
+	inputB := ordinaryInput("build", 2_000, "b\n")
 
-	savedA, err := first.Append(phase2CWorkspacePath, inputA)
+	savedA, err := first.Append(historyWorkspacePath, inputA)
 	if err != nil {
 		t.Fatalf("first Append: %v", err)
 	}
-	workspaceDir := phase2CWorkspaceDir(t, first)
+	workspaceDir := historyWorkspaceDir(t, first)
 	indexPath := filepath.Join(workspaceDir, "index.json")
 	staleIndex, err := os.ReadFile(indexPath)
 	if err != nil {
 		t.Fatalf("read one-record index: %v", err)
 	}
-	savedB, err := second.Append(phase2CWorkspacePath, inputB)
+	savedB, err := second.Append(historyWorkspacePath, inputB)
 	if err != nil {
 		t.Fatalf("second-store Append: %v", err)
 	}
@@ -261,11 +261,11 @@ func TestStorePhase2C_ReconcilesStaleIndexAndUsesStableSameMillisecondOrder(t *t
 	// A valid but stale derived index must reconcile against both canonical
 	// files. Same-millisecond UUIDv7 order need only remain stable across fresh
 	// loads; it is not asserted to be chronological.
-	one, err := NewStore(filesystem.NewOS(), home).Snapshot(phase2CWorkspacePath)
+	one, err := NewStore(filesystem.NewOS(), home).Snapshot(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("stale-index Snapshot: %v", err)
 	}
-	two, err := NewStore(filesystem.NewOS(), home).Snapshot(phase2CWorkspacePath)
+	two, err := NewStore(filesystem.NewOS(), home).Snapshot(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("second reconciled Snapshot: %v", err)
 	}
@@ -285,12 +285,12 @@ func TestStorePhase2C_ReconcilesStaleIndexAndUsesStableSameMillisecondOrder(t *t
 	}
 }
 
-func TestStorePhase2C_RetainsFiveRichRecordsAndFiftySummariesWithMonotonicRedaction(t *testing.T) {
+func TestStore_RetainsFiveRichRecordsAndFiftySummariesWithMonotonicRedaction(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(filesystem.NewOS(), home)
 	var firstID string
 	for i := 1; i <= 51; i++ {
-		saved, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", int64(i), "line\n"))
+		saved, err := store.Append(historyWorkspacePath, ordinaryInput("build", int64(i), "line\n"))
 		if err != nil {
 			t.Fatalf("Append %d: %v", i, err)
 		}
@@ -299,15 +299,15 @@ func TestStorePhase2C_RetainsFiveRichRecordsAndFiftySummariesWithMonotonicRedact
 		}
 	}
 
-	snapshot, err := store.Snapshot(phase2CWorkspacePath)
+	snapshot, err := store.Snapshot(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	if len(snapshot.Summaries) != 50 {
 		t.Fatalf("summary count = %d, want 50", len(snapshot.Summaries))
 	}
-	workspaceDir := phase2CWorkspaceDir(t, store)
-	if got := len(phase2CRecordFiles(t, workspaceDir)); got != 50 {
+	workspaceDir := historyWorkspaceDir(t, store)
+	if got := len(recordFiles(t, workspaceDir)); got != 50 {
 		t.Fatalf("canonical record count = %d, want 50", got)
 	}
 	richCount := 0
@@ -324,10 +324,10 @@ func TestStorePhase2C_RetainsFiveRichRecordsAndFiftySummariesWithMonotonicRedact
 	}
 
 	newest := snapshot.Summaries[len(snapshot.Summaries)-1]
-	if err := store.ClearRecord(phase2CWorkspacePath, newest.HistoryID); err != nil {
+	if err := store.ClearRecord(historyWorkspacePath, newest.HistoryID); err != nil {
 		t.Fatalf("ClearRecord: %v", err)
 	}
-	afterClear, err := store.Snapshot(phase2CWorkspacePath)
+	afterClear, err := store.Snapshot(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot after clear: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestStorePhase2C_RetainsFiveRichRecordsAndFiftySummariesWithMonotonicRedact
 	if cleared.HistoryID != newest.HistoryID || cleared.OutputAvailable {
 		t.Fatalf("clear did not leave a summary-only tombstone: %#v", cleared)
 	}
-	redacted, err := store.GetRecord(phase2CWorkspacePath, newest.HistoryID)
+	redacted, err := store.GetRecord(historyWorkspacePath, newest.HistoryID)
 	if err != nil {
 		t.Fatalf("GetRecord after clear: %v", err)
 	}
@@ -345,14 +345,14 @@ func TestStorePhase2C_RetainsFiveRichRecordsAndFiftySummariesWithMonotonicRedact
 
 	// The 51st-summary pruning is the only operation here that removes a
 	// canonical record entirely.
-	if _, err := store.GetRecord(phase2CWorkspacePath, firstID); err == nil {
+	if _, err := store.GetRecord(historyWorkspacePath, firstID); err == nil {
 		t.Fatal("oldest record survived the 50-summary cap")
 	}
 
-	if err := store.ClearAll(phase2CWorkspacePath); err != nil {
+	if err := store.ClearAll(historyWorkspacePath); err != nil {
 		t.Fatalf("ClearAll: %v", err)
 	}
-	afterClearAll, err := store.Snapshot(phase2CWorkspacePath)
+	afterClearAll, err := store.Snapshot(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot after ClearAll: %v", err)
 	}
@@ -363,13 +363,13 @@ func TestStorePhase2C_RetainsFiveRichRecordsAndFiftySummariesWithMonotonicRedact
 	}
 }
 
-func TestStorePhase2C_BudgetsHugeUTF8EntryAndKeepsWorkspaceAtTarget(t *testing.T) {
+func TestStore_BudgetsHugeUTF8EntryAndKeepsWorkspaceAtTarget(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(filesystem.NewOS(), home)
 	huge := strings.Repeat("界", 4_000_000) // 12 MB UTF-8 in one OutputEntry.
 
 	for i, profileID := range []string{"one", "two", "three"} {
-		input := phase2COrdinaryInput(profileID, int64(3_000+i), huge)
+		input := ordinaryInput(profileID, int64(3_000+i), huge)
 		for entry := 1; entry <= 10_000; entry++ {
 			input.Entries = append(input.Entries, OutputEntry{
 				Stream:    "stdout",
@@ -377,11 +377,11 @@ func TestStorePhase2C_BudgetsHugeUTF8EntryAndKeepsWorkspaceAtTarget(t *testing.T
 				Timestamp: int64(entry),
 			})
 		}
-		saved, err := store.Append(phase2CWorkspacePath, input)
+		saved, err := store.Append(historyWorkspacePath, input)
 		if err != nil {
 			t.Fatalf("Append huge record %d: %v", i, err)
 		}
-		record, err := store.GetRecord(phase2CWorkspacePath, saved.HistoryID)
+		record, err := store.GetRecord(historyWorkspacePath, saved.HistoryID)
 		if err != nil {
 			t.Fatalf("GetRecord huge record %d: %v", i, err)
 		}
@@ -390,7 +390,7 @@ func TestStorePhase2C_BudgetsHugeUTF8EntryAndKeepsWorkspaceAtTarget(t *testing.T
 		}
 	}
 
-	workspaceDir := phase2CWorkspaceDir(t, store)
+	workspaceDir := historyWorkspaceDir(t, store)
 	var total int64
 	allFiles, err := os.ReadDir(workspaceDir)
 	if err != nil {
@@ -405,8 +405,8 @@ func TestStorePhase2C_BudgetsHugeUTF8EntryAndKeepsWorkspaceAtTarget(t *testing.T
 		if err != nil {
 			t.Fatalf("Stat(%q): %v", path, err)
 		}
-		if entry.Name() != "index.json" && info.Size() > phase2CMaxRecordBytes {
-			t.Fatalf("record %q size = %d, want <= %d", path, info.Size(), phase2CMaxRecordBytes)
+		if entry.Name() != "index.json" && info.Size() > historyMaxRecordBytes {
+			t.Fatalf("record %q size = %d, want <= %d", path, info.Size(), historyMaxRecordBytes)
 		}
 		total += info.Size()
 		if entry.Name() != "index.json" {
@@ -419,30 +419,30 @@ func TestStorePhase2C_BudgetsHugeUTF8EntryAndKeepsWorkspaceAtTarget(t *testing.T
 			}
 		}
 	}
-	if total > phase2CWorkspaceTarget {
-		t.Fatalf("rich workspace bytes = %d, want <= %d", total, phase2CWorkspaceTarget)
+	if total > workspaceTarget {
+		t.Fatalf("rich workspace bytes = %d, want <= %d", total, workspaceTarget)
 	}
 }
 
-func TestStorePhase2C_EmptyHomeCorruptIndexRecoveryAndUnsupportedVersion(t *testing.T) {
+func TestStore_EmptyHomeCorruptIndexRecoveryAndUnsupportedVersion(t *testing.T) {
 	store := NewStore(filesystem.NewOS(), "")
-	if _, err := store.Snapshot(phase2CWorkspacePath); err == nil || !strings.Contains(err.Error(), "home") {
+	if _, err := store.Snapshot(historyWorkspacePath); err == nil || !strings.Contains(err.Error(), "home") {
 		t.Fatalf("Snapshot with empty home error = %v, want visible home-resolution failure", err)
 	}
 
 	home := t.TempDir()
 	store = NewStore(filesystem.NewOS(), home)
-	saved, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 5_000, "recover\n"))
+	saved, err := store.Append(historyWorkspacePath, ordinaryInput("build", 5_000, "recover\n"))
 	if err != nil {
 		t.Fatalf("seed Append: %v", err)
 	}
-	workspaceDir := phase2CWorkspaceDir(t, store)
+	workspaceDir := historyWorkspaceDir(t, store)
 	indexPath := filepath.Join(workspaceDir, "index.json")
 	if err := os.WriteFile(indexPath, []byte("{recover-me"), 0o600); err != nil {
 		t.Fatalf("seed corrupt index: %v", err)
 	}
 	store = NewStore(filesystem.NewOS(), home)
-	recovered, err := store.Snapshot(phase2CWorkspacePath)
+	recovered, err := store.Snapshot(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot did not self-heal corrupt derived index: %v", err)
 	}
@@ -452,7 +452,7 @@ func TestStorePhase2C_EmptyHomeCorruptIndexRecoveryAndUnsupportedVersion(t *test
 	if len(recovered.Summaries) != 1 || recovered.Summaries[0].HistoryID != saved.HistoryID {
 		t.Fatalf("recovered snapshot = %#v, want seeded canonical record", recovered)
 	}
-	if _, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 5_100, "after recovery\n")); err != nil {
+	if _, err := store.Append(historyWorkspacePath, ordinaryInput("build", 5_100, "after recovery\n")); err != nil {
 		t.Fatalf("Append after corrupt-index reconciliation: %v", err)
 	}
 
@@ -461,10 +461,10 @@ func TestStorePhase2C_EmptyHomeCorruptIndexRecoveryAndUnsupportedVersion(t *test
 		t.Fatalf("seed unsupported index: %v", err)
 	}
 	store = NewStore(filesystem.NewOS(), home)
-	if _, err := store.Snapshot(phase2CWorkspacePath); err == nil {
+	if _, err := store.Snapshot(historyWorkspacePath); err == nil {
 		t.Fatal("unsupported newer index version did not produce a visible error")
 	}
-	if _, err := store.Append(phase2CWorkspacePath, phase2COrdinaryInput("build", 5_200, "blocked\n")); err == nil {
+	if _, err := store.Append(historyWorkspacePath, ordinaryInput("build", 5_200, "blocked\n")); err == nil {
 		t.Fatal("append overwrote an unsupported newer index")
 	}
 	got, err := os.ReadFile(indexPath)
@@ -476,7 +476,7 @@ func TestStorePhase2C_EmptyHomeCorruptIndexRecoveryAndUnsupportedVersion(t *test
 	}
 }
 
-func TestStorePhase2C_CompoundAggregateAndStepAreAlwaysBoundedSummaryOnly(t *testing.T) {
+func TestStore_CompoundAggregateAndStepAreAlwaysBoundedSummaryOnly(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(filesystem.NewOS(), home)
 	entries := make([]OutputEntry, 10_001)
@@ -485,15 +485,15 @@ func TestStorePhase2C_CompoundAggregateAndStepAreAlwaysBoundedSummaryOnly(t *tes
 	}
 
 	for _, kind := range []RecordKind{RecordKindCompoundAggregate, RecordKindCompoundStep} {
-		input := phase2COrdinaryInput("build", 6_000+int64(len(kind)), "ignored")
+		input := ordinaryInput("build", 6_000+int64(len(kind)), "ignored")
 		input.Kind = kind
 		input.WorkingDir = filepath.FromSlash("/sensitive/compound/path")
 		input.Entries = entries
-		saved, err := store.Append(phase2CWorkspacePath, input)
+		saved, err := store.Append(historyWorkspacePath, input)
 		if err != nil {
 			t.Fatalf("Append(%s): %v", kind, err)
 		}
-		record, err := store.GetRecord(phase2CWorkspacePath, saved.HistoryID)
+		record, err := store.GetRecord(historyWorkspacePath, saved.HistoryID)
 		if err != nil {
 			t.Fatalf("GetRecord(%s): %v", kind, err)
 		}
@@ -502,7 +502,7 @@ func TestStorePhase2C_CompoundAggregateAndStepAreAlwaysBoundedSummaryOnly(t *tes
 		}
 	}
 
-	snapshot, err := store.Snapshot(phase2CWorkspacePath)
+	snapshot, err := store.Snapshot(historyWorkspacePath)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}

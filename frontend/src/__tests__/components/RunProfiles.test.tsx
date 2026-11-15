@@ -118,7 +118,7 @@ function makeRunOutput(
   } as RunOutput;
 }
 
-const setPhase2BState = (patch: Partial<ReturnType<typeof useIDEStore.getState>>) => {
+const setRunIdentityState = (patch: Partial<ReturnType<typeof useIDEStore.getState>>) => {
   useIDEStore.setState(patch);
 };
 
@@ -190,7 +190,7 @@ describe('RunProfiles panel header counter', () => {
   });
 
   it('uses the newest live execution for a mixed live-and-failed profile card', () => {
-    setPhase2BState({
+    setRunIdentityState({
       runProfiles: [pinnedProfile],
       runProfileState: {},
       runOutputs: {
@@ -212,7 +212,7 @@ describe('RunProfiles panel header counter', () => {
   });
 
   it('offers Run another with one live plus one terminal execution and removes it at the two-live cap', () => {
-    setPhase2BState({
+    setRunIdentityState({
       runProfiles: [pinnedProfile],
       runProfileState: {},
       runOutputs: {
@@ -232,7 +232,7 @@ describe('RunProfiles panel header counter', () => {
     expect(mockStartProfile).toHaveBeenCalledWith(pinnedProfile.id);
 
     act(() => {
-      setPhase2BState({
+      setRunIdentityState({
         runOutputs: {
           first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
           second: makeRunOutput(pinnedProfile.id, 'idle', 'second', 21),
@@ -248,7 +248,7 @@ describe('RunProfiles panel header counter', () => {
   });
 
   it('badges the card only once a profile has more than one live execution', () => {
-    setPhase2BState({
+    setRunIdentityState({
       runProfiles: [pinnedProfile],
       runProfileState: {},
       runOutputs: {
@@ -267,7 +267,7 @@ describe('RunProfiles panel header counter', () => {
     expect(screen.queryByText('2 running')).not.toBeInTheDocument();
 
     act(() => {
-      setPhase2BState({
+      setRunIdentityState({
         runOutputs: {
           first: makeRunOutput(pinnedProfile.id, 'running', 'first', 20),
           second: makeRunOutput(pinnedProfile.id, 'idle', 'second', 21),
@@ -284,7 +284,7 @@ describe('RunProfiles panel header counter', () => {
     expect(screen.getByText('2 running')).toBeInTheDocument();
 
     act(() => {
-      setPhase2BState({
+      setRunIdentityState({
         runOutputs: {
           first: makeRunOutput(pinnedProfile.id, 'stopped', 'first', 20),
           second: makeRunOutput(pinnedProfile.id, 'running', 'second', 21),

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func phase2CStatusForProfile(
+func statusForProfile(
 	t *testing.T,
 	spy *emitSpy,
 	profileID string,
@@ -29,7 +29,7 @@ func phase2CStatusForProfile(
 	return RunStatus{}
 }
 
-func phase2CTerminalStatusForProfile(t *testing.T, spy *emitSpy, profileID string) RunStatus {
+func terminalStatusForProfile(t *testing.T, spy *emitSpy, profileID string) RunStatus {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -45,7 +45,7 @@ func phase2CTerminalStatusForProfile(t *testing.T, spy *emitSpy, profileID strin
 	return RunStatus{}
 }
 
-func TestRunStatusPhase2C_ReasonIsAdditiveAndEmptyByDefault(t *testing.T) {
+func TestRunStatus_ReasonIsAdditiveAndEmptyByDefault(t *testing.T) {
 	status := RunStatus{}
 	if got := status.Reason; got != "" {
 		t.Fatalf("zero RunStatus reason = %q, want empty", got)
@@ -59,7 +59,7 @@ func TestRunStatusPhase2C_ReasonIsAdditiveAndEmptyByDefault(t *testing.T) {
 	}
 }
 
-func TestExecutorPhase2C_UserStopAndExistingStopAllKeepReasonEmpty(t *testing.T) {
+func TestExecutor_UserStopAndExistingStopAllKeepReasonEmpty(t *testing.T) {
 	t.Run("exact user stop", func(t *testing.T) {
 		spy := &emitSpy{}
 		executor := NewExecutor(spy.emit, nil)
@@ -74,7 +74,7 @@ func TestExecutorPhase2C_UserStopAndExistingStopAllKeepReasonEmpty(t *testing.T)
 		if err := executor.StopRunInstance(running.RunInstanceID); err != nil {
 			t.Fatalf("StopRunInstance: %v", err)
 		}
-		stopped := phase2BStatusFor(t, spy, running.RunInstanceID, RunStateStopped)
+		stopped := statusFor(t, spy, running.RunInstanceID, RunStateStopped)
 		if got := stopped.Reason; got != "" {
 			t.Fatalf("user stop reason = %q, want empty", got)
 		}
@@ -94,14 +94,14 @@ func TestExecutorPhase2C_UserStopAndExistingStopAllKeepReasonEmpty(t *testing.T)
 		if !executor.StopAll(2 * time.Second) {
 			t.Fatal("StopAll did not finish")
 		}
-		stopped := phase2BStatusFor(t, spy, running.RunInstanceID, RunStateStopped)
+		stopped := statusFor(t, spy, running.RunInstanceID, RunStateStopped)
 		if got := stopped.Reason; got != "" {
 			t.Fatalf("compatibility StopAll reason = %q, want empty", got)
 		}
 	})
 }
 
-func TestExecutorPhase2C_AdministrativeStopAllReasonsOrdinaryAndCompoundStatuses(t *testing.T) {
+func TestExecutor_AdministrativeStopAllReasonsOrdinaryAndCompoundStatuses(t *testing.T) {
 	for _, reason := range []string{"workspace-switch", "shutdown"} {
 		t.Run("ordinary/"+reason, func(t *testing.T) {
 			spy := &emitSpy{}
@@ -117,7 +117,7 @@ func TestExecutorPhase2C_AdministrativeStopAllReasonsOrdinaryAndCompoundStatuses
 			if !executor.StopAllWithReason(2*time.Second, reason) {
 				t.Fatal("StopAllWithReason did not finish")
 			}
-			stopped := phase2BStatusFor(t, spy, running.RunInstanceID, RunStateStopped)
+			stopped := statusFor(t, spy, running.RunInstanceID, RunStateStopped)
 			if got := stopped.Reason; got != reason {
 				t.Fatalf("administrative stop reason = %q, want %q", got, reason)
 			}
@@ -136,11 +136,11 @@ func TestExecutorPhase2C_AdministrativeStopAllReasonsOrdinaryAndCompoundStatuses
 			if err := executor.StartCompound(t.TempDir(), compound, []RunProfile{leaf}); err != nil {
 				t.Fatalf("StartCompound: %v", err)
 			}
-			running := phase2CStatusForProfile(t, spy, compound.ID, RunStateRunning)
+			running := statusForProfile(t, spy, compound.ID, RunStateRunning)
 			if !executor.StopAllWithReason(2*time.Second, reason) {
 				t.Fatal("StopAllWithReason did not finish")
 			}
-			stopped := phase2BStatusFor(t, spy, running.RunInstanceID, RunStateStopped)
+			stopped := statusFor(t, spy, running.RunInstanceID, RunStateStopped)
 			if got := stopped.Reason; got != reason {
 				t.Fatalf("compound administrative stop reason = %q, want %q", got, reason)
 			}
@@ -156,7 +156,7 @@ func TestExecutorPhase2C_AdministrativeStopAllReasonsOrdinaryAndCompoundStatuses
 	}
 }
 
-func TestExecutorPhase2C_ReasonedDrainTagsLiveStateUnderAdmissionLock(t *testing.T) {
+func TestExecutor_ReasonedDrainTagsLiveStateUnderAdmissionLock(t *testing.T) {
 	t.Run("ordinary", func(t *testing.T) {
 		spy := &emitSpy{}
 		executor := NewExecutor(spy.emit, nil)
@@ -179,7 +179,7 @@ func TestExecutorPhase2C_ReasonedDrainTagsLiveStateUnderAdmissionLock(t *testing
 		if !executor.StopAllWithReason(2*time.Second, "workspace-switch") {
 			t.Fatal("StopAllWithReason did not finish")
 		}
-		stopped := phase2BStatusFor(t, spy, running.RunInstanceID, RunStateStopped)
+		stopped := statusFor(t, spy, running.RunInstanceID, RunStateStopped)
 		if stopped.Reason != "workspace-switch" {
 			t.Fatalf("terminal reason = %q", stopped.Reason)
 		}
@@ -198,7 +198,7 @@ func TestExecutorPhase2C_ReasonedDrainTagsLiveStateUnderAdmissionLock(t *testing
 		if err := executor.StartCompound(t.TempDir(), compound, []RunProfile{leaf}); err != nil {
 			t.Fatalf("StartCompound: %v", err)
 		}
-		running := phase2CStatusForProfile(t, spy, compound.ID, RunStateRunning)
+		running := statusForProfile(t, spy, compound.ID, RunStateRunning)
 
 		executor.BeginDrainWithReason("shutdown")
 		executor.mu.Lock()
@@ -215,7 +215,7 @@ func TestExecutorPhase2C_ReasonedDrainTagsLiveStateUnderAdmissionLock(t *testing
 		if !executor.StopAllWithReason(2*time.Second, "shutdown") {
 			t.Fatal("StopAllWithReason did not finish")
 		}
-		terminal := phase2CTerminalStatusForProfile(t, spy, compound.ID)
+		terminal := terminalStatusForProfile(t, spy, compound.ID)
 		if terminal.Reason != "shutdown" {
 			t.Fatalf("terminal reason = %q", terminal.Reason)
 		}

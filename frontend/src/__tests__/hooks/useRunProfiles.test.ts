@@ -28,7 +28,7 @@ jest.mock('../../wails/runtime', () => ({
 import { useRunProfilesLoader, normalizeProfileState } from '../../hooks/useRunProfiles';
 import { startProfile } from '../../utils/profileActions';
 
-const setPhase2BState = (patch: Partial<ReturnType<typeof useIDEStore.getState>>) => {
+const setRunIdentityState = (patch: Partial<ReturnType<typeof useIDEStore.getState>>) => {
   useIDEStore.setState(patch);
 };
 
@@ -149,7 +149,7 @@ describe('useRunProfilesLoader', () => {
   });
 
   it('clears stale running UI after a failed workspace load and re-enables it only after retry', async () => {
-    setPhase2BState({
+    setRunIdentityState({
       runProfiles: [
         {
           id: 'stale',
@@ -454,7 +454,7 @@ describe('useRunProfilesLoader', () => {
     expect(useIDEStore.getState().profilesLoadWarnings).toEqual(['w']);
 
     // A run started after the workspace opened, the way a Reload would find it.
-    setPhase2BState({
+    setRunIdentityState({
       runOutputs: {
         liveRun: {
           runInstanceId: 'liveRun',

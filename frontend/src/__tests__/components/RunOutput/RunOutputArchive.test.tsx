@@ -145,7 +145,7 @@ function deferred<T>() {
 /** Visible text only: the panel's sr-only status region repeats each message. */
 const onScreen = { ignore: '[data-testid="run-output-announcement"], script, style' };
 
-function setPhase2CState(patch: Partial<ReturnType<typeof useIDEStore.getState>>) {
+function setHistoryState(patch: Partial<ReturnType<typeof useIDEStore.getState>>) {
   useIDEStore.setState({
     ...useIDEStore.getInitialState(),
     workspace: { name: 'Repo', path: '/repo' },
@@ -199,7 +199,7 @@ it('loads a selected ordinary archive once and reuses its cached rich record', a
     [selected, ...newerPlaceholders].map((value) => [value.historyId, value])
   );
   mockGetRunHistoryRecord.mockResolvedValueOnce(record(selected, 'lazy output', '/repo/lazy'));
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: summaries,
     runHistoryRecords: { ...summaries },
     activeRunOutputId: null,
@@ -236,7 +236,7 @@ it('loads a selected ordinary archive once and reuses its cached rich record', a
 it('moves inner tab selection and view mode atomically in both directions', () => {
   const archivedBuild = summary(newestId, 'build', 300);
   const archivedTest = summary(otherId, 'test', 400);
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: {
       [newestId]: archivedBuild,
       [otherId]: archivedTest,
@@ -274,7 +274,7 @@ it('shows selected archive read failure and retries the demanded record', async 
   mockGetRunHistoryRecord
     .mockRejectedValueOnce(new Error('record unreadable'))
     .mockResolvedValueOnce(record(archivedBuild, 'recovered output', '/repo/recovered'));
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: { [newestId]: archivedBuild },
     runHistoryRecords: { [newestId]: archivedBuild },
     activeRunOutputId: `history:${newestId}`,
@@ -325,7 +325,7 @@ it('keeps Retry mounted and focused while a failed read retries', async () => {
   mockGetRunHistoryRecord
     .mockRejectedValueOnce(new Error('record unreadable'))
     .mockReturnValueOnce(retried.promise);
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: { [newestId]: archivedBuild },
     runHistoryRecords: { [newestId]: archivedBuild },
     activeRunOutputId: `history:${newestId}`,
@@ -358,7 +358,7 @@ it('ignores a delayed rich response after workspace ownership changes', async ()
   const workspaceA = summary(newestId, 'build', 300);
   const workspaceB = summary(newestId, 'test', 400);
   mockGetRunHistoryRecord.mockReturnValueOnce(pending.promise);
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: { [newestId]: workspaceA },
     runHistoryRecords: { [newestId]: workspaceA },
     activeRunOutputId: `history:${newestId}`,
@@ -368,7 +368,7 @@ it('ignores a delayed rich response after workspace ownership changes', async ()
   await waitFor(() => expect(mockGetRunHistoryRecord).toHaveBeenCalledWith(newestId));
 
   act(() => {
-    setPhase2CState({
+    setHistoryState({
       workspace: { name: 'Other', path: '/other' },
       workspaceEpoch: 8,
       runHistorySummaries: { [newestId]: workspaceB },
@@ -391,7 +391,7 @@ it('loads only the immediate archived Diff predecessor and lets redaction block 
     if (historyId === middleId) return record(middle, 'middle', '/repo/middle');
     return record(older, 'oldest', '/repo/oldest');
   });
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: { [olderId]: older, [middleId]: middle, [newestId]: newest },
     runHistoryRecords: { [olderId]: older, [middleId]: middle, [newestId]: newest },
     activeRunOutputId: `history:${newestId}`,
@@ -416,7 +416,7 @@ it('loads only the immediate archived Diff predecessor and lets redaction block 
   view.unmount();
   jest.clearAllMocks();
   const redactedMiddle = { ...middle, outputAvailable: false };
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: {
       [olderId]: older,
       [middleId]: redactedMiddle,
@@ -443,7 +443,7 @@ it('blocks archived Diff while its readable predecessor load has failed', async 
   const predecessor = summary(middleId, 'build', 200);
   const selected = summary(newestId, 'build', 300);
   mockGetRunHistoryRecord.mockRejectedValueOnce(new Error('predecessor unreadable'));
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: {
       [middleId]: predecessor,
       [newestId]: selected,
@@ -480,7 +480,7 @@ it('blocks archived Diff while its readable predecessor load has failed', async 
 it('keeps live and archived Diff predecessor namespaces isolated in both directions', () => {
   const archivedOlder = summary(olderId, 'build', 100);
   const archivedNewest = summary(newestId, 'build', 300);
-  setPhase2CState({
+  setHistoryState({
     runOutputs: {
       live1: liveOutput('live1', 'build', 'live older', 1),
       live2: liveOutput('live2', 'build', 'live newest', 2),
@@ -508,7 +508,7 @@ it('keeps live and archived Diff predecessor namespaces isolated in both directi
   expect(mockGetRunHistoryRecord).not.toHaveBeenCalled();
 
   view.unmount();
-  setPhase2CState({
+  setHistoryState({
     runOutputs: { live1: liveOutput('live1', 'build', 'live output', 1) },
     runInstanceIdsByProfile: { build: ['live1'] },
     latestRunInstanceIdByProfile: { build: 'live1' },
@@ -545,7 +545,7 @@ it('builds All from one current run per profile plus readable archive fallback o
     profileName: 'Deploy',
   });
   mockGetRunHistoryRecord.mockResolvedValueOnce(record(olderTest, 'archived test', '/repo/test'));
-  setPhase2CState({
+  setHistoryState({
     runOutputs: { live: liveOutput() },
     runInstanceIdsByProfile: { build: ['live'] },
     latestRunInstanceIdByProfile: { build: 'live' },
@@ -576,7 +576,7 @@ it('builds All from one current run per profile plus readable archive fallback o
   expect(mockGetRunHistoryRecord).not.toHaveBeenCalledWith(compoundId);
 
   view.unmount();
-  setPhase2CState({
+  setHistoryState({
     runOutputs: { live: liveOutput() },
     runInstanceIdsByProfile: { build: ['live'] },
     latestRunInstanceIdByProfile: { build: 'live' },
@@ -590,7 +590,7 @@ it('builds All from one current run per profile plus readable archive fallback o
 
 it('uses current profile names for archive tabs and disables deleted-profile controls', () => {
   const archivedBuild = summary(newestId, 'build', 300);
-  setPhase2CState({
+  setHistoryState({
     runProfiles: [
       {
         id: 'build',
@@ -629,7 +629,7 @@ it('keeps one archive visible during durable clear and tombstones it only after 
   const pending = deferred<void>();
   const archivedBuild = summary(newestId, 'build', 300);
   mockClearRunHistoryRecord.mockReturnValueOnce(pending.promise);
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: { [newestId]: archivedBuild },
     runHistoryRecords: {
       [newestId]: record(archivedBuild, 'newest', '/repo/newest'),
@@ -673,7 +673,7 @@ it('scopes pending archive clear ownership to the current workspace', async () =
   mockClearRunHistoryRecord
     .mockReturnValueOnce(pendingA.promise)
     .mockReturnValueOnce(pendingB.promise);
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: { [newestId]: archiveA },
     runHistoryRecords: { [newestId]: record(archiveA, 'A', '/repo/a') },
     activeRunOutputId: `history:${newestId}`,
@@ -684,7 +684,7 @@ it('scopes pending archive clear ownership to the current workspace', async () =
   expect(screen.getByRole('button', { name: 'Clear output' })).toBeDisabled();
 
   act(() => {
-    setPhase2CState({
+    setHistoryState({
       workspace: { name: 'Other', path: '/other' },
       workspaceEpoch: 8,
       runHistorySummaries: { [otherId]: archiveB },
@@ -710,7 +710,7 @@ it('scopes pending archive clear ownership to the current workspace', async () =
 it('keeps archive data and selection visible when durable clear fails', async () => {
   const archivedBuild = summary(newestId, 'build', 300);
   mockClearRunHistoryRecord.mockRejectedValueOnce(new Error('disk denied'));
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: { [newestId]: archivedBuild },
     runHistoryRecords: {
       [newestId]: record(archivedBuild, 'newest', '/repo/newest'),
@@ -739,7 +739,7 @@ it('clears live All immediately but tombstones archives only after zero-argument
   const archivedTest = summary(otherId, 'test', 200);
   const archivedDeploy = summary(newestId, 'deploy', 300, { profileName: 'Deploy' });
   mockClearAllRunHistory.mockReturnValueOnce(pending.promise);
-  setPhase2CState({
+  setHistoryState({
     runOutputs: { live: liveOutput() },
     runInstanceIdsByProfile: { build: ['live'] },
     latestRunInstanceIdByProfile: { build: 'live' },
@@ -794,7 +794,7 @@ it('clears live All immediately but tombstones archives only after zero-argument
 it('keeps archives after Clear All rejection while retaining existing live-clear routing', async () => {
   const archivedTest = summary(otherId, 'test', 200);
   mockClearAllRunHistory.mockRejectedValueOnce(new Error('history busy'));
-  setPhase2CState({
+  setHistoryState({
     runOutputs: { live: liveOutput() },
     runInstanceIdsByProfile: { build: ['live'] },
     latestRunInstanceIdByProfile: { build: 'live' },
@@ -835,7 +835,7 @@ it.each(['resolve', 'reject'] as const)(
     mockGetRunHistorySnapshot.mockResolvedValueOnce(
       new runhistory.Snapshot({ version: 1, summaries: [archiveB] })
     );
-    setPhase2CState({
+    setHistoryState({
       runHistorySummaries: { [newestId]: archiveA },
       runHistoryRecords: { [newestId]: record(archiveA, 'A', '/repo/a') },
       activeRunOutputId: ALL_PROFILES_ID,
@@ -851,7 +851,7 @@ it.each(['resolve', 'reject'] as const)(
     await waitFor(() => expect(mockClearAllRunHistory).toHaveBeenCalledWith());
 
     act(() => {
-      setPhase2CState({
+      setHistoryState({
         workspace: { name: 'Other', path: '/other' },
         workspaceEpoch: 8,
         runHistorySummaries: { [otherId]: archiveB },
@@ -887,7 +887,7 @@ it.each(['resolve', 'reject'] as const)(
 
 it('disables archive clear while profiles are loading or run events are paused', () => {
   const archivedBuild = summary(newestId, 'build', 300);
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: { [newestId]: archivedBuild },
     runHistoryRecords: {
       [newestId]: record(archivedBuild, 'newest', '/repo/newest'),
@@ -910,7 +910,7 @@ it('reports a failed All-timeline archive read once across sibling-driven effect
   const build = summary(olderId, 'build', 100);
   const test = summary(middleId, 'test', 200);
   const failing = summary(newestId, 'lint', 300);
-  setPhase2CState({
+  setHistoryState({
     activeRunOutputId: ALL_PROFILES_ID,
     runOutputViewMode: 'timeline',
     runProfiles: [
@@ -958,7 +958,7 @@ it('reports a failed All-timeline archive read once across sibling-driven effect
 it('leaves timeline mode onto the newest archived run when no live output exists', () => {
   const oldest = summary(olderId, 'build', 100);
   const newest = summary(middleId, 'test', 200);
-  setPhase2CState({
+  setHistoryState({
     activeRunOutputId: ALL_PROFILES_ID,
     runOutputViewMode: 'timeline',
     runHistorySummaries: { [oldest.historyId]: oldest, [newest.historyId]: newest },
@@ -976,7 +976,7 @@ it('adopts a retention tombstone instead of reporting the redacted record as inv
   // Stale belief: the store redacted this record for budget after the last
   // snapshot, so the frontend summary still advertises readable output.
   const stale = summary(olderId, 'build', 100);
-  setPhase2CState({
+  setHistoryState({
     activeRunOutputId: `history:${stale.historyId}`,
     runOutputViewMode: 'merged',
     runHistorySummaries: { [stale.historyId]: stale },
@@ -1006,7 +1006,7 @@ it('adopts a retention tombstone instead of reporting the redacted record as inv
 it('still reports a structurally malformed archived record as an error', async () => {
   const showToast = jest.fn();
   const archived = summary(olderId, 'build', 100);
-  setPhase2CState({
+  setHistoryState({
     activeRunOutputId: `history:${archived.historyId}`,
     runOutputViewMode: 'merged',
     runHistorySummaries: { [archived.historyId]: archived },
@@ -1036,7 +1036,7 @@ it('still reports a structurally malformed archived record as an error', async (
 // status region is in the panel before the run turns partial, the notice
 // arrives in that same element, and the visible notice is not a second region.
 it('announces a live run turning partial through a status region mounted before it', () => {
-  setPhase2CState({
+  setHistoryState({
     runOutputs: { live: liveOutput() },
     runInstanceIdsByProfile: { build: ['live'] },
     latestRunInstanceIdByProfile: { build: 'live' },
@@ -1063,7 +1063,7 @@ it('announces a live run turning partial through a status region mounted before 
 
 it('warns that an archived run is partial, and says so in Diff terms', async () => {
   const archived = summary(olderId, 'build', 100);
-  setPhase2CState({
+  setHistoryState({
     activeRunOutputId: `history:${archived.historyId}`,
     runOutputViewMode: 'merged',
     runHistorySummaries: { [archived.historyId]: archived },
@@ -1096,7 +1096,7 @@ it('warns that an archived run is partial, and says so in Diff terms', async () 
 
 it('does not warn about a complete archived run', async () => {
   const archived = summary(olderId, 'build', 100);
-  setPhase2CState({
+  setHistoryState({
     activeRunOutputId: `history:${archived.historyId}`,
     runOutputViewMode: 'merged',
     runHistorySummaries: { [archived.historyId]: archived },
@@ -1115,7 +1115,7 @@ it('does not warn about a complete archived run', async () => {
 it('numbers archive tabs by history id rather than object identity', () => {
   const first = summary(olderId, 'build', 100);
   const second = summary(middleId, 'build', 200);
-  setPhase2CState({
+  setHistoryState({
     runHistorySummaries: { [first.historyId]: first, [second.historyId]: second },
   });
 
