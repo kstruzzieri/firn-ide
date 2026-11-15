@@ -49,7 +49,7 @@ This section supersedes the archived delivery narrative below for current priori
 ### Repository health
 
 - `v0.15.0` is live from `main` at `6fd3aae` (PR #576, 2026-11-14). The release workflow, Build, Tests, and Lint passed. macOS amd64/arm64, Linux amd64, Windows amd64, and `SHA256SUMS` are published, all built with go1.27.4 (#574).
-- Releases now run on a three-week train, each with a contract in [`docs/releases/`](releases/README.md): `v0.15.0` shipped 2026-11-14, four days after its planned 2026-11-10 (its contract records why), and `v0.16.0` ships 2026-12-01. A patch release is cut only for a regression or data loss.
+- Releases now run on a three-week train, each with a contract in [`docs/releases/`](releases/README.md): `v0.15.0` shipped 2026-11-14, four days after its planned 2026-11-10 (its contract records why), and `v0.16.0` targets 2026-12-01. A patch release is cut only for a regression or data loss.
 - #39 removed the eager all-language chunk: initial static JavaScript fell from **541,248 gzip bytes to 399,225 gzip bytes** (26.24%) with a manifest regression gate.
 - Git, LSP, search, commands, and merge-session state already have dedicated seams. Do not run #41 as a big-bang refactor; extract only the run domain if #146 directly needs it.
 - Release documentation and install examples now target `v0.15.0`.
