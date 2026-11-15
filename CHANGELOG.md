@@ -63,14 +63,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change alters. A route the change leaves alone no longer blocks it, even when
   that route already falls short of its use case's requirements; the route says
   so on its own row instead. The Golem model list lets you pick only models
-  Apply would accept. The `analysis` use case now has the same requirements as `chat`, so
-  Firn checks a model for it instead of asking you to accept it. (#493)
+  Apply would accept. The `analysis` use case now has the same requirements as
+  `chat`, so Firn checks a model for it instead of asking you to accept it.
+  (#493)
 
-- Golem Configuration asks you to mark Apply anyway only when a change can take
-  something from a use case Firn has no requirements on record for: a
-  capability, a Think setting or the model itself. A change that can only add,
-  such as an extra capability, no longer asks. The notice says what the change
-  takes from each route before it says why it asks. (#350, #337)
+- Golem Configuration asks you to mark Apply anyway only when a change can
+  narrow a use case Firn has no requirements on record for: by binding it to a
+  model, moving it to another model, or taking a capability or Think setting
+  from it. A change that can only add, such as an extra capability, no longer
+  asks. The notice says what the change takes from each route before it says
+  why it asks. (#350, #337)
 
 - The file tree and search show folders whose names start with a dot, such as
   `.github`, except `.git`, `.hg` and `.svn`. The Show hidden folders button at
@@ -92,59 +94,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.firn/run-recency.json` when it could not be read. It refuses the change,
   leaves the file alone and shows a notice in the Run Profiles panel, which
   VoiceOver reads, with a Reload button. The comparison is exact, so a rewrite
-  that only changes line endings also asks for a Reload. (#397, #442)
+  that only changes line endings also asks for a Reload. Save keeps keyboard
+  focus while it saves. (#397, #442)
 
 - Keyboard focus stays in the run-profile form's delete row: Delete profile
   moves it to Confirm delete, and Cancel or a refused delete moves it back to
   Delete profile. It used to drop to the page body. (#547)
 
 - When the run-profile form closes, by Save, a delete, Cancel or Back, keyboard
-  focus moves to the Run Profiles panel's New profile button instead of the
-  page body. (#552)
+  focus that would have dropped to the page body moves to the Run Profiles
+  panel's New profile button. (#552)
 
 - VoiceOver speaks status and error messages it used to skip because they
-  appeared with their text already in place: a failed push, the Git panel's
-  error strip and conflict banner, the merge view's notice that a file changed
-  outside Firn, the command palette's "No commands found", a bad search
-  pattern, a missing workspace folder, run output's partial-log and load
-  errors, and Golem Configuration's approval prompt and its conflict, profile
-  and provider errors. (#550)
+  appeared with their text already in place, among them a failed push, the Git
+  panel's error strip and conflict banner, the merge view's notices and its
+  line naming the next file to resolve, the command palette's "No commands
+  found", search's progress, a bad pattern and a missing ripgrep, a missing
+  workspace folder, language server setup, the run-profile form's workspace
+  warnings, run output's partial-log and load errors, the undocked Golem
+  window's connection errors, and Golem Configuration's approval prompt and its
+  conflict, profile and provider errors. (#550)
 
 - Buttons that stay busy while they work keep keyboard focus, or move it to the
-  next place to work, instead of dropping it to the page: Push; Generate, also
-  once the commit message arrives (#515); the Git panel's Refresh and a row's
-  Track or Untrack; the merge view's Reload and Write & stage; Golem
+  next place to work, instead of dropping it to the page, among them Push,
+  Pull, Commit and Generate, also once the commit message arrives (#515); the
+  Git panel's Refresh and a row's Track or Untrack; the merge view's Reload,
+  and Write & stage, which moves on to the next file's merge result; Golem
   Configuration's Refresh, Check destinations… and an approval prompt's Cancel
-  and Apply; Send in the undocked Golem window; and Retry on a saved run whose
-  output could not be loaded. (#550)
+  and Approve; Send in the Golem panel and the undocked Golem window; and Retry
+  on a saved run whose output could not be loaded. (#550)
 
-- Resolve no longer saves one file's unsaved edits over another's on macOS and
-  Linux when a folder `a\b` sits beside a folder `a` holding `b` and both hold
-  a file of the same name. Firn read the backslash as a folder separator, took
-  the two files for one and marked the edits saved, so closing the tab lost
-  them. Windows, where a backslash is a separator, is unchanged. (#510)
+- On macOS and Linux, Firn keeps a backslash in a file or folder name as part
+  of the name. It used to read it as a folder separator, so `a\b/x.ts` and
+  `a/b/x.ts` were one file to open tabs, saving, merge sessions and language
+  servers, and Resolve on a conflict in one could save the other's unsaved
+  edits over it and mark them saved, so closing the tab lost them. A backslash
+  still separates folders on Windows and in a Windows-style path on any system.
+  (#510)
 
 - In a Firn opened from Finder, the Dock or `open`, Backspace in the integrated
   terminal erases a character instead of printing a space. Firn now starts
   every shell with `TERM=xterm-256color`, so `clear`, colors and arrow-key
-  history also work however Firn was opened. Every earlier packaged release had
-  this. (#556)
+  history also work however Firn was opened. Earlier releases passed on only
+  the `TERM` Firn itself was started with, and an app opened from Finder has
+  none. (#556)
 
 - Closing an integrated terminal hangs up its shell at once, so the shell runs
   its exit steps and saves its history. Firn used to wait 3 seconds and
-  force-kill it; a shell that does not exit is still force-killed. (#558)
+  force-kill it. A shell that does not exit, or a terminal Firn could not set
+  up to hang up this way, is still force-killed after 3 seconds. (#558)
 
-- zsh in a Firn terminal saves its history to the file other terminals use,
-  `~/.zsh_history` on stock macOS or the same name under your own `ZDOTDIR`,
-  instead of a file in Firn's cache folder. A `HISTFILE` you set yourself still
-  wins. History already in the cache folder stays there. (#560)
+- When zsh's startup files put its history file in zsh's settings folder, as
+  stock macOS does, a Firn terminal now keeps history where other terminals do,
+  `~/.zsh_history` or the same name under your own `ZDOTDIR`, instead of in
+  Firn's cache folder. A `HISTFILE` set in your `.zshrc` still wins. History
+  already in the cache folder stays there. (#560)
 
 - The integrated terminal's command markers sit in the margin left of the text
   instead of covering a line's first character. The selection highlight no
   longer sits a character left of the selected text, and the bottom row is no
-  longer cut off, so some panel heights show one row fewer. The mouse wheel no
-  longer scrolls the terminal over the empty part of that margin or the strip
-  above the first line. (#572)
+  longer cut off, so some panel heights show one row fewer. In the normal
+  screen, the mouse wheel no longer scrolls the terminal over the empty part of
+  that margin or the strip above the first line; over the text or a marker it
+  scrolls as before, and full-screen programs still receive it. (#572)
 
 - An open file with no unsaved edits reloads when git (restore, checkout,
   stash, a branch switch) or an editor's atomic save replaces it on disk. It
@@ -154,11 +166,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Firn watches a workspace whose root is a symlink to a directory, and reports
   changes under the path it was opened with. It used to watch nothing there, so
   the file tree and open tabs missed changes made outside Firn. Symlinks to
-  folders inside the workspace are still not followed, and Windows junctions
-  are not covered. (#564)
+  folders inside the workspace are still not followed. Windows junctions have
+  not been tested. (#564)
 
-- The route editor's EDITING tag in Golem Configuration no longer splits across
-  two lines in a narrow route column; it moves to the next line whole. (#545)
+- Golem Configuration's EDITING tag no longer splits across two lines in a
+  narrow column; it moves to the next line whole. (#545)
 
 ### Security
 
