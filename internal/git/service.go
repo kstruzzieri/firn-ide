@@ -552,8 +552,9 @@ func (s *Service) TopLevel(ctx context.Context, dir string) (string, error) {
 	return outputPath(out), nil
 }
 
-// outputPath is a path git printed as one line: only the line ending goes,
-// because a folder name may end in a space and git keeps it (#511). On
+// outputPath is one path git printed followed by its newline: only that line
+// ending goes, because a folder name may end in a space and git keeps it
+// (#511). On
 // Windows, where a name cannot contain \r, a \r before the \n goes too;
 // elsewhere a name may end in \r, so only the \n is stripped.
 func outputPath(out string) string {

@@ -310,6 +310,10 @@ func TestService_RepoFolderNameEndingInSpace(t *testing.T) {
 	if err := svc.ApplyPatch(ctx(), sub, patch, false); err != nil {
 		t.Errorf("ApplyPatch() from a subdirectory error = %v", err)
 	}
+	// git apply run from sub skips a patch outside it and still exits 0.
+	if staged := gitCmd(t, dir, "show", ":README.md"); staged != "hello\nworld\n" {
+		t.Errorf("index README.md = %q, want the patch applied", staged)
+	}
 }
 
 func TestService_Status_FromSubdirectory(t *testing.T) {
