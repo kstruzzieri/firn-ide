@@ -172,6 +172,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Golem Configuration's EDITING tag no longer splits across two lines in a
   narrow column; it moves to the next line whole. (#545)
 
+- When the file at the file tree's active row is deleted or renamed outside the
+  tree while the tree has keyboard focus, the tree keeps its scroll position
+  and focus moves to the nearest row: the one that took the removed row's
+  place, or the one above it at the end of the list. The next arrow key scrolls
+  the focused row into view. The tree used to jump to its top with focus on the
+  root row. (#521)
+
+- When a failed folder read replaced the file tree with its error, a refresh
+  that brings the tree back unchanged returns keyboard focus to the tree's
+  active row. Focus used to stay on the page, so arrow keys did nothing until a
+  click or Tab, and a later refresh that added a file above that row could pull
+  focus back into the tree. (#522)
+
 ### Security
 
 - A `models.json` in the folder Firn was started from can no longer read
