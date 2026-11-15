@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.15.0] - Pending
+## [0.15.0] - 2026-11-14
 
 In Golem Configuration, the route editor no longer refuses the model a route
 already uses, a refusal names the use case that fails instead of a role, and
