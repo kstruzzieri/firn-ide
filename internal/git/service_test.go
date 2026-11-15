@@ -56,7 +56,32 @@ func gitCmd(t *testing.T, dir string, args ...string) string {
 // initRepo creates a repo on branch main with one committed file.
 func initRepo(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	return initRepoAt(t, t.TempDir())
+}
+
+// spaceSuffixedDir is an empty folder whose name ends in a space, which git
+// keeps in every path it prints (#511). Windows does not allow such names.
+func spaceSuffixedDir(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not allow a folder name that ends in a space")
+	}
+	dir := filepath.Join(t.TempDir(), "project ")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// spaceSuffixedRepo is initRepo in a spaceSuffixedDir.
+func spaceSuffixedRepo(t *testing.T) string {
+	t.Helper()
+	return initRepoAt(t, spaceSuffixedDir(t))
+}
+
+// initRepoAt is initRepo in an existing empty dir.
+func initRepoAt(t *testing.T, dir string) string {
+	t.Helper()
 	gitCmd(t, dir, "init", "-b", "main")
 	gitCmd(t, dir, "config", "user.name", "Test")
 	gitCmd(t, dir, "config", "user.email", "test@example.com")
@@ -258,6 +283,32 @@ func TestService_Status_CleanRepo(t *testing.T) {
 	// so frontend path joins match watcher/tree paths.
 	if want, _ := filepath.EvalSymlinks(dir); got.RepoRoot != want {
 		t.Errorf("RepoRoot = %q, want %q", got.RepoRoot, want)
+	}
+}
+
+// A repository folder whose name ends in a space keeps the space in every
+// root Firn reads back from git, including runs from a subdirectory (#511).
+func TestService_RepoFolderNameEndingInSpace(t *testing.T) {
+	requireGit(t)
+	dir := spaceSuffixedRepo(t)
+	writeFile(t, dir, "sub/a.txt", "a\n")
+	writeFile(t, dir, "README.md", "hello\nworld\n")
+	patch := gitCmd(t, dir, "diff", "--unified=1", "--", "README.md")
+	sub := filepath.Join(dir, "sub")
+	svc := NewService()
+
+	got, err := svc.Status(ctx(), sub)
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if want, _ := filepath.EvalSymlinks(dir); got.RepoRoot != want {
+		t.Errorf("RepoRoot = %q, want %q", got.RepoRoot, want)
+	}
+	if err := svc.Stage(ctx(), sub, []string{"sub/a.txt"}); err != nil {
+		t.Errorf("Stage() from a subdirectory error = %v", err)
+	}
+	if err := svc.ApplyPatch(ctx(), sub, patch, false); err != nil {
+		t.Errorf("ApplyPatch() from a subdirectory error = %v", err)
 	}
 }
 

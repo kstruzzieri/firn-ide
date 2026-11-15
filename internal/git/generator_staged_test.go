@@ -299,6 +299,30 @@ func TestGenerateStaged_NoPolicySourceWithholdsEverything(t *testing.T) {
 	}
 }
 
+// A repository folder whose name ends in a space: the policy is set up for
+// the root git prints, space included, so generation still runs (#511).
+func TestGenerateStaged_RepoFolderNameEndingInSpace(t *testing.T) {
+	requireGit(t)
+	dir := spaceSuffixedRepo(t)
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "main.go")
+	provider := gittest.Start(t, "feat: add main", nil)
+	gen := NewMessageGenerator()
+	chatPolicy(t, gen, dir)
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil {
+		t.Fatalf("GenerateStaged() error = %v", err)
+	}
+	if result.Message != "feat: add main" || len(result.Withheld) != 0 {
+		t.Errorf("result = %+v, want the message with nothing withheld", result)
+	}
+	if request := readRequest(t, provider); !strings.Contains(request.user, "shipped hunk") {
+		t.Errorf("prompt lacks the staged hunk:\n%s", request.user)
+	}
+}
+
 func TestGenerateStaged_NothingStaged(t *testing.T) {
 	requireGit(t)
 	dir := initRepo(t)

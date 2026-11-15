@@ -165,7 +165,12 @@ func TestParseConflictRegions_SeparatorWithoutOpeningIsContent(t *testing.T) {
 // style. base/ours/theirs are file bodies.
 func makeConflict(t *testing.T, base, ours, theirs string, diff3 bool) string {
 	t.Helper()
-	dir := t.TempDir()
+	return makeConflictIn(t, t.TempDir(), base, ours, theirs, diff3)
+}
+
+// makeConflictIn is makeConflict in an existing empty dir.
+func makeConflictIn(t *testing.T, dir, base, ours, theirs string, diff3 bool) string {
+	t.Helper()
 	gitCmd(t, dir, "init", "-b", "main")
 	gitCmd(t, dir, "config", "user.name", "Test")
 	gitCmd(t, dir, "config", "user.email", "test@example.com")
@@ -215,6 +220,21 @@ func TestService_ConflictSnapshot_ParsesWorkingTreeMarkers(t *testing.T) {
 	r := snap.Regions[0]
 	if !reflect.DeepEqual(r.Ours, []string{"ours"}) || !reflect.DeepEqual(r.Theirs, []string{"theirs"}) {
 		t.Errorf("Ours/Theirs = %v / %v", r.Ours, r.Theirs)
+	}
+}
+
+// A repository folder whose name ends in a space: the conflicted file is read
+// under the root git prints, space included (#511).
+func TestService_ConflictSnapshot_RepoFolderNameEndingInSpace(t *testing.T) {
+	requireGit(t)
+	dir := makeConflictIn(t, spaceSuffixedDir(t), "base\n", "ours\n", "theirs\n", false)
+
+	snap, err := NewService().ConflictSnapshot(ctx(), dir, "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictSnapshot error = %v", err)
+	}
+	if len(snap.Regions) != 1 {
+		t.Errorf("regions = %d, want 1", len(snap.Regions))
 	}
 }
 

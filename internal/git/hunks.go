@@ -232,8 +232,8 @@ func (s *Service) runStdin(ctx context.Context, dir, stdin string, args ...strin
 // the patch resolve regardless of which subdirectory dir points at.
 func (s *Service) runAtRootStdin(ctx context.Context, dir, stdin string, args ...string) (string, error) {
 	root := dir
-	if out, err := s.run(ctx, dir, "rev-parse", "--show-toplevel"); err == nil {
-		root = strings.TrimSpace(out)
+	if top, err := s.TopLevel(ctx, dir); err == nil {
+		root = top
 	}
 	return s.runStdin(ctx, root, stdin, args...)
 }
