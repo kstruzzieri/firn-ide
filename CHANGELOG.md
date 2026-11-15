@@ -172,6 +172,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Golem Configuration's EDITING tag no longer splits across two lines in a
   narrow column; it moves to the next line whole. (#545)
 
+- On macOS and Linux, commit message generation and the Git panel work in a
+  repository whose folder name ends in a space, such as `project `. Firn used
+  to drop the space from the repository's path and look in a folder that does
+  not exist, so Generate failed, and so did staging, unstaging and tracking
+  files, staging a hunk, diffs and the merge view. Generation broke in 0.15.0;
+  the rest was broken before. (#511)
+
 ### Security
 
 - A `models.json` in the folder Firn was started from can no longer read

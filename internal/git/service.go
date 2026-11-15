@@ -106,7 +106,7 @@ func (s *Service) runEnv(ctx context.Context, dir string, env []string, args ...
 // Status returns the repository snapshot for the repo containing dir.
 // A missing git binary or a dir outside any repo yields IsRepo=false, nil.
 func (s *Service) Status(ctx context.Context, dir string) (RepoStatus, error) {
-	root, err := s.run(ctx, dir, "rev-parse", "--show-toplevel")
+	root, err := s.TopLevel(ctx, dir)
 	if err != nil {
 		// --show-toplevel needs a working tree. If the directory is still a
 		// git dir (e.g. a normal repo wrongly marked core.bare=true), say so
@@ -127,7 +127,7 @@ func (s *Service) Status(ctx context.Context, dir string) (RepoStatus, error) {
 
 	status := parsePorcelainV2([]byte(out))
 	status.IsRepo = true
-	status.RepoRoot = strings.TrimSpace(root)
+	status.RepoRoot = root
 	return status, nil
 }
 
@@ -540,13 +540,29 @@ func (s *Service) StagedDiff(ctx context.Context, dir string, exclude []string) 
 	return out, err
 }
 
-// TopLevel returns the root of the working tree containing dir.
+// TopLevel returns the root of the working tree containing dir. Every read of
+// the root goes through here, so a folder name that ends in a space keeps it.
+// Callers that read or write a file under the root fail when this does,
+// rather than fall back to dir as runAtRoot does.
 func (s *Service) TopLevel(ctx context.Context, dir string) (string, error) {
 	out, err := s.run(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(out), nil
+	return outputPath(out), nil
+}
+
+// outputPath is one path git printed followed by its newline: only that line
+// ending goes, because a folder name may end in a space and git keeps it
+// (#511). On
+// Windows, where a name cannot contain \r, a \r before the \n goes too;
+// elsewhere a name may end in \r, so only the \n is stripped.
+func outputPath(out string) string {
+	out = strings.TrimSuffix(out, "\n")
+	if runtime.GOOS == "windows" {
+		out = strings.TrimSuffix(out, "\r")
+	}
+	return out
 }
 
 // runAtRoot runs git from the repo top-level, so repo-root-relative path
