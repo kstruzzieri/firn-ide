@@ -249,8 +249,12 @@
   font-size: 12px;
 }
 
+.aiWithheldLabel {
+  margin-top: 4px;
+}
+
 .aiWithheldList {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   padding-left: 16px;
   word-break: break-all;
 }

@@ -290,11 +290,12 @@ interface GitState {
   /** Set on successful commit; cleared by the next mutating op or reset. */
   lastCommitReceipt: CommitReceipt | null;
   aiAvailable: boolean;
-  /** Staged paths the last Generate withheld from the AI under the
-   * sensitive-path policy (#384), shown locally only. allWithheld means every
-   * staged path was withheld, so no request was made and no message came
-   * back. Cleared by the next Generate, a commit, or a workspace reset. */
-  withheldFromAI: { paths: string[]; allWithheld: boolean } | null;
+  /** Staged paths the last Generate withheld from the AI (#384), shown
+   * locally only: outside lie outside the open folder (#513), denied are
+   * denied by Golem's file access rules. allWithheld means every staged path
+   * was withheld, so no request was made and no message came back. Cleared by
+   * the next Generate, a commit, or a workspace reset. */
+  withheldFromAI: { outside: string[]; denied: string[]; allWithheld: boolean } | null;
   /** Monotonic guard: refreshes started before the last workspace switch
    * must not apply their result. */
   epoch: number;
@@ -648,7 +649,7 @@ export const useGitStore = create<GitStore>()(
 
       generateMessage: async () => {
         let message: string | null = null;
-        let withheld: string[] = [];
+        let withheld: git.WithheldPath[] = [];
         const ok = await runOp(
           'generate',
           get,
@@ -663,7 +664,13 @@ export const useGitStore = create<GitStore>()(
           },
           (message) => ({
             // An empty message means every staged path was withheld.
-            withheldFromAI: withheld.length ? { paths: withheld, allWithheld: !message } : null,
+            withheldFromAI: withheld.length
+              ? {
+                  outside: withheld.filter((w) => w.outside).map((w) => w.path),
+                  denied: withheld.filter((w) => !w.outside).map((w) => w.path),
+                  allWithheld: !message,
+                }
+              : null,
             lastOpOutput: null,
           })
         );

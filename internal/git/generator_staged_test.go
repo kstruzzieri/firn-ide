@@ -97,6 +97,117 @@ func assertWithheld(t *testing.T, request providerRequest, contents []string, na
 	}
 }
 
+// denied is the Withheld list for changes Golem's file access rules deny.
+func denied(paths ...string) []WithheldPath {
+	withheld := make([]WithheldPath, 0, len(paths))
+	for _, path := range paths {
+		withheld = append(withheld, WithheldPath{Path: path})
+	}
+	return withheld
+}
+
+// With a subfolder of the repository open, a staged file outside it is
+// reported as outside the open folder, apart from the files Golem's file
+// access rules deny. The withholding itself is unchanged (#513).
+func TestGenerateStaged_SubfolderOpenReportsFilesOutsideIt(t *testing.T) {
+	requireGit(t)
+	stage := func(t *testing.T, paths ...string) (*MessageGenerator, string) {
+		t.Helper()
+		dir := initRepo(t)
+		writeFile(t, dir, "backend/main.go", "package main // backend-only-hunk\n")
+		writeFile(t, dir, "frontend/.env", "API_TOKEN=frontend-secret\n")
+		writeFile(t, dir, "frontend/app.go", mainGo)
+		gitCmd(t, dir, append([]string{"add"}, paths...)...)
+		open := filepath.Join(dir, "frontend")
+		svc := newGolemService(t, open)
+		gen := NewMessageGenerator()
+		gen.SetScopeSource(func(root string) (StagedScope, error) {
+			scope, err := svc.StagedScope(root)
+			return StagedScope(scope), err
+		})
+		return gen, open
+	}
+	t.Run("only a file outside", func(t *testing.T) {
+		provider := gittest.Start(t, "", nil) // a request would fail as unusable
+		gen, open := stage(t, "backend/main.go")
+
+		result, err := gen.GenerateStaged(ctx(), NewService(), open)
+
+		if err != nil {
+			t.Fatalf("GenerateStaged() error = %v, want no error and no request", err)
+		}
+		want := []WithheldPath{{Path: "backend/main.go", Outside: true}}
+		if result.Message != "" || !slices.Equal(result.Withheld, want) {
+			t.Errorf("result = %+v, want no message and %+v", result, want)
+		}
+		if got := len(provider.Requests); got != 0 {
+			t.Errorf("provider received %d request(s)", got)
+		}
+	})
+	t.Run("outside and denied beside an allowed file", func(t *testing.T) {
+		provider := gittest.Start(t, "feat: frontend app", nil)
+		gen, open := stage(t, "backend/main.go", "frontend/.env", "frontend/app.go")
+
+		result, err := gen.GenerateStaged(ctx(), NewService(), open)
+
+		if err != nil {
+			t.Fatalf("GenerateStaged() error = %v", err)
+		}
+		want := []WithheldPath{{Path: "backend/main.go", Outside: true}, {Path: "frontend/.env"}}
+		if result.Message != "feat: frontend app" || !slices.Equal(result.Withheld, want) {
+			t.Errorf("result = %+v, want the message and %+v", result, want)
+		}
+		request := readRequest(t, provider)
+		if !strings.Contains(request.user, "shipped hunk") {
+			t.Errorf("prompt lacks the allowed file's hunk:\n%s", request.user)
+		}
+		assertWithheld(t, request, []string{"backend-only-hunk", "frontend-secret"}, []string{"backend/main.go", "frontend/.env"})
+	})
+}
+
+// A rename or copy is outside the open folder only when the rules deny
+// neither side; every side is asked, whichever is denied first (#513).
+func TestPartitionStaged_ReportsWhyEachChangeIsWithheld(t *testing.T) {
+	guard := func(path string, _ bool) error {
+		switch {
+		case strings.Contains(path, ".env"):
+			return errors.New("denied by the rules")
+		case strings.HasPrefix(path, "backend/"):
+			return ai.ErrOutsideProject
+		}
+		return nil
+	}
+	changes := []StagedChange{
+		{Status: 'A', Path: "frontend/app.go"},
+		{Status: 'A', Path: "backend/main.go"},
+		{Status: 'A', Path: "frontend/.env"},
+		{Status: 'R', OldPath: "backend/util.go", Path: "frontend/util.go"},
+		{Status: 'R', OldPath: "backend/a.go", Path: "backend/b.go"},
+		{Status: 'R', OldPath: "frontend/.env.old", Path: "backend/settings.txt"},
+		// The denied side asked first, the outside side last.
+		{Status: 'R', OldPath: "backend/old.txt", Path: "frontend/.env.local"},
+		{Status: 'C', OldPath: "backend/settings.txt", Path: "frontend/.env"},
+	}
+
+	allowed, withheld, _ := partitionStaged(changes, guard)
+
+	want := []WithheldPath{
+		{Path: "backend/main.go", Outside: true},
+		{Path: "frontend/.env"},
+		{Path: "backend/util.go -> frontend/util.go", Outside: true},
+		{Path: "backend/a.go -> backend/b.go", Outside: true},
+		{Path: "frontend/.env.old -> backend/settings.txt"},
+		{Path: "backend/old.txt -> frontend/.env.local"},
+		{Path: "backend/settings.txt -> frontend/.env"},
+	}
+	if !slices.Equal(withheld, want) {
+		t.Errorf("withheld = %+v\nwant %+v", withheld, want)
+	}
+	if !slices.Equal(allowed, []string{"frontend/app.go"}) {
+		t.Errorf("allowed = %q, want [frontend/app.go]", allowed)
+	}
+}
+
 func TestGenerateStaged_WithholdsFloorDeniedPath(t *testing.T) {
 	requireGit(t)
 	dir := initRepo(t)
@@ -115,8 +226,8 @@ func TestGenerateStaged_WithholdsFloorDeniedPath(t *testing.T) {
 	if result.Message != "feat: add main" {
 		t.Errorf("Message = %q", result.Message)
 	}
-	if !slices.Equal(result.Withheld, []string{".env"}) {
-		t.Errorf("Withheld = %q, want [.env]", result.Withheld)
+	if !slices.Equal(result.Withheld, denied(".env")) {
+		t.Errorf("Withheld = %+v, want [.env]", result.Withheld)
 	}
 	request := readRequest(t, provider)
 	if !strings.Contains(request.user, "shipped hunk") {
@@ -144,8 +255,8 @@ func TestGenerateStaged_HonorsManifestRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateStaged() error = %v", err)
 	}
-	if !slices.Equal(result.Withheld, []string{"fixtures/private/customers.csv"}) {
-		t.Errorf("Withheld = %q", result.Withheld)
+	if !slices.Equal(result.Withheld, denied("fixtures/private/customers.csv")) {
+		t.Errorf("Withheld = %+v", result.Withheld)
 	}
 	request := readRequest(t, provider)
 	if !strings.Contains(request.user, "shipped hunk") {
@@ -174,8 +285,8 @@ func TestGenerateStaged_WithholdsRenameTouchingProtectedPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GenerateStaged() error = %v", err)
 		}
-		if !slices.Equal(result.Withheld, []string{".env -> config.txt"}) {
-			t.Errorf("Withheld = %q", result.Withheld)
+		if !slices.Equal(result.Withheld, denied(".env -> config.txt")) {
+			t.Errorf("Withheld = %+v", result.Withheld)
 		}
 		request := readRequest(t, provider)
 		if !strings.Contains(request.user, "shipped hunk") {
@@ -203,8 +314,8 @@ func TestGenerateStaged_WithholdsRenameTouchingProtectedPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GenerateStaged() error = %v", err)
 		}
-		if !slices.Equal(result.Withheld, []string{"notes.txt -> secrets/notes.txt"}) {
-			t.Errorf("Withheld = %q", result.Withheld)
+		if !slices.Equal(result.Withheld, denied("notes.txt -> secrets/notes.txt")) {
+			t.Errorf("Withheld = %+v", result.Withheld)
 		}
 		request := readRequest(t, provider)
 		assertWithheld(t, request, []string{"plain note"}, []string{"notes.txt", "secrets"})
@@ -229,7 +340,7 @@ func TestGenerateStaged_AllowedRenameKeepsBothSides(t *testing.T) {
 		t.Fatalf("GenerateStaged() error = %v", err)
 	}
 	if len(result.Withheld) != 0 {
-		t.Errorf("Withheld = %q, want none", result.Withheld)
+		t.Errorf("Withheld = %+v, want none", result.Withheld)
 	}
 	request := readRequest(t, provider)
 	if !strings.Contains(request.user, "rename from README.md") || !strings.Contains(request.user, "rename to docs/README.md") {
@@ -255,8 +366,8 @@ func TestGenerateStaged_AllWithheldMakesNoRequest(t *testing.T) {
 	if result.Message != "" {
 		t.Errorf("Message = %q, want empty", result.Message)
 	}
-	if !slices.Equal(result.Withheld, []string{".env", "deploy.key"}) {
-		t.Errorf("Withheld = %q", result.Withheld)
+	if !slices.Equal(result.Withheld, denied(".env", "deploy.key")) {
+		t.Errorf("Withheld = %+v", result.Withheld)
 	}
 }
 
@@ -277,7 +388,7 @@ func TestGenerateStaged_ManifestOverflowWithholdsEverything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateStaged() error = %v", err)
 	}
-	if result.Message != "" || !slices.Equal(result.Withheld, []string{"main.go"}) {
+	if result.Message != "" || !slices.Equal(result.Withheld, denied("main.go")) {
 		t.Errorf("result = %+v, want everything withheld", result)
 	}
 }
@@ -294,7 +405,7 @@ func TestGenerateStaged_NoPolicySourceWithholdsEverything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateStaged() error = %v", err)
 	}
-	if result.Message != "" || !slices.Equal(result.Withheld, []string{"main.go"}) {
+	if result.Message != "" || !slices.Equal(result.Withheld, denied("main.go")) {
 		t.Errorf("result = %+v, want everything withheld", result)
 	}
 }
@@ -359,8 +470,8 @@ func TestGenerateStaged_KeepsWithheldDescendantOutOfAllowedPathspec(t *testing.T
 	if err != nil {
 		t.Fatalf("GenerateStaged() error = %v", err)
 	}
-	if !slices.Equal(result.Withheld, []string{"config/.env"}) {
-		t.Errorf("Withheld = %q", result.Withheld)
+	if !slices.Equal(result.Withheld, denied("config/.env")) {
+		t.Errorf("Withheld = %+v", result.Withheld)
 	}
 	request := readRequest(t, provider)
 	if !strings.Contains(request.user, "shipped hunk") || !strings.Contains(request.user, "deleted file") {
@@ -387,8 +498,8 @@ func TestGenerateStaged_WithholdsCopyOfProtectedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateStaged() error = %v", err)
 	}
-	if !slices.Equal(result.Withheld, []string{".env -> config.txt"}) {
-		t.Errorf("Withheld = %q", result.Withheld)
+	if !slices.Equal(result.Withheld, denied(".env -> config.txt")) {
+		t.Errorf("Withheld = %+v", result.Withheld)
 	}
 	assertWithheld(t, readRequest(t, provider), []string{"copied-secret"}, []string{"config.txt"})
 }
@@ -633,8 +744,8 @@ func TestGenerateStaged_WithholdsInexactCopyPastRenameLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateStaged() error = %v", err)
 	}
-	if !slices.Equal(result.Withheld, []string{".env -> config.txt"}) {
-		t.Errorf("Withheld = %q", result.Withheld)
+	if !slices.Equal(result.Withheld, denied(".env -> config.txt")) {
+		t.Errorf("Withheld = %+v", result.Withheld)
 	}
 	assertWithheld(t, readRequest(t, provider), []string{"inexact-copy"}, []string{"config.txt"})
 }
@@ -686,8 +797,8 @@ func TestGenerateStaged_FindsProtectedCopyAcrossBatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateStaged() error = %v", err)
 	}
-	if !slices.Equal(result.Withheld, []string{".env -> vendor/zzz-last/settings.txt"}) {
-		t.Errorf("Withheld = %q", result.Withheld)
+	if !slices.Equal(result.Withheld, denied(".env -> vendor/zzz-last/settings.txt")) {
+		t.Errorf("Withheld = %+v", result.Withheld)
 	}
 	assertWithheld(t, readRequest(t, provider), []string{"batched-copy"}, []string{"settings.txt"})
 }
@@ -716,8 +827,8 @@ func TestGenerateStaged_ChecksPairedDestinationAgainstProtectedSources(t *testin
 	if err != nil {
 		t.Fatalf("GenerateStaged() error = %v", err)
 	}
-	if !slices.Equal(result.Withheld, []string{"config/production.yaml -> config/production.backup.yaml"}) {
-		t.Errorf("Withheld = %q", result.Withheld)
+	if !slices.Equal(result.Withheld, denied("config/production.yaml -> config/production.backup.yaml")) {
+		t.Errorf("Withheld = %+v", result.Withheld)
 	}
 	assertWithheld(t, readRequest(t, provider), []string{"paired-secret"}, []string{"production.backup.yaml"})
 }
@@ -771,8 +882,8 @@ func TestGenerateStaged_ChecksRenamedDestinationAgainstProtectedSources(t *testi
 	if err != nil {
 		t.Fatalf("GenerateStaged() error = %v", err)
 	}
-	if !slices.Equal(result.Withheld, []string{".env -> config.txt"}) {
-		t.Errorf("Withheld = %q", result.Withheld)
+	if !slices.Equal(result.Withheld, denied(".env -> config.txt")) {
+		t.Errorf("Withheld = %+v", result.Withheld)
 	}
 	request := readRequest(t, provider)
 	if !strings.Contains(request.user, "deleted file") || !strings.Contains(request.user, "template.txt") {
@@ -807,8 +918,8 @@ func TestGenerateStaged_ChecksNewFileAgainstDeletedProtectedSource(t *testing.T)
 	if err != nil {
 		t.Fatalf("GenerateStaged() error = %v", err)
 	}
-	if !slices.Contains(result.Withheld, ".env -> second.txt") {
-		t.Errorf("Withheld = %q, want .env -> second.txt", result.Withheld)
+	if !slices.Contains(result.Withheld, WithheldPath{Path: ".env -> second.txt"}) {
+		t.Errorf("Withheld = %+v, want .env -> second.txt", result.Withheld)
 	}
 	assertWithheld(t, readRequest(t, provider), []string{"deleted-secret"}, []string{"second.txt", "config.txt"})
 }

@@ -551,9 +551,13 @@ describe('GitPanel commit area', () => {
   });
 });
 
+/** Withheld entries Golem's file access rules deny. */
+const deniedPaths = (paths: readonly string[]): git.WithheldPath[] =>
+  paths.map((path) => ({ path, outside: false }));
+
 describe('GitPanel AI message generation', () => {
   const generated = (message: string, withheld: string[] = []) =>
-    ({ message, withheld }) as git.CommitMessageResult;
+    ({ message, withheld: deniedPaths(withheld) }) as git.CommitMessageResult;
 
   it.each([
     ['generated', 'feat: generated', []],
@@ -726,7 +730,7 @@ describe('GitPanel AI generation preserves current drafts', () => {
       });
       await act(async () => {
         if (message === null) reject(new Error('model unavailable'));
-        else resolve({ message, withheld: [...withheld] } as git.CommitMessageResult);
+        else resolve({ message, withheld: deniedPaths(withheld) } as git.CommitMessageResult);
       });
 
       expect(input).toHaveValue('my completed draft');
@@ -786,7 +790,7 @@ describe('GitPanel AI generation preserves current drafts', () => {
     fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
     expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
     await act(async () => {
-      resolve({ message: '', withheld: ['.env'] } as git.CommitMessageResult);
+      resolve({ message: '', withheld: deniedPaths(['.env']) } as git.CommitMessageResult);
     });
 
     expect(screen.getByTestId('ai-withheld')).toHaveTextContent(/no request was made/i);
@@ -878,7 +882,7 @@ describe('GitPanel AI generation across a workspace switch', () => {
 
 describe('GitPanel AI withheld paths (#384)', () => {
   const generated = (message: string, withheld: string[] = []) =>
-    ({ message, withheld }) as git.CommitMessageResult;
+    ({ message, withheld: deniedPaths(withheld) }) as git.CommitMessageResult;
 
   it('lists the staged files withheld from the AI beside the generated message', async () => {
     mockGenerate.mockResolvedValue(generated('feat: generated', ['.env', 'old.key -> new.key']));
@@ -920,8 +924,68 @@ describe('GitPanel AI withheld paths (#384)', () => {
     const notice = screen.getByTestId('ai-withheld');
     expect(notice).toHaveTextContent(/no request was made/i);
     expect(within(notice).getByText('.env')).toBeInTheDocument();
+    expect(notice).toHaveTextContent(/Golem's file access rules/);
+    expect(notice).not.toHaveTextContent(/outside the open folder/i);
     expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
     expect(screen.queryByTestId('git-error')).not.toBeInTheDocument();
+  });
+});
+
+describe('GitPanel AI withheld reasons (#513)', () => {
+  const generate = async (message: string, withheld: git.WithheldPath[]) => {
+    mockGenerate.mockResolvedValue({ message, withheld } as git.CommitMessageResult);
+    seed([file('main.go', 'A', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true });
+    });
+    render(<GitPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+    return screen.getByTestId('ai-withheld');
+  };
+
+  it('says a lone staged file outside the open folder is outside it, not denied by the rules', async () => {
+    const notice = await generate('', [{ path: 'backend/main.go', outside: true }]);
+
+    expect(notice).toHaveTextContent(/no request was made/i);
+    expect(notice).not.toHaveTextContent(/file access rules/i);
+    const outside = within(notice).getByRole('list', { name: /outside the open folder/i });
+    expect(within(outside).getByText('backend/main.go')).toBeInTheDocument();
+  });
+
+  it('lists files outside the open folder apart from files the rules deny', async () => {
+    const notice = await generate('feat: generated', [
+      { path: 'backend/main.go', outside: true },
+      { path: '.env', outside: false },
+    ]);
+
+    expect(notice).toHaveTextContent(/may not mention/i);
+    const outside = within(notice).getByRole('list', { name: /outside the open folder/i });
+    const denied = within(notice).getByRole('list', { name: /Golem's file access rules/ });
+    expect(within(outside).getByText('backend/main.go')).toBeInTheDocument();
+    expect(within(outside).queryByText('.env')).not.toBeInTheDocument();
+    expect(within(denied).getByText('.env')).toBeInTheDocument();
+    expect(within(denied).queryByText('backend/main.go')).not.toBeInTheDocument();
+  });
+
+  it('names both groups when every staged file is withheld for either reason', async () => {
+    const notice = await generate('', [
+      { path: 'backend/main.go', outside: true },
+      { path: '.env', outside: false },
+    ]);
+
+    expect(notice).toHaveTextContent(/no request was made/i);
+    expect(within(notice).getAllByRole('list')).toHaveLength(2);
+    expect(
+      within(within(notice).getByRole('list', { name: /outside the open folder/i })).getByText(
+        'backend/main.go'
+      )
+    ).toBeInTheDocument();
+    expect(
+      within(within(notice).getByRole('list', { name: /Golem's file access rules/ })).getByText(
+        '.env'
+      )
+    ).toBeInTheDocument();
   });
 });
 

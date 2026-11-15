@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useId, useMemo, useState } from 'react';
 import { Panel, PanelAction } from '../layout';
 import { RestartIcon, ChevronRightIcon, ChevronDownIcon } from '../icons';
 import { useGitStore, useGitStatusSnapshot } from '../../stores/gitStore';
@@ -361,15 +361,13 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
         {withheldFromAI && (
           <div className={styles.aiWithheld} data-testid="ai-withheld">
             {withheldFromAI.allWithheld
-              ? "Every staged file is withheld from the AI by Golem's file access rules, so no request was made. Write the message by hand."
-              : "Withheld from the AI by Golem's file access rules, so the message may not mention:"}
-            <ul className={styles.aiWithheldList}>
-              {withheldFromAI.paths.map((path) => (
-                <li key={path}>
-                  <code>{path}</code>
-                </li>
-              ))}
-            </ul>
+              ? 'Every staged file is withheld from the AI, so no request was made. Write the message by hand.'
+              : 'The message may not mention the staged files below, which were withheld from the AI.'}
+            <WithheldList label="Outside the open folder:" paths={withheldFromAI.outside} />
+            <WithheldList
+              label="Denied by Golem's file access rules:"
+              paths={withheldFromAI.denied}
+            />
           </div>
         )}
       </div>
@@ -407,6 +405,27 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
         </button>
       </div>
     </div>
+  );
+}
+
+/** One reason's withheld paths as a list its label names (#513); nothing when
+ * no path was withheld for that reason. */
+function WithheldList({ label, paths }: { label: string; paths: string[] }) {
+  const id = useId();
+  if (paths.length === 0) return null;
+  return (
+    <>
+      <div id={id} className={styles.aiWithheldLabel}>
+        {label}
+      </div>
+      <ul className={styles.aiWithheldList} aria-labelledby={id}>
+        {paths.map((path) => (
+          <li key={path}>
+            <code>{path}</code>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

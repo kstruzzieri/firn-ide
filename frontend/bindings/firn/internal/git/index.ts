@@ -15,5 +15,6 @@ export {
     MergeHead,
     MergeHeads,
     RepoStatus,
-    StageBlob
+    StageBlob,
+    WithheldPath
 } from "./models.js";
