@@ -50,13 +50,13 @@ jest.mock('../../wails/runtime', () => ({
 
 import { useRunProfilesLoader } from '../../hooks/useRunProfiles';
 
-type Phase2CHistoryState = ReturnType<typeof useIDEStore.getState> & {
+type ArchiveHistoryState = ReturnType<typeof useIDEStore.getState> & {
   runHistoryRecords: Record<string, unknown>;
   runHistorySummaries: Record<string, { outputAvailable: boolean }>;
 };
 
-const historyState = (): Phase2CHistoryState =>
-  useIDEStore.getState() as unknown as Phase2CHistoryState;
+const historyState = (): ArchiveHistoryState =>
+  useIDEStore.getState() as unknown as ArchiveHistoryState;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

@@ -5,7 +5,7 @@ function status(overrides: Partial<LSPServerStatus>): LSPServerStatus {
   return { family: 'python', workspace: '/proj', state: 'ready', ...overrides };
 }
 
-describe('describeSetup phase 2 states', () => {
+describe('describeSetup managed-provisioning states', () => {
   it('provisioning -> info tone with percent', () => {
     const n = describeSetup(status({ setupState: 'provisioning', provisionPct: 40 }));
     expect(n?.tone).toBe('info');

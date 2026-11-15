@@ -82,7 +82,7 @@ const output = (
     workspaceEpoch: 1,
   }) as RunOutput;
 
-const setPhase2BState = (patch: Partial<ReturnType<typeof useIDEStore.getState>>) => {
+const setRunIdentityState = (patch: Partial<ReturnType<typeof useIDEStore.getState>>) => {
   useIDEStore.setState(patch);
 };
 
@@ -139,7 +139,7 @@ it('renders retained ordinary tabs in indexed order with profile and opaque run 
 });
 
 it('labels two live executions by stable launch order and keeps selection keyed by RID', () => {
-  setPhase2BState({
+  setRunIdentityState({
     runOutputs: {
       second: output('second', 'p1', 'second', 'new-dir', 'running', 22),
       first: output('first', 'p1', 'first', 'old-dir', 'running', 21),
@@ -167,7 +167,7 @@ it('labels two live executions by stable launch order and keeps selection keyed 
 });
 
 it('disables run controls while workspace event admission is paused', () => {
-  setPhase2BState({
+  setRunIdentityState({
     runOutputs: {
       live: output('live', 'p1', 'live', 'work', 'running', 21),
     },
@@ -186,7 +186,7 @@ it('disables run controls while workspace event admission is paused', () => {
 });
 
 it('controls a selected output-before-status buffer by its exact RID', () => {
-  setPhase2BState({
+  setRunIdentityState({
     runOutputs: {
       older: output('older', 'p1', 'older', 'work', 'running', 10),
       provisional: output('provisional', 'p1', 'early', 'work', 'idle', 20),
@@ -265,7 +265,7 @@ it('renders only the latest ordinary execution per profile in All Profiles', () 
 });
 
 it('falls All Profiles back to the latest retained execution after clearing a newer terminal tab', () => {
-  setPhase2BState({
+  setRunIdentityState({
     runOutputs: {
       live: output('live', 'p1', 'live', 'live-dir', 'running', 10),
       done: output('done', 'p1', 'done', 'done-dir', 'failed', 11),
@@ -313,7 +313,7 @@ it('derives Diff entries and both working directories from the indexed predecess
 });
 
 it('keeps Diff available between two concurrently live retained executions', () => {
-  setPhase2BState({
+  setRunIdentityState({
     runOutputs: {
       first: output('first', 'p1', 'first-live', 'packages/first', 'running', 30),
       second: output('second', 'p1', 'second-live', 'packages/second', 'running', 31),
@@ -397,7 +397,7 @@ it('starts the selected terminal profile again without stopping its live sibling
 });
 
 it('evicts a selected terminal tab before a live tab and selects the newly launched RID', () => {
-  setPhase2BState({
+  setRunIdentityState({
     workspaceEpoch: 1,
     runProfiles: [profile('p1', 'Build')],
     runOutputs: {

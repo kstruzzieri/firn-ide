@@ -17,7 +17,7 @@ const archived = (profileId: string) => ({
   entries: [{ stream: 'stdout', text: 'old', timestamp: 150 }],
 });
 
-const setPhase2CState = (profileId: string, activeRunOutputId: string) => {
+const setHistoryState = (profileId: string, activeRunOutputId: string) => {
   const setState = useIDEStore.setState as unknown as (patch: Record<string, unknown>) => void;
   setState({
     ...useIDEStore.getInitialState(),
@@ -57,8 +57,8 @@ const startBuild = () =>
     timestamp: 300,
   });
 
-const setPhase2CCompoundState = (profileId: string, activeRunOutputId: string) => {
-  setPhase2CState(profileId, activeRunOutputId);
+const setCompoundState = (profileId: string, activeRunOutputId: string) => {
+  setHistoryState(profileId, activeRunOutputId);
   const setState = useIDEStore.setState as unknown as (patch: Record<string, unknown>) => void;
   setState({
     runProfiles: [
@@ -127,7 +127,7 @@ const startCompound = () =>
   });
 
 it('stores archive records under raw UUID keys and uses the prefix only for selection', () => {
-  setPhase2CState('build', selectionKey);
+  setHistoryState('build', selectionKey);
   const state = useIDEStore.getState() as unknown as {
     runHistoryRecords: Record<string, unknown>;
     runHistorySummaries: Record<string, unknown>;
@@ -141,37 +141,37 @@ it('stores archive records under raw UUID keys and uses the prefix only for sele
 });
 
 it('a same-profile ordinary launch steals historical selection', () => {
-  setPhase2CState('build', selectionKey);
+  setHistoryState('build', selectionKey);
   startBuild();
   expect(useIDEStore.getState().activeRunOutputId).toBe('r1');
 });
 
 it('a different-profile ordinary launch preserves historical selection', () => {
-  setPhase2CState('test', selectionKey);
+  setHistoryState('test', selectionKey);
   startBuild();
   expect(useIDEStore.getState().activeRunOutputId).toBe(selectionKey);
 });
 
 it('ALL_PROFILES_ID keeps its current auto-selection behavior', () => {
-  setPhase2CState('test', '__all__');
+  setHistoryState('test', '__all__');
   startBuild();
   expect(useIDEStore.getState().activeRunOutputId).toBe('r1');
 });
 
 it('a same-profile compound launch steals historical selection', () => {
-  setPhase2CCompoundState('ci', selectionKey);
+  setCompoundState('ci', selectionKey);
   startCompound();
   expect(useIDEStore.getState().activeRunOutputId).toBe('aggregate-r1');
 });
 
 it('a different-profile compound launch preserves historical selection', () => {
-  setPhase2CCompoundState('test', selectionKey);
+  setCompoundState('test', selectionKey);
   startCompound();
   expect(useIDEStore.getState().activeRunOutputId).toBe(selectionKey);
 });
 
 it('a compound launch preserves current ALL_PROFILES_ID auto-selection behavior', () => {
-  setPhase2CCompoundState('test', '__all__');
+  setCompoundState('test', '__all__');
   startCompound();
   expect(useIDEStore.getState().activeRunOutputId).toBe('aggregate-r1');
 });

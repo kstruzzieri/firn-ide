@@ -210,7 +210,7 @@ func TestExecutorCompoundCapturesResolvedStepSnapshotAtAdmission(t *testing.T) {
 			close(firstPrepared)
 			<-releaseFirst
 		case 2:
-			const prefix = "FIRN_PHASE2D_SNAPSHOT="
+			const prefix = "FIRN_PLAN_SNAPSHOT="
 			value := ""
 			for _, item := range cmd.Env {
 				if strings.HasPrefix(item, prefix) {
@@ -238,7 +238,7 @@ func TestExecutorCompoundCapturesResolvedStepSnapshotAtAdmission(t *testing.T) {
 			Type:    ProfileTypeSingle,
 			Command: "go env GOOS",
 			Env: map[string]string{
-				"FIRN_PHASE2D_SNAPSHOT": "planned",
+				"FIRN_PLAN_SNAPSHOT": "planned",
 			},
 		},
 	}
@@ -256,7 +256,7 @@ func TestExecutorCompoundCapturesResolvedStepSnapshotAtAdmission(t *testing.T) {
 	// Keep this barrier: the same test runs under -race to verify the
 	// coordinator consumes an owned snapshot, not caller memory.
 	steps[1].Command = "go env GOARCH"
-	steps[1].Env["FIRN_PHASE2D_SNAPSHOT"] = "mutated"
+	steps[1].Env["FIRN_PLAN_SNAPSHOT"] = "mutated"
 	release()
 
 	var got preparedStep
@@ -423,7 +423,7 @@ func TestExecutor_StartCompoundSetupFailureEmitsStepError(t *testing.T) {
 	}
 }
 
-func assertPhase2EAdministrativeCompoundStop(
+func assertAdministrativeCompoundStop(
 	t *testing.T,
 	terminal RunStatus,
 	snaps []compoundStatus,
@@ -475,7 +475,7 @@ func assertPhase2EAdministrativeCompoundStop(
 	}
 }
 
-func TestExecutorPhase2E_CompoundPreReservationInvalidationStops(t *testing.T) {
+func TestExecutor_CompoundPreReservationInvalidationStops(t *testing.T) {
 	const reason = "workspace-switch"
 	spy := &emitSpy{}
 	out := &outputSpy{}
@@ -523,10 +523,10 @@ func TestExecutorPhase2E_CompoundPreReservationInvalidationStops(t *testing.T) {
 
 	terminal := waitForTerminalStatus(t, exec, compound.ID)
 	snaps := waitForCompoundSnapshot(t, spy, terminal.State, 2*time.Second)
-	assertPhase2EAdministrativeCompoundStop(t, terminal, snaps, out, reason)
+	assertAdministrativeCompoundStop(t, terminal, snaps, out, reason)
 }
 
-func TestExecutorPhase2E_CompoundReservedStartInvalidationStops(t *testing.T) {
+func TestExecutor_CompoundReservedStartInvalidationStops(t *testing.T) {
 	const reason = "shutdown"
 	spy := &emitSpy{}
 	out := &outputSpy{}
@@ -568,7 +568,7 @@ func TestExecutorPhase2E_CompoundReservedStartInvalidationStops(t *testing.T) {
 
 	terminal := waitForTerminalStatus(t, executor, compound.ID)
 	snaps := waitForCompoundSnapshot(t, spy, terminal.State, stopGracePeriod+2*time.Second)
-	assertPhase2EAdministrativeCompoundStop(t, terminal, snaps, out, reason)
+	assertAdministrativeCompoundStop(t, terminal, snaps, out, reason)
 }
 
 func TestExecutor_StopCompoundMidStep(t *testing.T) {

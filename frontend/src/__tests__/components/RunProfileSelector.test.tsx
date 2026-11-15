@@ -12,7 +12,7 @@ jest.mock('../../wails/bindings', () => ({
   SetActiveVariant: jest.fn().mockResolvedValue(undefined),
 }));
 
-const setPhase2BState = (patch: Partial<ReturnType<typeof useIDEStore.getState>>) => {
+const setRunIdentityState = (patch: Partial<ReturnType<typeof useIDEStore.getState>>) => {
   useIDEStore.setState(patch);
 };
 
@@ -58,7 +58,7 @@ test('shows the effective target name and a Run action', () => {
 });
 
 test('disables the run action while workspace event admission is paused', () => {
-  setPhase2BState({ runEventsPaused: true, isLoadingProfiles: true });
+  setRunIdentityState({ runEventsPaused: true, isLoadingProfiles: true });
 
   render(<RunProfileSelector />);
 
@@ -106,7 +106,7 @@ test('derives the header action from the explicit latest run instance', () => {
 });
 
 test('keeps the header on the newest live action when a newer sibling has failed', async () => {
-  setPhase2BState({
+  setRunIdentityState({
     runOutputs: {
       live: ordinaryOutput('live', 'running', 10),
       failed: ordinaryOutput('failed', 'failed', 11),
@@ -129,7 +129,7 @@ test('keeps the header on the newest live action when a newer sibling has failed
 
 test('targets the newest provisional live RID when output arrives before status', () => {
   mockStop.mockImplementationOnce(() => new Promise<void>(() => {}));
-  setPhase2BState({
+  setRunIdentityState({
     runOutputs: {
       older: ordinaryOutput('older', 'running', 10),
       provisional: ordinaryOutput('provisional', 'idle', 20),
@@ -148,7 +148,7 @@ test('targets the newest provisional live RID when output arrives before status'
 });
 
 test('offers Run another with one live plus one terminal execution and removes it at live capacity', () => {
-  setPhase2BState({
+  setRunIdentityState({
     runOutputs: {
       terminal: ordinaryOutput('terminal', 'failed', 19),
       first: ordinaryOutput('first', 'running', 20),
@@ -164,7 +164,7 @@ test('offers Run another with one live plus one terminal execution and removes i
   expect(mockStart).toHaveBeenCalledWith('p1');
 
   act(() => {
-    setPhase2BState({
+    setRunIdentityState({
       runOutputs: {
         first: ordinaryOutput('first', 'running', 20),
         second: ordinaryOutput('second', 'idle', 21),

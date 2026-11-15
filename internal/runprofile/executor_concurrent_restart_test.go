@@ -16,7 +16,7 @@ import (
 // must report that with a sentinel the app binding can branch on, otherwise the
 // binding cannot tell "nothing to replace" apart from a real failure and the
 // user sees an error instead of a fresh run.
-func TestExecutorPhase2B_RestartOfVanishedInstanceReportsNotRunningSentinel(t *testing.T) {
+func TestExecutor_RestartOfVanishedInstanceReportsNotRunningSentinel(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	profile := newTestProfile("target", "sleep 30")
@@ -26,12 +26,12 @@ func TestExecutorPhase2B_RestartOfVanishedInstanceReportsNotRunningSentinel(t *t
 	if err := exec.Start(root, profile); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	running := phase2BRunningIDs(t, spy, profile.ID, 1)[0]
+	running := runningIDs(t, spy, profile.ID, 1)[0]
 
 	if err := exec.StopRunInstance(running); err != nil {
 		t.Fatalf("StopRunInstance: %v", err)
 	}
-	phase2BStatusFor(t, spy, running, RunStateStopped)
+	statusFor(t, spy, running, RunStateStopped)
 
 	err := exec.RestartAtEpoch(exec.CurrentEpoch(), root, profile, running)
 	if !errors.Is(err, ErrRunInstanceNotRunning) {
@@ -50,7 +50,7 @@ func TestExecutorPhase2B_RestartOfVanishedInstanceReportsNotRunningSentinel(t *t
 // of the instance it replaces, so the settled state is still two runs. Counting
 // a pending replacement on top of its own original made the second restart hit
 // the cap and fail with "profile already running".
-func TestExecutorPhase2B_BothSiblingsCanRestartConcurrently(t *testing.T) {
+func TestExecutor_BothSiblingsCanRestartConcurrently(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	profile := newTestProfile("target", "sleep 30")
@@ -62,7 +62,7 @@ func TestExecutorPhase2B_BothSiblingsCanRestartConcurrently(t *testing.T) {
 			t.Fatalf("Start %d: %v", i, err)
 		}
 	}
-	ids := phase2BRunningIDs(t, spy, profile.ID, 2)
+	ids := runningIDs(t, spy, profile.ID, 2)
 
 	epoch := exec.CurrentEpoch()
 	errs := make(chan error, len(ids))
@@ -83,7 +83,7 @@ func TestExecutorPhase2B_BothSiblingsCanRestartConcurrently(t *testing.T) {
 	}
 
 	// Both replacements are live, and the cap still holds against a third launch.
-	restarted := phase2BRunningIDs(t, spy, profile.ID, 4)
+	restarted := runningIDs(t, spy, profile.ID, 4)
 	for _, prior := range ids {
 		for _, id := range restarted[2:] {
 			if id == prior {
@@ -98,7 +98,7 @@ func TestExecutorPhase2B_BothSiblingsCanRestartConcurrently(t *testing.T) {
 
 // Once a replaced instance has exited, its pending replacement owns the slot
 // outright — otherwise the shared-slot rule would let a third run in.
-func TestExecutorPhase2B_ReplacementClaimsSlotAfterOriginalExits(t *testing.T) {
+func TestExecutor_ReplacementClaimsSlotAfterOriginalExits(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	profile := newTestProfile("target", "sleep 30")
@@ -110,13 +110,13 @@ func TestExecutorPhase2B_ReplacementClaimsSlotAfterOriginalExits(t *testing.T) {
 			t.Fatalf("Start %d: %v", i, err)
 		}
 	}
-	ids := phase2BRunningIDs(t, spy, profile.ID, 2)
+	ids := runningIDs(t, spy, profile.ID, 2)
 
 	epoch := exec.CurrentEpoch()
 	if err := exec.RestartAtEpoch(epoch, root, profile, ids[0]); err != nil {
 		t.Fatalf("restart oldest sibling: %v", err)
 	}
-	phase2BRunningIDs(t, spy, profile.ID, 3)
+	runningIDs(t, spy, profile.ID, 3)
 
 	if err := exec.StartAtEpoch(epoch, root, profile); err == nil {
 		t.Fatal("third run admitted while both slots were occupied")
@@ -126,7 +126,7 @@ func TestExecutorPhase2B_ReplacementClaimsSlotAfterOriginalExits(t *testing.T) {
 // Compound steps are ordered against ordinary runs by the same monotonic launch
 // counter. Emitting a constant zero would make every step tie with every other
 // step and lose to any ordinary run in refreshActiveProfileLocked.
-func TestExecutorPhase2B_CompoundStepsCarryDistinctLaunchSequences(t *testing.T) {
+func TestExecutor_CompoundStepsCarryDistinctLaunchSequences(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	root := t.TempDir()
@@ -187,7 +187,7 @@ func TestExecutorPhase2B_CompoundStepsCarryDistinctLaunchSequences(t *testing.T)
 // and is not exercised here, since SIGKILL to the child's own process group
 // always lands on unix. This asserts the reservation-release contract itself,
 // which is what StopAll depends on.
-func TestExecutorPhase2B_InvalidatedSpawnReleasesReservation(t *testing.T) {
+func TestExecutor_InvalidatedSpawnReleasesReservation(t *testing.T) {
 	spy := &emitSpy{}
 	executor := NewExecutor(spy.emit, nil)
 	root := t.TempDir()

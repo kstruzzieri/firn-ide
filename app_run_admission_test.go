@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-type phase2BEpochExecutor interface {
+type epochStartExecutor interface {
 	CurrentEpoch() uint64
 	StartAtEpoch(uint64, string, runprofile.RunProfile) error
 }
@@ -26,7 +26,7 @@ func TestLoadRunProfilesFailureKeepsAdmissionClosedUntilSuccessfulRetry(t *testi
 
 	executor := runprofile.NewExecutor(nil, nil)
 	t.Cleanup(func() { executor.StopAll(2 * time.Second) }) //nolint:errcheck
-	epochExecutor, ok := any(executor).(phase2BEpochExecutor)
+	epochExecutor, ok := any(executor).(epochStartExecutor)
 	if !ok {
 		t.Fatal("Executor must expose epoch-bound admission for workspace load transitions")
 	}

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestStorePhase2C_SaveUsesUniqueAtomicTempsThroughSharedFilesystemSeam(t *testing.T) {
+func TestStore_SaveUsesUniqueAtomicTempsThroughSharedFilesystemSeam(t *testing.T) {
 	var writes []string
 	var writeModes []fs.FileMode
 	var renames [][2]string

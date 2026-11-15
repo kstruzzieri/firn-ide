@@ -503,7 +503,7 @@ describe('compoundRunStore - identity routing & stale-event guards', () => {
   });
 });
 
-describe('compoundRunStore - Phase 2A regressions', () => {
+describe('compoundRunStore - run identity regressions', () => {
   it('seeds compound state and identity indexes from the initial aggregate running status', () => {
     useIDEStore.getState().handleRunStatus(aggregateStatus('r10', 'running', 1000));
 

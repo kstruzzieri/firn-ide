@@ -472,12 +472,12 @@ describe('useWorkspacePersistence', () => {
   it('acknowledges close when the best-effort history drain rejects', async () => {
     const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     const drainRunHistoryQueue = jest.fn(() => Promise.reject(new Error('history disk full')));
-    const phase2CHook = useWorkspacePersistence as unknown as (
+    const historyPersistenceHook = useWorkspacePersistence as unknown as (
       flushPendingEdits?: () => Promise<void>,
       drainHistory?: () => Promise<void>
     ) => void;
     try {
-      renderHook(() => phase2CHook(undefined, drainRunHistoryQueue));
+      renderHook(() => historyPersistenceHook(undefined, drainRunHistoryQueue));
       await waitFor(() => expect(beforeCloseHandler).not.toBeNull());
 
       act(() => {

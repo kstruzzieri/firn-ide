@@ -3,7 +3,7 @@ import { ALL_PROFILES_ID, MAX_OUTPUT_ENTRIES } from '../../types/runOutput';
 import type { OutputChunk, RunState, RunStatusEvent } from '../../types/runOutput';
 import type { RunProfile } from '../../types/runProfile';
 
-type Phase2AState = ReturnType<typeof useIDEStore.getState> & {
+type HistoryStoreState = ReturnType<typeof useIDEStore.getState> & {
   runInstanceIdsByProfile: Record<string, string[]>;
   latestRunInstanceIdByProfile: Record<string, string>;
 };
@@ -54,7 +54,7 @@ const chunk = (
   launchSeq,
 });
 
-const phase2State = (): Phase2AState => useIDEStore.getState() as Phase2AState;
+const historyStoreState = (): HistoryStoreState => useIDEStore.getState() as HistoryStoreState;
 
 let nextStartedAt = 1000;
 let nextLaunchSeq = 1;
@@ -85,7 +85,7 @@ beforeEach(() => {
     compoundIdByRunInstance: {},
     runInstanceIdsByProfile: {},
     latestRunInstanceIdByProfile: {},
-  } as Partial<Phase2AState>);
+  } as Partial<HistoryStoreState>);
   useIDEStore.getState().resetWorkspaceRunState();
   useIDEStore.setState({
     runProfiles: [
@@ -106,7 +106,7 @@ describe('ordinary run-instance output history', () => {
     }));
     completeRun('r2', 'new\n');
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(Object.keys(state.runOutputs)).toEqual(['r1', 'r2']);
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r1', 'r2']);
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r2');
@@ -124,7 +124,7 @@ describe('ordinary run-instance output history', () => {
     store.appendRunOutput(chunk('r1', 'early\n'));
     store.handleRunStatus(status('r1', 'running'));
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r1');
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r1']);
     expect(state.runOutputs.r1.state).toBe('running');
@@ -136,7 +136,7 @@ describe('ordinary run-instance output history', () => {
     store.appendRunOutput(chunk('r1', 'early\n', 'p1', 1000));
     store.handleRunStatus(status('r1', 'success', 'p1', 1100));
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.runOutputs.r1.state).toBe('success');
     expect(state.runOutputs.r1.entries.map((entry) => entry.text)).toEqual(['early']);
     expect(state.runHistory.p1).toBeUndefined();
@@ -147,7 +147,7 @@ describe('ordinary run-instance output history', () => {
 
     useIDEStore.getState().handleRunStatus(status('r1', 'running', 'p1', 1200));
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.runOutputs.r1.state).toBe('success');
     expect(state.runStartTimestamps.p1).toBe(1000);
   });
@@ -161,7 +161,7 @@ describe('ordinary run-instance output history', () => {
 
       store.handleRunStatus(status('r1', 'idle', 'p1', 1200));
 
-      expect(phase2State().runOutputs.r1.state).toBe(terminalState);
+      expect(historyStoreState().runOutputs.r1.state).toBe(terminalState);
     }
   );
 
@@ -176,7 +176,7 @@ describe('ordinary run-instance output history', () => {
       exitCode: 0,
     });
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r1');
     expect(state.runOutputs.r2).toBeUndefined();
   });
@@ -186,7 +186,7 @@ describe('ordinary run-instance output history', () => {
 
     useIDEStore.getState().handleRunStatus(status('r1', 'success', 'p1', 1002));
 
-    expect(phase2State().runHistory.p1).toEqual([
+    expect(historyStoreState().runHistory.p1).toEqual([
       { state: 'success', duration: 2, timestamp: 1002 },
     ]);
   });
@@ -197,7 +197,7 @@ describe('ordinary run-instance output history', () => {
     store.handleRunStatus(status('r1', 'running', 'p1', 1000));
     store.handleRunStatus(status('r1', 'running', 'p1', 1200));
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.runOutputs.r1.state).toBe('running');
     expect(state.runStartTimestamps.p1).toBe(1000);
   });
@@ -220,7 +220,7 @@ describe('ordinary run-instance output history', () => {
       )
     );
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.runOutputs.r1.entries.map((entry) => entry.text)).toEqual(['old partial']);
     expect(state.runOutputs.r2.entries).toHaveLength(MAX_OUTPUT_ENTRIES);
     expect(state.runOutputs.r2.entries[0].text).toBe('[truncated — oldest output removed]');
@@ -235,7 +235,7 @@ describe('ordinary run-instance output history', () => {
     store.appendRunOutput(chunk('r1', 'late\n', 'p1', 1003, r1LaunchSeq));
     store.handleRunStatus(status('r1', 'failed', 'p1', 1004, r1LaunchSeq));
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r2');
     expect(state.runOutputs.r1.state).toBe('success');
     expect(state.runOutputs.r1.entries.map((entry) => entry.text)).toEqual(['old']);
@@ -249,7 +249,7 @@ describe('ordinary run-instance output history', () => {
 
     useIDEStore.getState().appendRunOutput(chunk('r1', 'late\n', 'p1', 1001, r1LaunchSeq));
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r2', 'r3']);
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r3');
     expect(state.runOutputs.r1).toBeUndefined();
@@ -264,7 +264,7 @@ describe('ordinary run-instance output history', () => {
     store.handleRunStatus(status('r1', 'running', 'p1', 1000, r1LaunchSeq));
     store.handleRunStatus(status('r1', 'failed', 'p1', 1002, r1LaunchSeq));
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r2', 'r3']);
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r3');
     expect(state.runOutputs.r1).toBeUndefined();
@@ -278,7 +278,7 @@ describe('ordinary run-instance output history', () => {
 
     useIDEStore.getState().appendRunOutput(chunk('r4', 'early\n', 'p1', 4000));
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r3', 'r4']);
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r4');
     expect(state.runOutputs.r4.entries.map((entry) => entry.text)).toEqual(['early']);
@@ -294,7 +294,7 @@ describe('ordinary run-instance output history', () => {
     store.appendRunOutput(chunk('r2', 'stale\n', 'p1', 2001));
     store.handleRunStatus(status('r3', 'running', 'p1', 3000));
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r1', 'r3']);
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r3');
     expect(state.runOutputs.r2).toBeUndefined();
@@ -308,7 +308,7 @@ describe('ordinary run-instance output history', () => {
 
     useIDEStore.getState().handleRunStatus(status('r2', 'running', 'p1', 2000));
 
-    expect(phase2State().activeRunOutputId).toBe('r2');
+    expect(historyStoreState().activeRunOutputId).toBe('r2');
   });
 
   it.each([null, ALL_PROFILES_ID])(
@@ -319,7 +319,7 @@ describe('ordinary run-instance output history', () => {
 
       useIDEStore.getState().handleRunStatus(status('r2', 'running', 'p1', 2000));
 
-      expect(phase2State().activeRunOutputId).toBe('r2');
+      expect(historyStoreState().activeRunOutputId).toBe('r2');
     }
   );
 
@@ -330,7 +330,7 @@ describe('ordinary run-instance output history', () => {
 
     useIDEStore.getState().handleRunStatus(status('r2', 'running', 'p1', 2000));
 
-    expect(phase2State().activeRunOutputId).toBe('other-r1');
+    expect(historyStoreState().activeRunOutputId).toBe('other-r1');
   });
 
   it('focuses the newest live sibling before a newer terminal sibling', () => {
@@ -341,7 +341,7 @@ describe('ordinary run-instance output history', () => {
 
     store.focusProfileOutput('p1');
 
-    expect(phase2State().activeRunOutputId).toBe('r1');
+    expect(historyStoreState().activeRunOutputId).toBe('r1');
   });
 
   it('keeps only two executions and selects the newest when a selected tab is pruned', () => {
@@ -350,7 +350,7 @@ describe('ordinary run-instance output history', () => {
     useIDEStore.getState().setActiveRunOutput('r1');
     completeRun('r3', 'three\n');
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r2', 'r3']);
     expect(Object.keys(state.runOutputs)).toEqual(['r2', 'r3']);
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r3');
@@ -364,20 +364,20 @@ describe('ordinary run-instance output history', () => {
 
     useIDEStore.getState().clearRunOutput('r2');
 
-    let state = phase2State();
+    let state = historyStoreState();
     expect(state.runOutputs.r2).toBeUndefined();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r1']);
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r2');
     expect(state.activeRunOutputId).toBe('r1');
 
     useIDEStore.getState().handleRunStatus(status('r2', 'failed'));
-    state = phase2State();
+    state = historyStoreState();
     expect(state.runOutputs.r2).toBeUndefined();
     expect(state.latestRunInstanceIdByProfile.p1).toBe('r2');
 
     useIDEStore.getState().focusProfileOutput('p1');
-    expect(phase2State().activeRunOutputId).toBe('r1');
-    expect(phase2State().latestRunInstanceIdByProfile.p1).toBe('r2');
+    expect(historyStoreState().activeRunOutputId).toBe('r1');
+    expect(historyStoreState().latestRunInstanceIdByProfile.p1).toBe('r2');
   });
 
   it.each(['clearRunOutput', 'clearAllRunOutputs'] as const)(
@@ -394,7 +394,7 @@ describe('ordinary run-instance output history', () => {
       store.handleRunStatus(status('r1', 'running', 'p1', 1000));
       store.appendRunOutput(chunk('r1', 'later\n', 'p1', 1002));
 
-      const state = phase2State();
+      const state = historyStoreState();
       expect(state.runOutputs.r1.state).toBe('running');
       expect(state.runOutputs.r1.entries.map((entry) => entry.text)).toEqual(['later']);
       expect(state.runInstanceIdsByProfile.p1).toEqual(['r1']);
@@ -410,7 +410,7 @@ describe('ordinary run-instance output history', () => {
 
     store.resetWorkspaceRunState();
 
-    const state = phase2State();
+    const state = historyStoreState();
     expect(state.runOutputs.r1).toBeUndefined();
     expect(state.runOutputs.r2).toBeUndefined();
     expect(state.runInstanceIdsByProfile).toEqual({});
@@ -426,7 +426,7 @@ describe('ordinary run-instance output history', () => {
     store.appendRunOutput(chunk('r2', 'live\n'));
     store.clearAllRunOutputs();
 
-    let state = phase2State();
+    let state = historyStoreState();
     expect(Object.keys(state.runOutputs)).toEqual(['r2']);
     expect(state.runOutputs.r2.entries).toEqual([]);
     expect(state.runInstanceIdsByProfile).toEqual({ p1: ['r2'] });
@@ -435,7 +435,7 @@ describe('ordinary run-instance output history', () => {
     store.handleRunStatus(status('r2', 'success'));
     store.clearAllRunOutputs();
 
-    state = phase2State();
+    state = historyStoreState();
     expect(state.runOutputs).toEqual({});
     expect(state.runInstanceIdsByProfile).toEqual({});
     expect(state.latestRunInstanceIdByProfile).toEqual({ p1: 'r2' });
@@ -448,7 +448,7 @@ describe('compound aggregate coexistence', () => {
     const store = useIDEStore.getState();
     store.handleRunStatus(status('agg-r1', 'running', 'ci', 1000));
 
-    let state = phase2State();
+    let state = historyStoreState();
     expect(state.runOutputs).toEqual({});
     expect(state.latestRunInstanceIdByProfile.ci).toBe('agg-r1');
     expect(state.activeRunOutputId).toBe('agg-r1');
@@ -464,7 +464,7 @@ describe('compound aggregate coexistence', () => {
     });
     store.handleRunStatus(status('agg-r1', 'success', 'ci', 1500));
 
-    state = phase2State();
+    state = historyStoreState();
     expect(state.runOutputs).toEqual({});
     expect(state.runCompounds.ci.runInstanceId).toBe('agg-r1');
     expect(state.runCompounds.ci.state).toBe('success');
@@ -473,6 +473,6 @@ describe('compound aggregate coexistence', () => {
 
     store.setActiveRunOutput(null);
     store.focusProfileOutput('ci');
-    expect(phase2State().activeRunOutputId).toBe('agg-r1');
+    expect(historyStoreState().activeRunOutputId).toBe('agg-r1');
   });
 });

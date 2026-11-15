@@ -36,7 +36,7 @@ const chunk = (
   workspaceEpoch,
 });
 
-const phase2BState = () => useIDEStore.getState();
+const runIdentityState = () => useIDEStore.getState();
 
 beforeEach(() => {
   useIDEStore.setState({
@@ -50,7 +50,7 @@ beforeEach(() => {
   });
 });
 
-describe('Phase 2B same-profile ordinary runs', () => {
+describe('same-profile ordinary runs', () => {
   it('keeps two live buffers isolated when later-launch output arrives before either running status', () => {
     const store = useIDEStore.getState();
 
@@ -62,7 +62,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
     store.appendRunOutput(chunk('r2', 'lines\n', 20, 51));
     store.handleRunStatus(status('r2', 'running', 20, 52));
 
-    const state = phase2BState();
+    const state = runIdentityState();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r1', 'r2']);
     expect(state.runOutputs.r1.entries.map((entry) => entry.text)).toEqual(['one']);
     expect(state.runOutputs.r2.entries.map((entry) => entry.text)).toEqual(['two lines']);
@@ -81,7 +81,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
 
     store.handleRunStatus(status('r1', 'stopped', 10, 300));
 
-    const state = phase2BState();
+    const state = runIdentityState();
     expect(state.runStartTimestamps.r1).toBeUndefined();
     expect(state.runStartTimestamps.r2).toBe(200);
     expect(state.stopRequestTimestamps.r1).toBeUndefined();
@@ -100,7 +100,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
     store.handleRunStatus(status('r3', 'running', 30, 140));
     store.handleRunStatus(status('r3', 'success', 30, 160));
 
-    const state = phase2BState();
+    const state = runIdentityState();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r2', 'r3']);
     expect(state.runOutputs.r1).toBeUndefined();
     expect(state.activeRunOutputId).toBe('r3');
@@ -120,7 +120,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
 
     store.handleRunStatus(status('r3', 'running', 30, 130));
 
-    const state = phase2BState();
+    const state = runIdentityState();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r1', 'r3']);
     expect(state.runOutputs.r1.state).toBe('running');
     expect(state.runOutputs.r2).toBeUndefined();
@@ -134,7 +134,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
     store.handleRunStatus(status('r3', 'running', 30, 120));
     store.appendRunOutput(chunk('r3', 'must not route\n', 30, 121));
 
-    const state = phase2BState();
+    const state = runIdentityState();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r1', 'r2']);
     expect(state.runOutputs.r3).toBeUndefined();
   });
@@ -149,7 +149,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
     store.appendRunOutput(chunk('r1', 'still live\n', 10, 121));
     store.appendRunOutput(chunk('r2', 'late cleared\n', 20, 122));
 
-    const state = phase2BState();
+    const state = runIdentityState();
     expect(state.runOutputs.r1.entries.map((entry) => entry.text)).toEqual(['still live']);
     expect(state.runOutputs.r2).toBeUndefined();
   });
@@ -163,7 +163,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
     store.handleRunStatus(status('r1', 'failed', 10, 130));
     store.handleRunStatus(status('r1', 'running', 10, 140));
 
-    const state = phase2BState();
+    const state = runIdentityState();
     expect(state.runOutputs.r1.state).toBe('stopped');
     expect(state.runOutputs.r2.state).toBe('running');
     expect(state.runHistory.p1).toEqual([{ state: 'stopped', duration: 20, timestamp: 120 }]);
@@ -180,7 +180,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
     store.appendRunOutput(chunk('r1', 'after one\n', 10, 120));
     store.appendRunOutput(chunk('r2', 'after two\n', 20, 121));
 
-    const state = phase2BState();
+    const state = runIdentityState();
     expect(state.runInstanceIdsByProfile.p1).toEqual(['r1', 'r2']);
     expect(state.runOutputs.r1.entries.map((entry) => entry.text)).toEqual(['after one']);
     expect(state.runOutputs.r2.entries.map((entry) => entry.text)).toEqual(['after two']);
@@ -196,7 +196,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
       store.clearRunOutput(rid);
     }
 
-    const compacted = phase2BState();
+    const compacted = runIdentityState();
     expect(compacted.discardedRunLaunchSeqsByProfile.p1).toEqual(expect.any(Array));
     expect(compacted.discardedRunLaunchSeqsByProfile.p1?.length).toBeLessThanOrEqual(50);
     expect(compacted.discardedThroughLaunchSeqByProfile.p1).toBeGreaterThan(1);
@@ -208,7 +208,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
     store.appendRunOutput(chunk('live-r1', 'still live\n', 1, 1000));
     store.handleRunStatus(status('live-r1', 'success', 1, 1001));
 
-    const state = phase2BState();
+    const state = runIdentityState();
     expect(state.runOutputs.r2).toBeUndefined();
     expect(state.runInstanceIdsByProfile.p1).not.toContain('r2');
     expect(state.runOutputs['live-r1'].entries.map((entry) => entry.text)).toEqual(['still live']);
@@ -218,7 +218,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
   it('rejects old-epoch output before any current-workspace run exists', () => {
     const store = useIDEStore.getState();
     store.appendRunOutput(chunk('r1', 'old\n', 10, 100, 6));
-    expect(phase2BState().runOutputs).toEqual({});
+    expect(runIdentityState().runOutputs).toEqual({});
   });
 
   it('reports whether an output chunk was accepted so waveform counting can use the same gate', () => {
@@ -233,7 +233,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
     const store = useIDEStore.getState();
     store.handleRunStatus(status('old-status', 'running', 11, 101, 6));
 
-    expect(phase2BState().runOutputs).toEqual({});
+    expect(runIdentityState().runOutputs).toEqual({});
   });
 
   it('rejects old-epoch compound snapshots as well as ordinary events', () => {
@@ -259,7 +259,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
       workspaceEpoch: 6,
     });
 
-    const state = phase2BState();
+    const state = runIdentityState();
     expect(state.runCompounds).toEqual({});
   });
 
@@ -300,7 +300,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
       workspaceEpoch: 7,
     });
 
-    const state = phase2BState();
+    const state = runIdentityState();
     expect(accepted).toBe(false);
     expect(state.runOutputs).toEqual({});
     expect(state.runCompounds.ci.name).toBe('CI');
@@ -328,14 +328,14 @@ describe('Phase 2B same-profile ordinary runs', () => {
     store.handleRunStatus(aggregateStatus('aggregate-1', 'success', 10, 200));
     store.handleRunStatus(aggregateStatus('aggregate-2', 'running', 20, 100));
 
-    let state = phase2BState();
+    let state = runIdentityState();
     expect(state.latestRunInstanceIdByProfile.ci).toBe('aggregate-2');
     expect(state.runLaunchSeqByInstance).toEqual({ 'aggregate-2': 20 });
 
     store.handleRunStatus(aggregateStatus('aggregate-2', 'success', 20, 250));
     store.handleRunStatus(aggregateStatus('aggregate-stale', 'running', 15, 300));
 
-    state = phase2BState();
+    state = runIdentityState();
     expect(state.latestRunInstanceIdByProfile.ci).toBe('aggregate-2');
     expect(state.runCompounds.ci.runInstanceId).toBe('aggregate-2');
     expect(state.runLaunchSeqByInstance).toEqual({ 'aggregate-2': 20 });
@@ -363,14 +363,14 @@ describe('Phase 2B same-profile ordinary runs', () => {
     store.handleRunStatus(aggregateStatus('aggregate-1', 'success', 10, 200));
     store.clearAllRunOutputs();
 
-    let state = phase2BState();
+    let state = runIdentityState();
     expect(state.runCompounds).toEqual({});
     expect(state.latestRunInstanceIdByProfile.ci).toBe('aggregate-1');
     expect(state.runLaunchSeqByInstance).toEqual({ 'aggregate-1': 10 });
 
     store.handleRunStatus(aggregateStatus('aggregate-2', 'running', 20, 100));
 
-    state = phase2BState();
+    state = runIdentityState();
     expect(state.runCompounds.ci.runInstanceId).toBe('aggregate-2');
     expect(state.runLaunchSeqByInstance).toEqual({ 'aggregate-2': 20 });
   });
@@ -380,7 +380,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
     store.resetWorkspaceRunState();
     store.appendRunOutput(chunk('r2', 'also old\n', 20, 200, 6));
 
-    expect(phase2BState().runOutputs).toEqual({});
+    expect(runIdentityState().runOutputs).toEqual({});
   });
 
   it('uses the newest live launch for profile-level ETA while keeping terminal history profile-keyed', () => {
@@ -392,7 +392,7 @@ describe('Phase 2B same-profile ordinary runs', () => {
     store.handleRunStatus(status('live-r1', 'running', 30, 1200));
     store.handleRunStatus(status('live-r2', 'running', 40, 1400));
 
-    const state = phase2BState();
+    const state = runIdentityState();
     const representative = state.latestRunInstanceIdByProfile.p1;
     const elapsed = 1500 - state.runStartTimestamps[representative];
     expect(representative).toBe('live-r2');

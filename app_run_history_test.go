@@ -21,7 +21,7 @@ import (
 	"firn/internal/workspace"
 )
 
-type phase2CBlockingMkdirFS struct {
+type blockingMkdirFS struct {
 	filesystem.FileSystem
 	entered chan struct{}
 	release chan struct{}
@@ -29,7 +29,7 @@ type phase2CBlockingMkdirFS struct {
 	blocked bool
 }
 
-func (blocking *phase2CBlockingMkdirFS) MkdirAll(path string, perm fs.FileMode) error {
+func (blocking *blockingMkdirFS) MkdirAll(path string, perm fs.FileMode) error {
 	blocking.mu.Lock()
 	shouldBlock := !blocking.blocked
 	blocking.blocked = true
@@ -41,7 +41,7 @@ func (blocking *phase2CBlockingMkdirFS) MkdirAll(path string, perm fs.FileMode) 
 	return blocking.FileSystem.MkdirAll(path, perm)
 }
 
-func phase2CRecordInputWithEpoch(t *testing.T, epoch uint64) runhistory.RecordInput {
+func recordInputWithEpoch(t *testing.T, epoch uint64) runhistory.RecordInput {
 	t.Helper()
 	input := runhistory.RecordInput{
 		Kind:        runhistory.RecordKindOrdinary,
@@ -61,12 +61,12 @@ func phase2CRecordInputWithEpoch(t *testing.T, epoch uint64) runhistory.RecordIn
 	return input
 }
 
-type phase2CStatusLog struct {
+type statusLog struct {
 	mu       sync.Mutex
 	statuses []runprofile.RunStatus
 }
 
-func (log *phase2CStatusLog) emit(event string, data any) {
+func (log *statusLog) emit(event string, data any) {
 	if event != "run:status" {
 		return
 	}
@@ -79,7 +79,7 @@ func (log *phase2CStatusLog) emit(event string, data any) {
 	log.statuses = append(log.statuses, status)
 }
 
-func (log *phase2CStatusLog) waitFor(
+func (log *statusLog) waitFor(
 	t *testing.T,
 	runInstanceID string,
 	state runprofile.RunState,
@@ -102,8 +102,8 @@ func (log *phase2CStatusLog) waitFor(
 	return runprofile.RunStatus{}
 }
 
-func TestAppPhase2C_WorkspaceSwitchUsesAdministrativeStopReason(t *testing.T) {
-	log := &phase2CStatusLog{}
+func TestApp_WorkspaceSwitchUsesAdministrativeStopReason(t *testing.T) {
+	log := &statusLog{}
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(log.emit, nil)
 	app.emitFn = func(string, any) {}
@@ -137,7 +137,7 @@ func TestAppPhase2C_WorkspaceSwitchUsesAdministrativeStopReason(t *testing.T) {
 	}
 }
 
-func TestAppPhase2C_HomeResolutionFailureIsVisibleAndNeverUsesRelativeFirn(t *testing.T) {
+func TestApp_HomeResolutionFailureIsVisibleAndNeverUsesRelativeFirn(t *testing.T) {
 	t.Setenv("HOME", "")
 	cwd := t.TempDir()
 	t.Chdir(cwd)
@@ -155,7 +155,7 @@ func TestAppPhase2C_HomeResolutionFailureIsVisibleAndNeverUsesRelativeFirn(t *te
 	}
 }
 
-func TestAppPhase2C_BeforeCloseCallsReasonedStopAllWithShutdownLiteral(t *testing.T) {
+func TestApp_BeforeCloseCallsReasonedStopAllWithShutdownLiteral(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "app.go", nil, 0)
 	if err != nil {
 		t.Fatalf("parse app.go: %v", err)
@@ -195,7 +195,7 @@ func TestAppPhase2C_BeforeCloseCallsReasonedStopAllWithShutdownLiteral(t *testin
 	}
 }
 
-func TestAppPhase2C_AdministrativeDrainTagsBeforeStopping(t *testing.T) {
+func TestApp_AdministrativeDrainTagsBeforeStopping(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "app.go", nil, 0)
 	if err != nil {
 		t.Fatalf("parse app.go: %v", err)
@@ -233,7 +233,7 @@ func TestAppPhase2C_AdministrativeDrainTagsBeforeStopping(t *testing.T) {
 	}
 }
 
-func TestAppPhase2C_WailsRunHistorySurfaceUsesActiveWorkspace(t *testing.T) {
+func TestApp_WailsRunHistorySurfaceUsesActiveWorkspace(t *testing.T) {
 	var _ func(*App) (runhistory.Snapshot, error) = (*App).GetRunHistorySnapshot                         //nolint:staticcheck // Exact Wails signature contract.
 	var _ func(*App, runhistory.RecordInput) (runhistory.Summary, error) = (*App).AppendRunHistoryRecord //nolint:staticcheck // Exact Wails signature contract.
 	var _ func(*App, string) (runhistory.Record, error) = (*App).GetRunHistoryRecord                     //nolint:staticcheck // Exact Wails signature contract.
@@ -241,9 +241,9 @@ func TestAppPhase2C_WailsRunHistorySurfaceUsesActiveWorkspace(t *testing.T) {
 	var _ func(*App) error = (*App).ClearAllRunHistory                                                   //nolint:staticcheck // Exact Wails signature contract.
 }
 
-func TestAppPhase2C_StalledAppendDoesNotBlockSwitchAndStaysInCapturedWorkspace(t *testing.T) {
+func TestApp_StalledAppendDoesNotBlockSwitchAndStaysInCapturedWorkspace(t *testing.T) {
 	baseFS := filesystem.NewOS()
-	blockingFS := &phase2CBlockingMkdirFS{
+	blockingFS := &blockingMkdirFS{
 		FileSystem: baseFS,
 		entered:    make(chan struct{}),
 		release:    make(chan struct{}),
@@ -259,7 +259,7 @@ func TestAppPhase2C_StalledAppendDoesNotBlockSwitchAndStaysInCapturedWorkspace(t
 	epochA := app.executor.CurrentEpoch()
 	historyRoot := t.TempDir()
 	app.runHistoryStore = runhistory.NewStore(blockingFS, historyRoot)
-	inputA := phase2CRecordInputWithEpoch(t, epochA)
+	inputA := recordInputWithEpoch(t, epochA)
 
 	appendDone := make(chan error, 1)
 	go func() {
@@ -297,7 +297,7 @@ func TestAppPhase2C_StalledAppendDoesNotBlockSwitchAndStaysInCapturedWorkspace(t
 	}
 }
 
-func TestAppPhase2C_LatePriorEpochAppendIsRejectedFromActiveWorkspace(t *testing.T) {
+func TestApp_LatePriorEpochAppendIsRejectedFromActiveWorkspace(t *testing.T) {
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(func(string, any) {}, nil)
 	app.emitFn = func(string, any) {}
@@ -312,7 +312,7 @@ func TestAppPhase2C_LatePriorEpochAppendIsRejectedFromActiveWorkspace(t *testing
 	}
 	app.runHistoryStore = runhistory.NewStore(filesystem.NewOS(), t.TempDir())
 
-	_, err := app.AppendRunHistoryRecord(phase2CRecordInputWithEpoch(t, epochA))
+	_, err := app.AppendRunHistoryRecord(recordInputWithEpoch(t, epochA))
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "epoch") {
 		t.Fatalf("late AppendRunHistoryRecord error = %v, want epoch mismatch", err)
 	}
@@ -322,7 +322,7 @@ func TestAppPhase2C_LatePriorEpochAppendIsRejectedFromActiveWorkspace(t *testing
 	}
 }
 
-func TestAppPhase2C_BeginRunShutdownDoesNotWaitForProfileLoadLock(t *testing.T) {
+func TestApp_BeginRunShutdownDoesNotWaitForProfileLoadLock(t *testing.T) {
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(nil, nil)
 	app.profileMu.Lock()
@@ -342,7 +342,7 @@ func TestAppPhase2C_BeginRunShutdownDoesNotWaitForProfileLoadLock(t *testing.T) 
 	}
 }
 
-func TestAppPhase2C_ShutdownDrainStillPersistsPreShutdownEpochRecords(t *testing.T) {
+func TestApp_ShutdownDrainStillPersistsPreShutdownEpochRecords(t *testing.T) {
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(func(string, any) {}, nil)
 	app.emitFn = func(string, any) {}
@@ -361,7 +361,7 @@ func TestAppPhase2C_ShutdownDrainStillPersistsPreShutdownEpochRecords(t *testing
 		t.Fatalf("beginRunShutdown did not advance the epoch (still %d)", drained)
 	}
 
-	summary, err := app.AppendRunHistoryRecord(phase2CRecordInputWithEpoch(t, acceptedEpoch))
+	summary, err := app.AppendRunHistoryRecord(recordInputWithEpoch(t, acceptedEpoch))
 	if err != nil {
 		t.Fatalf("queued pre-shutdown record was dropped by the close drain: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestAppPhase2C_ShutdownDrainStillPersistsPreShutdownEpochRecords(t *testing
 	}
 }
 
-func TestAppPhase2C_PreShutdownEpochAppendAfterWorkspaceLoadStaysInCapturedWorkspace(t *testing.T) {
+func TestApp_PreShutdownEpochAppendAfterWorkspaceLoadStaysInCapturedWorkspace(t *testing.T) {
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(func(string, any) {}, nil)
 	app.emitFn = func(string, any) {}
@@ -390,7 +390,7 @@ func TestAppPhase2C_PreShutdownEpochAppendAfterWorkspaceLoadStaysInCapturedWorks
 	if err := app.LoadRunProfiles(workspaceB); err != nil {
 		t.Fatalf("LoadRunProfiles(B) after shutdown: %v", err)
 	}
-	saved, err := app.AppendRunHistoryRecord(phase2CRecordInputWithEpoch(t, epochA))
+	saved, err := app.AppendRunHistoryRecord(recordInputWithEpoch(t, epochA))
 	if err != nil {
 		t.Fatalf("queued pre-shutdown AppendRunHistoryRecord: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestAppPhase2C_PreShutdownEpochAppendAfterWorkspaceLoadStaysInCapturedWorks
 	}
 }
 
-func TestAppPhase2C_ShutdownDrainStillRejectsOtherWorkspaceEpochs(t *testing.T) {
+func TestApp_ShutdownDrainStillRejectsOtherWorkspaceEpochs(t *testing.T) {
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(func(string, any) {}, nil)
 	app.emitFn = func(string, any) {}
@@ -424,7 +424,7 @@ func TestAppPhase2C_ShutdownDrainStillRejectsOtherWorkspaceEpochs(t *testing.T) 
 
 	// Shutdown widens acceptance by exactly the epoch it superseded, never by
 	// an epoch belonging to a workspace the user already left.
-	_, err := app.AppendRunHistoryRecord(phase2CRecordInputWithEpoch(t, epochA))
+	_, err := app.AppendRunHistoryRecord(recordInputWithEpoch(t, epochA))
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "epoch") {
 		t.Fatalf("shutdown-time AppendRunHistoryRecord error = %v, want epoch mismatch", err)
 	}

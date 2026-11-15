@@ -1337,7 +1337,7 @@ func TestService_ConflictGuard_PreservesFinalNewlineStateThroughWriteAndStage(t 
 
 // ── ConflictState + guarded mutation boundary (real git) ──
 //
-// These cover the Phase 4 invariant: a watcher event is a hint, so the ONLY
+// These cover the guarded-mutation invariant: a watcher event is a hint, so the ONLY
 // thing that may authorize a mutation is a source version the backend computed
 // itself and re-verified inside the same call as the mutation.
 

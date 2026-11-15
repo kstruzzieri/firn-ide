@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func phase2BOpenFIFOForBlockedReader(t *testing.T, path string) *os.File {
+func openFIFOForBlockedReader(t *testing.T, path string) *os.File {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -30,7 +30,7 @@ func phase2BOpenFIFOForBlockedReader(t *testing.T, path string) *os.File {
 	return nil
 }
 
-func TestAppPhase2B_ShutdownClosesAdmissionBeforeStopAll(t *testing.T) {
+func TestApp_ShutdownClosesAdmissionBeforeStopAll(t *testing.T) {
 	var eventMu sync.Mutex
 	statusEvents := 0
 	executor := runprofile.NewExecutor(func(event string, _ any) {
@@ -59,7 +59,7 @@ func TestAppPhase2B_ShutdownClosesAdmissionBeforeStopAll(t *testing.T) {
 	go func() {
 		startDone <- executor.StartAtEpoch(epoch, root, profile)
 	}()
-	writer := phase2BOpenFIFOForBlockedReader(t, fifo)
+	writer := openFIFOForBlockedReader(t, fifo)
 
 	app.beginRunShutdown()
 	if !app.executor.StopAll(500 * time.Millisecond) {
@@ -86,7 +86,7 @@ func TestAppPhase2B_ShutdownClosesAdmissionBeforeStopAll(t *testing.T) {
 	}
 }
 
-func TestAppPhase2B_ShutdownAdmissionCannotBeReopenedByWorkspaceLoad(t *testing.T) {
+func TestApp_ShutdownAdmissionCannotBeReopenedByWorkspaceLoad(t *testing.T) {
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(nil, nil)
 	t.Cleanup(func() { app.executor.StopAll(2 * time.Second) }) //nolint:errcheck
@@ -108,7 +108,7 @@ func TestAppPhase2B_ShutdownAdmissionCannotBeReopenedByWorkspaceLoad(t *testing.
 	}
 }
 
-func TestAppPhase2B_RecencyUsesLaunchAttemptOrderNotSpawnCompletion(t *testing.T) {
+func TestApp_RecencyUsesLaunchAttemptOrderNotSpawnCompletion(t *testing.T) {
 	app := NewApp()
 	app.executor = runprofile.NewExecutor(nil, nil)
 	app.emitFn = func(string, any) {}
@@ -148,7 +148,7 @@ func TestAppPhase2B_RecencyUsesLaunchAttemptOrderNotSpawnCompletion(t *testing.T
 	go func() {
 		firstDone <- app.StartRunProfile(blocked.ID)
 	}()
-	writer := phase2BOpenFIFOForBlockedReader(t, fifo)
+	writer := openFIFOForBlockedReader(t, fifo)
 
 	unblocked := blocked
 	unblocked.EnvFile = ""

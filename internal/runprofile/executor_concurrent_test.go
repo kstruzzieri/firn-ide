@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-func phase2BStatusFor(t *testing.T, spy *emitSpy, runInstanceID string, state RunState) RunStatus {
+func statusFor(t *testing.T, spy *emitSpy, runInstanceID string, state RunState) RunStatus {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -32,7 +32,7 @@ func phase2BStatusFor(t *testing.T, spy *emitSpy, runInstanceID string, state Ru
 	return RunStatus{}
 }
 
-func phase2BRunningIDs(t *testing.T, spy *emitSpy, profileID string, want int) []string {
+func runningIDs(t *testing.T, spy *emitSpy, profileID string, want int) []string {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -46,7 +46,7 @@ func phase2BRunningIDs(t *testing.T, spy *emitSpy, profileID string, want int) [
 		}
 		if len(statuses) == want {
 			sort.Slice(statuses, func(i, j int) bool {
-				return phase2BLaunchSeq(t, statuses[i]) < phase2BLaunchSeq(t, statuses[j])
+				return siblingLaunchSeq(t, statuses[i]) < siblingLaunchSeq(t, statuses[j])
 			})
 			ids := make([]string, len(statuses))
 			for i, status := range statuses {
@@ -60,7 +60,7 @@ func phase2BRunningIDs(t *testing.T, spy *emitSpy, profileID string, want int) [
 	return nil
 }
 
-func phase2BNextRunningID(t *testing.T, spy *emitSpy, profileID string, seen map[string]bool) string {
+func nextRunningID(t *testing.T, spy *emitSpy, profileID string, seen map[string]bool) string {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -76,15 +76,15 @@ func phase2BNextRunningID(t *testing.T, spy *emitSpy, profileID string, seen map
 	return ""
 }
 
-func phase2BEventCount(spy *emitSpy) int {
+func runEventCount(spy *emitSpy) int {
 	spy.mu.Lock()
 	defer spy.mu.Unlock()
 	return len(spy.events)
 }
 
-// phase2BLaunchSeq is for ordinary top-level launches, whose sequence is
+// siblingLaunchSeq is for ordinary top-level launches, whose sequence is
 // non-zero. Compound leaves intentionally use zero and must not call it.
-func phase2BLaunchSeq(t *testing.T, status RunStatus) uint64 {
+func siblingLaunchSeq(t *testing.T, status RunStatus) uint64 {
 	t.Helper()
 	if status.LaunchSeq == 0 {
 		t.Fatalf("status %#v has no non-zero launchSeq", status)
@@ -92,7 +92,7 @@ func phase2BLaunchSeq(t *testing.T, status RunStatus) uint64 {
 	return status.LaunchSeq
 }
 
-func phase2BTerminalIndexContainsRunID(executor *Executor, runInstanceID string) bool {
+func terminalIndexContainsRunID(executor *Executor, runInstanceID string) bool {
 	executor.mu.Lock()
 	defer executor.mu.Unlock()
 	for _, ids := range executor.terminalStatusIDsByProfile {
@@ -105,7 +105,7 @@ func phase2BTerminalIndexContainsRunID(executor *Executor, runInstanceID string)
 	return false
 }
 
-func phase2BRetainedStatuses(executor *Executor, profileID string) map[string]RunStatus {
+func retainedStatuses(executor *Executor, profileID string) map[string]RunStatus {
 	executor.mu.Lock()
 	defer executor.mu.Unlock()
 	statuses := make(map[string]RunStatus)
@@ -117,7 +117,7 @@ func phase2BRetainedStatuses(executor *Executor, profileID string) map[string]Ru
 	return statuses
 }
 
-func phase2BCompoundLeafID(t *testing.T, executor *Executor, aggregateID string) string {
+func compoundLeafID(t *testing.T, executor *Executor, aggregateID string) string {
 	t.Helper()
 	executor.mu.Lock()
 	defer executor.mu.Unlock()
@@ -128,44 +128,44 @@ func phase2BCompoundLeafID(t *testing.T, executor *Executor, aggregateID string)
 	return compound.plan[compound.current].step.RunInstanceID
 }
 
-func phase2BStopRunInstance(t *testing.T, exec *Executor, runInstanceID string) error {
+func stopExactRunInstance(t *testing.T, exec *Executor, runInstanceID string) error {
 	t.Helper()
 	return exec.StopRunInstance(runInstanceID)
 }
 
-func phase2BCurrentEpoch(t *testing.T, exec *Executor) uint64 {
+func currentEpoch(t *testing.T, exec *Executor) uint64 {
 	t.Helper()
 	return exec.CurrentEpoch()
 }
 
-func phase2BBeginDrain(t *testing.T, exec *Executor) uint64 {
+func beginDrain(t *testing.T, exec *Executor) uint64 {
 	t.Helper()
 	return exec.BeginDrain()
 }
 
-func phase2BEndDrain(t *testing.T, exec *Executor, epoch uint64) error {
+func endDrain(t *testing.T, exec *Executor, epoch uint64) error {
 	t.Helper()
 	return exec.EndDrain(epoch)
 }
 
-func phase2BStartAtEpoch(t *testing.T, exec *Executor, epoch uint64, root string, profile RunProfile) error {
+func startAtEpoch(t *testing.T, exec *Executor, epoch uint64, root string, profile RunProfile) error {
 	t.Helper()
 	return exec.StartAtEpoch(epoch, root, profile)
 }
 
-func phase2BRestartAtEpoch(t *testing.T, exec *Executor, epoch uint64, root string, profile RunProfile, runInstanceID string) error {
+func restartAtEpoch(t *testing.T, exec *Executor, epoch uint64, root string, profile RunProfile, runInstanceID string) error {
 	t.Helper()
 	return exec.RestartAtEpoch(epoch, root, profile, runInstanceID)
 }
 
 // The command-start dependency is the narrow seam needed to deterministically
 // pause or fail cmd.Start after admission has reserved capacity.
-func phase2BSetCommandStartHook(t *testing.T, executor *Executor, hook func(*exec.Cmd) error) {
+func installCommandStartHook(t *testing.T, executor *Executor, hook func(*exec.Cmd) error) {
 	t.Helper()
 	executor.setCommandStartHook(hook)
 }
 
-func TestExecutorPhase2B_TwoSameProfileRunsHaveDistinctCanonicalLaunches(t *testing.T) {
+func TestExecutor_TwoSameProfileRunsHaveDistinctCanonicalLaunches(t *testing.T) {
 	spy := &emitSpy{}
 	output := &outputSpy{}
 	exec := NewExecutor(spy.emit, output.receive)
@@ -174,14 +174,14 @@ func TestExecutorPhase2B_TwoSameProfileRunsHaveDistinctCanonicalLaunches(t *test
 	if err := exec.Start(t.TempDir(), profile); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
-	firstID := phase2BRunningIDs(t, spy, profile.ID, 1)[0]
-	firstStatus := phase2BStatusFor(t, spy, firstID, RunStateRunning)
+	firstID := runningIDs(t, spy, profile.ID, 1)[0]
+	firstStatus := statusFor(t, spy, firstID, RunStateRunning)
 	if err := exec.Start(t.TempDir(), profile); err != nil {
 		t.Fatalf("second same-profile Start: %v", err)
 	}
 	t.Cleanup(func() { exec.StopAll(2 * time.Second) }) //nolint:errcheck
 
-	ids := phase2BRunningIDs(t, spy, profile.ID, 2)
+	ids := runningIDs(t, spy, profile.ID, 2)
 	secondID := ""
 	for _, id := range ids {
 		if id != firstID {
@@ -192,13 +192,13 @@ func TestExecutorPhase2B_TwoSameProfileRunsHaveDistinctCanonicalLaunches(t *test
 	if secondID == "" {
 		t.Fatalf("same-profile launches reused run id %q", firstID)
 	}
-	secondStatus := phase2BStatusFor(t, spy, secondID, RunStateRunning)
-	if first, second := phase2BLaunchSeq(t, firstStatus), phase2BLaunchSeq(t, secondStatus); first >= second {
+	secondStatus := statusFor(t, spy, secondID, RunStateRunning)
+	if first, second := siblingLaunchSeq(t, firstStatus), siblingLaunchSeq(t, secondStatus); first >= second {
 		t.Fatalf("launch sequences = %d, %d; want strictly increasing canonical order", first, second)
 	}
 }
 
-func TestExecutorPhase2B_ThirdSameProfileStartRejectsBeforeAnyEvent(t *testing.T) {
+func TestExecutor_ThirdSameProfileStartRejectsBeforeAnyEvent(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	profile := newTestProfile("capacity", "sleep 30")
@@ -211,13 +211,13 @@ func TestExecutorPhase2B_ThirdSameProfileStartRejectsBeforeAnyEvent(t *testing.T
 			t.Fatalf("Start #%d: %v", i+1, err)
 		}
 	}
-	phase2BRunningIDs(t, spy, profile.ID, 2)
-	before := phase2BEventCount(spy)
+	runningIDs(t, spy, profile.ID, 2)
+	before := runEventCount(spy)
 	rejected := newTestProfile(profile.ID, fmt.Sprintf("printf rejected > %q; exec sleep 30", rejectedMarker))
 	if err := exec.Start(root, rejected); err == nil {
 		t.Fatal("third same-profile start succeeded; backend capacity must be two")
 	}
-	if after := phase2BEventCount(spy); after != before {
+	if after := runEventCount(spy); after != before {
 		t.Fatalf("rejected third start emitted %d events, want zero", after-before)
 	}
 	exec.mu.Lock()
@@ -237,7 +237,7 @@ func TestExecutorPhase2B_ThirdSameProfileStartRejectsBeforeAnyEvent(t *testing.T
 	}
 }
 
-func TestExecutorPhase2B_ConcurrentSiblingOutputRemainsIsolatedByRunInstance(t *testing.T) {
+func TestExecutor_ConcurrentSiblingOutputRemainsIsolatedByRunInstance(t *testing.T) {
 	spy := &emitSpy{}
 	output := &outputSpy{}
 	exec := NewExecutor(spy.emit, output.receive)
@@ -257,19 +257,19 @@ func TestExecutorPhase2B_ConcurrentSiblingOutputRemainsIsolatedByRunInstance(t *
 	if err := exec.Start(root, profile); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
-	firstID := phase2BRunningIDs(t, spy, profile.ID, 1)[0]
+	firstID := runningIDs(t, spy, profile.ID, 1)[0]
 	profile.Command = command("B")
 	if err := exec.Start(root, profile); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
-	secondID := phase2BRunningIDs(t, spy, profile.ID, 2)[1]
+	secondID := runningIDs(t, spy, profile.ID, 2)[1]
 	t.Cleanup(func() { exec.StopAll(2 * time.Second) }) //nolint:errcheck
 
 	if err := os.WriteFile(gate, nil, 0o600); err != nil {
 		t.Fatalf("open streaming gate: %v", err)
 	}
-	phase2BStatusFor(t, spy, firstID, RunStateSuccess)
-	phase2BStatusFor(t, spy, secondID, RunStateSuccess)
+	statusFor(t, spy, firstID, RunStateSuccess)
+	statusFor(t, spy, secondID, RunStateSuccess)
 
 	output.mu.Lock()
 	entries := append([]outputEntry(nil), output.entries...)
@@ -295,7 +295,7 @@ func TestExecutorPhase2B_ConcurrentSiblingOutputRemainsIsolatedByRunInstance(t *
 	}
 }
 
-func TestExecutorPhase2B_CapacityAdmissionIsAtomicAcrossConcurrentStarts(t *testing.T) {
+func TestExecutor_CapacityAdmissionIsAtomicAcrossConcurrentStarts(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	profile := newTestProfile("atomic-capacity", "sleep 30")
@@ -328,10 +328,10 @@ func TestExecutorPhase2B_CapacityAdmissionIsAtomicAcrossConcurrentStarts(t *test
 	if successes != 2 || failures != 1 {
 		t.Fatalf("concurrent starts = %d successes, %d failures; want atomic capacity of two", successes, failures)
 	}
-	phase2BRunningIDs(t, spy, profile.ID, 2)
+	runningIDs(t, spy, profile.ID, 2)
 }
 
-func TestExecutorPhase2B_ProfileStopAndRestartTargetNewestButExactStopCanTargetOlder(t *testing.T) {
+func TestExecutor_ProfileStopAndRestartTargetNewestButExactStopCanTargetOlder(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	profile := newTestProfile("target", "sleep 30")
@@ -341,24 +341,24 @@ func TestExecutorPhase2B_ProfileStopAndRestartTargetNewestButExactStopCanTargetO
 	if err := exec.Start(root, profile); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
-	first := phase2BRunningIDs(t, spy, profile.ID, 1)[0]
+	first := runningIDs(t, spy, profile.ID, 1)[0]
 	if err := exec.Start(root, profile); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
-	ids := phase2BRunningIDs(t, spy, profile.ID, 2)
+	ids := runningIDs(t, spy, profile.ID, 2)
 	newest := ids[1]
 
 	if err := exec.Stop(profile.ID); err != nil {
 		t.Fatalf("profile Stop: %v", err)
 	}
-	phase2BStatusFor(t, spy, newest, RunStateStopped)
+	statusFor(t, spy, newest, RunStateStopped)
 	if status := exec.GetStatus(profile.ID); status.RunInstanceID != first || status.State != RunStateRunning {
 		t.Fatalf("profile Stop stopped %q but current status = %#v; want older sibling %q still running", newest, status, first)
 	}
 	if err := exec.Start(root, profile); err != nil {
 		t.Fatalf("profile restart Start: %v", err)
 	}
-	ids = phase2BRunningIDs(t, spy, profile.ID, 3)
+	ids = runningIDs(t, spy, profile.ID, 3)
 	restarted := ids[2]
 	if restarted == first || restarted == newest {
 		t.Fatalf("restart reused prior run instance %q", restarted)
@@ -367,40 +367,40 @@ func TestExecutorPhase2B_ProfileStopAndRestartTargetNewestButExactStopCanTargetO
 		t.Fatalf("restart current status = %#v, want new run %q running", status, restarted)
 	}
 
-	if err := phase2BStopRunInstance(t, exec, first); err != nil {
+	if err := stopExactRunInstance(t, exec, first); err != nil {
 		t.Fatalf("exact StopRunInstance(%q): %v", first, err)
 	}
-	phase2BStatusFor(t, spy, first, RunStateStopped)
-	if err := phase2BStopRunInstance(t, exec, first); err != nil {
+	statusFor(t, spy, first, RunStateStopped)
+	if err := stopExactRunInstance(t, exec, first); err != nil {
 		t.Fatalf("repeated exact stop must be idempotent: %v", err)
 	}
-	if err := phase2BStopRunInstance(t, exec, "unknown-rid"); err != nil {
+	if err := stopExactRunInstance(t, exec, "unknown-rid"); err != nil {
 		t.Fatalf("unknown exact stop must be idempotent: %v", err)
 	}
 }
 
-func TestExecutorPhase2B_ExactRestartReplacesOnlySelectedSibling(t *testing.T) {
+func TestExecutor_ExactRestartReplacesOnlySelectedSibling(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	profile := newTestProfile("exact-restart", "sleep 30")
 	root := t.TempDir()
-	epoch := phase2BCurrentEpoch(t, exec)
+	epoch := currentEpoch(t, exec)
 	t.Cleanup(func() { exec.StopAll(2 * time.Second) }) //nolint:errcheck
 
-	if err := phase2BStartAtEpoch(t, exec, epoch, root, profile); err != nil {
+	if err := startAtEpoch(t, exec, epoch, root, profile); err != nil {
 		t.Fatalf("first StartAtEpoch: %v", err)
 	}
-	if err := phase2BStartAtEpoch(t, exec, epoch, root, profile); err != nil {
+	if err := startAtEpoch(t, exec, epoch, root, profile); err != nil {
 		t.Fatalf("second StartAtEpoch: %v", err)
 	}
-	initial := phase2BRunningIDs(t, spy, profile.ID, 2)
+	initial := runningIDs(t, spy, profile.ID, 2)
 	selected := initial[0]
 	sibling := initial[1]
 
-	if err := phase2BRestartAtEpoch(t, exec, epoch, root, profile, selected); err != nil {
+	if err := restartAtEpoch(t, exec, epoch, root, profile, selected); err != nil {
 		t.Fatalf("exact RestartAtEpoch(%q): %v", selected, err)
 	}
-	allRunning := phase2BRunningIDs(t, spy, profile.ID, 3)
+	allRunning := runningIDs(t, spy, profile.ID, 3)
 	replacement := allRunning[2]
 
 	selectedStopped := false
@@ -418,9 +418,9 @@ func TestExecutorPhase2B_ExactRestartReplacesOnlySelectedSibling(t *testing.T) {
 	if !selectedStopped {
 		t.Fatalf("exact restart did not stop selected run %q", selected)
 	}
-	replacementStatus := phase2BStatusFor(t, spy, replacement, RunStateRunning)
-	siblingStatus := phase2BStatusFor(t, spy, sibling, RunStateRunning)
-	if phase2BLaunchSeq(t, replacementStatus) <= phase2BLaunchSeq(t, siblingStatus) {
+	replacementStatus := statusFor(t, spy, replacement, RunStateRunning)
+	siblingStatus := statusFor(t, spy, sibling, RunStateRunning)
+	if siblingLaunchSeq(t, replacementStatus) <= siblingLaunchSeq(t, siblingStatus) {
 		t.Fatal("replacement launch sequence did not advance beyond its surviving sibling")
 	}
 	if status := exec.GetStatus(profile.ID); status.RunInstanceID != replacement || status.State != RunStateRunning {
@@ -428,7 +428,7 @@ func TestExecutorPhase2B_ExactRestartReplacesOnlySelectedSibling(t *testing.T) {
 	}
 }
 
-func TestExecutorPhase2B_ExactRestartRetainsItsCapacitySlot(t *testing.T) {
+func TestExecutor_ExactRestartRetainsItsCapacitySlot(t *testing.T) {
 	spy := &emitSpy{}
 	terminalEntered := make(chan struct{})
 	releaseTerminal := make(chan struct{})
@@ -457,7 +457,7 @@ func TestExecutorPhase2B_ExactRestartRetainsItsCapacitySlot(t *testing.T) {
 			t.Fatalf("seed StartAtEpoch: %v", err)
 		}
 	}
-	initial := phase2BRunningIDs(t, spy, profile.ID, 2)
+	initial := runningIDs(t, spy, profile.ID, 2)
 	selected = initial[0]
 	sibling := initial[1]
 
@@ -482,7 +482,7 @@ func TestExecutorPhase2B_ExactRestartRetainsItsCapacitySlot(t *testing.T) {
 	if restartErr != nil {
 		t.Fatalf("exact restart lost its reserved capacity slot: %v", restartErr)
 	}
-	running := phase2BRunningIDs(t, spy, profile.ID, 3)
+	running := runningIDs(t, spy, profile.ID, 3)
 	replacement := running[2]
 	if replacement == selected || replacement == sibling {
 		t.Fatalf("replacement reused an existing identity: %q", replacement)
@@ -492,7 +492,7 @@ func TestExecutorPhase2B_ExactRestartRetainsItsCapacitySlot(t *testing.T) {
 	}
 }
 
-func TestExecutorPhase2B_DrainInvalidatesAndWaitsForExactRestartReservation(t *testing.T) {
+func TestExecutor_DrainInvalidatesAndWaitsForExactRestartReservation(t *testing.T) {
 	spy := &emitSpy{}
 	terminalEntered := make(chan struct{})
 	releaseTerminal := make(chan struct{})
@@ -519,7 +519,7 @@ func TestExecutorPhase2B_DrainInvalidatesAndWaitsForExactRestartReservation(t *t
 			t.Fatalf("seed StartAtEpoch: %v", err)
 		}
 	}
-	selected = phase2BRunningIDs(t, spy, profile.ID, 2)[0]
+	selected = runningIDs(t, spy, profile.ID, 2)[0]
 
 	restartDone := make(chan error, 1)
 	go func() {
@@ -565,7 +565,7 @@ func TestExecutorPhase2B_DrainInvalidatesAndWaitsForExactRestartReservation(t *t
 	}
 }
 
-func TestExecutorPhase2B_ExactRIDControlsRejectCompoundLeaves(t *testing.T) {
+func TestExecutor_ExactRIDControlsRejectCompoundLeaves(t *testing.T) {
 	run := func(t *testing.T, action func(*Executor, uint64, string, RunProfile, string) error) {
 		t.Helper()
 		spy := &emitSpy{}
@@ -578,10 +578,10 @@ func TestExecutorPhase2B_ExactRIDControlsRejectCompoundLeaves(t *testing.T) {
 			t.Fatalf("StartCompoundAtEpoch: %v", err)
 		}
 		t.Cleanup(func() { exec.Stop(compound.ID) }) //nolint:errcheck
-		aggregateID := phase2BRunningIDs(t, spy, compound.ID, 1)[0]
+		aggregateID := runningIDs(t, spy, compound.ID, 1)[0]
 		waitForStepRunning(t, exec, compound.ID, 0)
-		leafID := phase2BCompoundLeafID(t, exec, aggregateID)
-		before := phase2BEventCount(spy)
+		leafID := compoundLeafID(t, exec, aggregateID)
+		before := runEventCount(spy)
 
 		if err := action(exec, epoch, root, leaf, leafID); err == nil {
 			t.Fatal("exact RID control accepted a compound leaf")
@@ -609,7 +609,7 @@ func TestExecutorPhase2B_ExactRIDControlsRejectCompoundLeaves(t *testing.T) {
 		if standaloneLeaves != 0 {
 			t.Fatalf("rejected exact control launched %d standalone leaf runs", standaloneLeaves)
 		}
-		if after := phase2BEventCount(spy); after != before {
+		if after := runEventCount(spy); after != before {
 			t.Fatalf("rejected exact control emitted %d events, want zero", after-before)
 		}
 	}
@@ -626,7 +626,7 @@ func TestExecutorPhase2B_ExactRIDControlsRejectCompoundLeaves(t *testing.T) {
 	})
 }
 
-func TestExecutorPhase2B_GetStatusKeepsNewestLaunchAfterReverseCompletion(t *testing.T) {
+func TestExecutor_GetStatusKeepsNewestLaunchAfterReverseCompletion(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	root := t.TempDir()
@@ -636,7 +636,7 @@ func TestExecutorPhase2B_GetStatusKeepsNewestLaunchAfterReverseCompletion(t *tes
 	if err := exec.Start(root, profile); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
-	first := phase2BRunningIDs(t, spy, profile.ID, 1)[0]
+	first := runningIDs(t, spy, profile.ID, 1)[0]
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		if _, err := os.Stat(marker); err == nil {
@@ -650,17 +650,17 @@ func TestExecutorPhase2B_GetStatusKeepsNewestLaunchAfterReverseCompletion(t *tes
 	if err := exec.Start(root, profile); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
-	ids := phase2BRunningIDs(t, spy, profile.ID, 2)
+	ids := runningIDs(t, spy, profile.ID, 2)
 	newest := ids[1]
-	phase2BStatusFor(t, spy, newest, RunStateSuccess)
-	phase2BStatusFor(t, spy, first, RunStateSuccess)
+	statusFor(t, spy, newest, RunStateSuccess)
+	statusFor(t, spy, first, RunStateSuccess)
 
 	if status := exec.GetStatus(profile.ID); status.RunInstanceID != newest || status.State != RunStateSuccess {
 		t.Fatalf("GetStatus = %#v, want newest launched terminal run %q", status, newest)
 	}
 }
 
-func TestExecutorPhase2B_StartingSiblingRetainsEarlierTerminalStatus(t *testing.T) {
+func TestExecutor_StartingSiblingRetainsEarlierTerminalStatus(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	root := t.TempDir()
@@ -670,23 +670,23 @@ func TestExecutorPhase2B_StartingSiblingRetainsEarlierTerminalStatus(t *testing.
 	if err := exec.Start(root, profile); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
-	firstID := phase2BNextRunningID(t, spy, profile.ID, seen)
-	phase2BStatusFor(t, spy, firstID, RunStateSuccess)
+	firstID := nextRunningID(t, spy, profile.ID, seen)
+	statusFor(t, spy, firstID, RunStateSuccess)
 
 	profile.Command = "sleep 30"
 	if err := exec.Start(root, profile); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
 	t.Cleanup(func() { exec.StopAll(2 * time.Second) }) //nolint:errcheck
-	phase2BNextRunningID(t, spy, profile.ID, seen)
+	nextRunningID(t, spy, profile.ID, seen)
 
-	retained := phase2BRetainedStatuses(exec, profile.ID)
+	retained := retainedStatuses(exec, profile.ID)
 	if status, ok := retained[firstID]; !ok || status.State != RunStateSuccess {
 		t.Fatalf("starting a live sibling removed terminal run %q: retained=%#v", firstID, retained)
 	}
 }
 
-func TestExecutorPhase2B_RetainsOnlyTwoNewestLaunchedTerminalStatuses(t *testing.T) {
+func TestExecutor_RetainsOnlyTwoNewestLaunchedTerminalStatuses(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	root := t.TempDir()
@@ -698,12 +698,12 @@ func TestExecutorPhase2B_RetainsOnlyTwoNewestLaunchedTerminalStatuses(t *testing
 		if err := exec.Start(root, profile); err != nil {
 			t.Fatalf("Start #%d: %v", launch, err)
 		}
-		id := phase2BNextRunningID(t, spy, profile.ID, seen)
-		phase2BStatusFor(t, spy, id, RunStateSuccess)
+		id := nextRunningID(t, spy, profile.ID, seen)
+		statusFor(t, spy, id, RunStateSuccess)
 		ids = append(ids, id)
 	}
 
-	retained := phase2BRetainedStatuses(exec, profile.ID)
+	retained := retainedStatuses(exec, profile.ID)
 	if len(retained) != 2 {
 		t.Fatalf("retained terminal count = %d, want cap of two: %#v", len(retained), retained)
 	}
@@ -717,7 +717,7 @@ func TestExecutorPhase2B_RetainsOnlyTwoNewestLaunchedTerminalStatuses(t *testing
 	}
 }
 
-func TestExecutorPhase2B_ClearTerminalStatusesClearsRetainedAndProfileIndexes(t *testing.T) {
+func TestExecutor_ClearTerminalStatusesClearsRetainedAndProfileIndexes(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	root := t.TempDir()
@@ -729,33 +729,33 @@ func TestExecutorPhase2B_ClearTerminalStatusesClearsRetainedAndProfileIndexes(t 
 		if err := exec.Start(root, profile); err != nil {
 			t.Fatalf("Start #%d: %v", launch, err)
 		}
-		id := phase2BNextRunningID(t, spy, profile.ID, seen)
-		phase2BStatusFor(t, spy, id, RunStateSuccess)
+		id := nextRunningID(t, spy, profile.ID, seen)
+		statusFor(t, spy, id, RunStateSuccess)
 		ids = append(ids, id)
 	}
 
-	if retained := phase2BRetainedStatuses(exec, profile.ID); len(retained) != 2 {
+	if retained := retainedStatuses(exec, profile.ID); len(retained) != 2 {
 		t.Errorf("precondition: retained terminal count = %d, want two: %#v", len(retained), retained)
 	}
 	for _, id := range ids {
-		if !phase2BTerminalIndexContainsRunID(exec, id) {
+		if !terminalIndexContainsRunID(exec, id) {
 			t.Errorf("precondition: per-profile terminal index does not reference %q", id)
 		}
 	}
 
 	exec.ClearTerminalStatuses()
 
-	if retained := phase2BRetainedStatuses(exec, profile.ID); len(retained) != 0 {
+	if retained := retainedStatuses(exec, profile.ID); len(retained) != 0 {
 		t.Errorf("ClearTerminalStatuses left retained statuses: %#v", retained)
 	}
 	for _, id := range ids {
-		if phase2BTerminalIndexContainsRunID(exec, id) {
+		if terminalIndexContainsRunID(exec, id) {
 			t.Errorf("ClearTerminalStatuses left terminal index reference to %q", id)
 		}
 	}
 }
 
-func TestExecutorPhase2B_PreflightFailureDoesNotConsumeCapacity(t *testing.T) {
+func TestExecutor_PreflightFailureDoesNotConsumeCapacity(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	root := t.TempDir()
@@ -765,7 +765,7 @@ func TestExecutorPhase2B_PreflightFailureDoesNotConsumeCapacity(t *testing.T) {
 	if err := exec.Start(root, broken); err == nil {
 		t.Fatal("start with missing env file succeeded")
 	}
-	if got := phase2BEventCount(spy); got != 0 {
+	if got := runEventCount(spy); got != 0 {
 		t.Fatalf("failed spawn emitted %d events, want zero", got)
 	}
 	valid := newTestProfile("retryable", "sleep 30")
@@ -773,31 +773,31 @@ func TestExecutorPhase2B_PreflightFailureDoesNotConsumeCapacity(t *testing.T) {
 		t.Fatalf("start after preflight failure: %v", err)
 	}
 	t.Cleanup(func() { exec.StopAll(2 * time.Second) }) //nolint:errcheck
-	phase2BRunningIDs(t, spy, valid.ID, 1)
+	runningIDs(t, spy, valid.ID, 1)
 }
 
-func TestExecutorPhase2B_PostReservationSpawnFailureReleasesReservation(t *testing.T) {
+func TestExecutor_PostReservationSpawnFailureReleasesReservation(t *testing.T) {
 	spy := &emitSpy{}
 	executor := NewExecutor(spy.emit, nil)
 	root := t.TempDir()
 	sentinel := errors.New("cmd start failed")
-	phase2BSetCommandStartHook(t, executor, func(*exec.Cmd) error { return sentinel })
+	installCommandStartHook(t, executor, func(*exec.Cmd) error { return sentinel })
 
 	if err := executor.Start(root, newTestProfile("spawn-failure", "sleep 30")); !errors.Is(err, sentinel) {
 		t.Fatalf("post-reservation Start error = %v, want %v", err, sentinel)
 	}
-	if got := phase2BEventCount(spy); got != 0 {
+	if got := runEventCount(spy); got != 0 {
 		t.Fatalf("post-reservation spawn failure emitted %d events, want zero", got)
 	}
-	phase2BSetCommandStartHook(t, executor, func(cmd *exec.Cmd) error { return cmd.Start() })
+	installCommandStartHook(t, executor, func(cmd *exec.Cmd) error { return cmd.Start() })
 	if err := executor.Start(root, newTestProfile("spawn-failure", "sleep 30")); err != nil {
 		t.Fatalf("start after post-reservation failure: %v", err)
 	}
 	t.Cleanup(func() { executor.StopAll(2 * time.Second) }) //nolint:errcheck
-	phase2BRunningIDs(t, spy, "spawn-failure", 1)
+	runningIDs(t, spy, "spawn-failure", 1)
 }
 
-func TestExecutorPhase2B_StopAllStopsTwoSameProfileSiblings(t *testing.T) {
+func TestExecutor_StopAllStopsTwoSameProfileSiblings(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	profile := newTestProfile("stop-all", "sleep 30")
@@ -808,55 +808,55 @@ func TestExecutorPhase2B_StopAllStopsTwoSameProfileSiblings(t *testing.T) {
 			t.Fatalf("Start #%d: %v", i+1, err)
 		}
 	}
-	ids := phase2BRunningIDs(t, spy, profile.ID, 2)
+	ids := runningIDs(t, spy, profile.ID, 2)
 	if !exec.StopAll(2 * time.Second) {
 		t.Fatal("StopAll did not reap both same-profile siblings")
 	}
 	for _, id := range ids {
-		phase2BStatusFor(t, spy, id, RunStateStopped)
+		statusFor(t, spy, id, RunStateStopped)
 	}
 }
 
-func TestExecutorPhase2B_WorkspaceBoundaryRejectsOldEpochBeforeSpawn(t *testing.T) {
+func TestExecutor_WorkspaceBoundaryRejectsOldEpochBeforeSpawn(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
-	oldEpoch := phase2BCurrentEpoch(t, exec)
-	newEpoch := phase2BBeginDrain(t, exec)
+	oldEpoch := currentEpoch(t, exec)
+	newEpoch := beginDrain(t, exec)
 
-	if err := phase2BStartAtEpoch(t, exec, oldEpoch, t.TempDir(), newTestProfile("stale", "sleep 30")); err == nil {
+	if err := startAtEpoch(t, exec, oldEpoch, t.TempDir(), newTestProfile("stale", "sleep 30")); err == nil {
 		t.Fatal("stale epoch start succeeded")
 	}
-	if err := phase2BStartAtEpoch(t, exec, newEpoch, t.TempDir(), newTestProfile("draining", "sleep 30")); err == nil {
+	if err := startAtEpoch(t, exec, newEpoch, t.TempDir(), newTestProfile("draining", "sleep 30")); err == nil {
 		t.Fatal("current-epoch start succeeded while admission was draining")
 	}
-	if got := phase2BEventCount(spy); got != 0 {
+	if got := runEventCount(spy); got != 0 {
 		t.Fatalf("rejected workspace-boundary starts emitted %d events, want zero", got)
 	}
-	if err := phase2BEndDrain(t, exec, newEpoch); err != nil {
+	if err := endDrain(t, exec, newEpoch); err != nil {
 		t.Fatalf("EndDrain: %v", err)
 	}
-	if err := phase2BStartAtEpoch(t, exec, newEpoch, t.TempDir(), newTestProfile("reopened", "sleep 30")); err != nil {
+	if err := startAtEpoch(t, exec, newEpoch, t.TempDir(), newTestProfile("reopened", "sleep 30")); err != nil {
 		t.Fatalf("current-epoch start after successful drain: %v", err)
 	}
 	t.Cleanup(func() { exec.StopAll(2 * time.Second) }) //nolint:errcheck
 }
 
-func TestExecutorPhase2B_RestartPropagatesDrainAndEpochErrorsWithoutNewEvents(t *testing.T) {
+func TestExecutor_RestartPropagatesDrainAndEpochErrorsWithoutNewEvents(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	root := t.TempDir()
 	profile := newTestProfile("stale-restart", "sleep 30")
-	oldEpoch := phase2BCurrentEpoch(t, exec)
-	if err := phase2BStartAtEpoch(t, exec, oldEpoch, root, profile); err != nil {
+	oldEpoch := currentEpoch(t, exec)
+	if err := startAtEpoch(t, exec, oldEpoch, root, profile); err != nil {
 		t.Fatalf("StartAtEpoch: %v", err)
 	}
-	id := phase2BRunningIDs(t, spy, profile.ID, 1)[0]
-	newEpoch := phase2BBeginDrain(t, exec)
-	before := phase2BEventCount(spy)
-	if err := phase2BRestartAtEpoch(t, exec, newEpoch, root, profile, id); err == nil {
+	id := runningIDs(t, spy, profile.ID, 1)[0]
+	newEpoch := beginDrain(t, exec)
+	before := runEventCount(spy)
+	if err := restartAtEpoch(t, exec, newEpoch, root, profile, id); err == nil {
 		t.Fatal("current-epoch restart succeeded while admission was draining")
 	}
-	if after := phase2BEventCount(spy); after != before {
+	if after := runEventCount(spy); after != before {
 		t.Fatalf("draining restart emitted %d events, want zero", after-before)
 	}
 	if status := exec.GetStatus(profile.ID); status.RunInstanceID != id || status.State != RunStateRunning {
@@ -865,20 +865,20 @@ func TestExecutorPhase2B_RestartPropagatesDrainAndEpochErrorsWithoutNewEvents(t 
 	if !exec.StopAll(2 * time.Second) {
 		t.Fatal("StopAll did not drain restart's original execution")
 	}
-	if err := phase2BEndDrain(t, exec, newEpoch); err != nil {
+	if err := endDrain(t, exec, newEpoch); err != nil {
 		t.Fatalf("EndDrain: %v", err)
 	}
-	if err := phase2BStartAtEpoch(t, exec, newEpoch, root, profile); err != nil {
+	if err := startAtEpoch(t, exec, newEpoch, root, profile); err != nil {
 		t.Fatalf("current-epoch StartAtEpoch after drain: %v", err)
 	}
-	currentID := phase2BRunningIDs(t, spy, profile.ID, 2)[1]
+	currentID := runningIDs(t, spy, profile.ID, 2)[1]
 	t.Cleanup(func() { exec.StopAll(2 * time.Second) }) //nolint:errcheck
 
-	before = phase2BEventCount(spy)
-	if err := phase2BRestartAtEpoch(t, exec, oldEpoch, root, profile, currentID); err == nil {
+	before = runEventCount(spy)
+	if err := restartAtEpoch(t, exec, oldEpoch, root, profile, currentID); err == nil {
 		t.Fatal("stale-epoch restart succeeded after admission reopened")
 	}
-	if after := phase2BEventCount(spy); after != before {
+	if after := runEventCount(spy); after != before {
 		t.Fatalf("stale-epoch restart emitted %d events, want zero", after-before)
 	}
 	if status := exec.GetStatus(profile.ID); status.RunInstanceID != currentID || status.State != RunStateRunning {
@@ -886,7 +886,7 @@ func TestExecutorPhase2B_RestartPropagatesDrainAndEpochErrorsWithoutNewEvents(t 
 	}
 }
 
-func TestExecutorPhase2B_DrainInvalidatesStalePreflightBeforeReservation(t *testing.T) {
+func TestExecutor_DrainInvalidatesStalePreflightBeforeReservation(t *testing.T) {
 	spy := &emitSpy{}
 	exec := NewExecutor(spy.emit, nil)
 	root := t.TempDir()
@@ -897,10 +897,10 @@ func TestExecutorPhase2B_DrainInvalidatesStalePreflightBeforeReservation(t *test
 	marker := filepath.Join(root, "spawned")
 	profile := newTestProfile("pending", fmt.Sprintf("printf spawned > %q; sleep 30", marker))
 	profile.EnvFile = fifo
-	epoch := phase2BCurrentEpoch(t, exec)
+	epoch := currentEpoch(t, exec)
 
 	startDone := make(chan error, 1)
-	go func() { startDone <- phase2BStartAtEpoch(t, exec, epoch, root, profile) }()
+	go func() { startDone <- startAtEpoch(t, exec, epoch, root, profile) }()
 
 	// Wait until Start has opened the FIFO for reading without depending on a
 	// private reservation map. A nonblocking writer succeeds only with a reader.
@@ -921,7 +921,7 @@ func TestExecutorPhase2B_DrainInvalidatesStalePreflightBeforeReservation(t *test
 		t.Fatal("Start did not reach pre-spawn environment read")
 	}
 
-	phase2BBeginDrain(t, exec)
+	beginDrain(t, exec)
 	stopDone := make(chan bool, 1)
 	go func() { stopDone <- exec.StopAll(2 * time.Second) }()
 	select {
@@ -944,22 +944,22 @@ func TestExecutorPhase2B_DrainInvalidatesStalePreflightBeforeReservation(t *test
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("pending launch spawned after StopAll; expected immediate kill/reap before any command output")
 	}
-	if got := phase2BEventCount(spy); got != 0 {
+	if got := runEventCount(spy); got != 0 {
 		t.Fatalf("invalidated pending launch emitted %d events, want zero", got)
 	}
 }
 
-func TestExecutorPhase2B_DrainInvalidatesPostSpawnReservationAndReapsBeforePromotion(t *testing.T) {
+func TestExecutor_DrainInvalidatesPostSpawnReservationAndReapsBeforePromotion(t *testing.T) {
 	spy := &emitSpy{}
 	output := &outputSpy{}
 	executor := NewExecutor(spy.emit, output.receive)
 	root := t.TempDir()
 	pidFile := filepath.Join(root, "child.pid")
-	epoch := phase2BCurrentEpoch(t, executor)
+	epoch := currentEpoch(t, executor)
 
 	hookEntered := make(chan struct{})
 	releaseStart := make(chan struct{})
-	phase2BSetCommandStartHook(t, executor, func(cmd *exec.Cmd) error {
+	installCommandStartHook(t, executor, func(cmd *exec.Cmd) error {
 		if err := cmd.Start(); err != nil {
 			return err
 		}
@@ -975,7 +975,7 @@ func TestExecutorPhase2B_DrainInvalidatesPostSpawnReservationAndReapsBeforePromo
 		fmt.Sprintf("trap '' TERM; echo $$ > %q; exec yes x", pidFile),
 	)
 	startDone := make(chan error, 1)
-	go func() { startDone <- phase2BStartAtEpoch(t, executor, epoch, root, profile) }()
+	go func() { startDone <- startAtEpoch(t, executor, epoch, root, profile) }()
 	select {
 	case <-hookEntered:
 	case <-time.After(3 * time.Second):
@@ -1004,7 +1004,7 @@ func TestExecutorPhase2B_DrainInvalidatesPostSpawnReservationAndReapsBeforePromo
 
 	// Enter drain explicitly; StopAll must consume the already-invalidated
 	// reservation, not define the epoch policy itself.
-	phase2BBeginDrain(t, executor)
+	beginDrain(t, executor)
 
 	stopDone := make(chan bool, 1)
 	go func() { stopDone <- executor.StopAll(2 * time.Second) }()
@@ -1032,7 +1032,7 @@ func TestExecutorPhase2B_DrainInvalidatesPostSpawnReservationAndReapsBeforePromo
 	} else if err != syscall.ESRCH {
 		t.Fatalf("probe child %d after invalidation: %v, want ESRCH", pid, err)
 	}
-	if got := phase2BEventCount(spy); got != 0 {
+	if got := runEventCount(spy); got != 0 {
 		t.Fatalf("invalidated post-spawn reservation emitted %d status events, want zero", got)
 	}
 	output.mu.Lock()
@@ -1042,7 +1042,7 @@ func TestExecutorPhase2B_DrainInvalidatesPostSpawnReservationAndReapsBeforePromo
 	}
 }
 
-func TestExecutorPhase2B_CompoundAndOrdinaryRemainMutuallyExclusiveBothDirections(t *testing.T) {
+func TestExecutor_CompoundAndOrdinaryRemainMutuallyExclusiveBothDirections(t *testing.T) {
 	t.Run("ordinary cannot join active compound leaf", func(t *testing.T) {
 		exec := NewExecutor(noopStatus, nil)
 		root := t.TempDir()

@@ -58,7 +58,7 @@ import { useRunOutputListener } from '../../hooks/useRunOutput';
 import { useRunProfilesLoader } from '../../hooks/useRunProfiles';
 import { openWorkspaceByPath } from '../../utils/workspace';
 
-type Phase2CHistoryState = ReturnType<typeof useIDEStore.getState> & {
+type ArchiveHistoryState = ReturnType<typeof useIDEStore.getState> & {
   runHistoryRecords: Record<string, unknown>;
   runHistorySummaries: Record<string, { outputAvailable: boolean }>;
 };
@@ -167,7 +167,7 @@ it('persists an empty-reason user stop without durable runtime identity', async 
   expect(payload).not.toHaveProperty('launchSeq');
 
   await waitFor(() => {
-    const state = useIDEStore.getState() as unknown as Phase2CHistoryState;
+    const state = useIDEStore.getState() as unknown as ArchiveHistoryState;
     expect(Object.keys(state.runHistoryRecords)).toEqual([historyId]);
     expect(state.runHistoryRecords).not.toHaveProperty(`history:${historyId}`);
   });
@@ -506,7 +506,7 @@ it('bounds live summary metadata at 50 and rich ordinary cache at five', async (
 
   await runOutputModule.drainRunHistoryQueue();
 
-  const state = useIDEStore.getState() as unknown as Phase2CHistoryState;
+  const state = useIDEStore.getState() as unknown as ArchiveHistoryState;
   expect(Object.keys(state.runHistorySummaries)).toHaveLength(50);
   expect(Object.keys(state.runHistoryRecords)).toHaveLength(5);
   expect(state.runHistorySummaries).not.toHaveProperty('00000000-0000-7000-8000-000000000001');
