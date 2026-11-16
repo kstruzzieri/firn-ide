@@ -324,6 +324,8 @@ describe('gitStore operations', () => {
     mockGenerate.mockResolvedValue({
       message: 'feat: generated subject',
       withheld: [],
+      model: 'qwen3-coder',
+      provider: 'ollama',
     } as git.CommitMessageResult);
 
     await useGitStore.getState().generateMessage();
@@ -969,5 +971,58 @@ describe('gitStore diff sessions', () => {
     useGitStore.getState().resetForWorkspace('/other');
 
     expect(useGitStore.getState().diffSession).toBeNull();
+  });
+});
+
+// #492: the model and provider that wrote a generated message.
+describe('gitStore generated-by', () => {
+  const result = (over: Partial<git.CommitMessageResult> = {}) =>
+    ({
+      message: 'feat: generated subject',
+      withheld: [],
+      model: 'qwen3-coder',
+      provider: 'ollama',
+      ...over,
+    }) as git.CommitMessageResult;
+
+  it('records who wrote a generated message', async () => {
+    mockGenerate.mockResolvedValue(result());
+
+    await useGitStore.getState().generateMessage();
+
+    expect(useGitStore.getState().generatedBy).toEqual({
+      model: 'qwen3-coder',
+      provider: 'ollama',
+    });
+  });
+
+  it.each([
+    ['every path was withheld', () => mockGenerate.mockResolvedValue(result({ message: '' }))],
+    ['generation failed', () => mockGenerate.mockRejectedValue(new Error('model unavailable'))],
+    ['the backend named no model', () => mockGenerate.mockResolvedValue(result({ model: '' }))],
+  ])('names no writer when %s', async (_case, arrange) => {
+    useGitStore.setState({ generatedBy: { model: 'old', provider: 'old' } });
+    arrange();
+
+    await useGitStore.getState().generateMessage();
+
+    expect(useGitStore.getState().generatedBy).toBeNull();
+  });
+
+  it('is cleared by a commit, a dismissal and a workspace reset', async () => {
+    const seeded = { generatedBy: { model: 'qwen3-coder', provider: 'ollama' } };
+    useGitStore.setState(seeded);
+    mockGitCommit.mockResolvedValue('[main abc1234] feat: x\n 1 file changed');
+    useGitStore.getState().setCommitMessage('feat: x');
+    await useGitStore.getState().commit(false);
+    expect(useGitStore.getState().generatedBy).toBeNull();
+
+    useGitStore.setState(seeded);
+    useGitStore.getState().clearGeneratedBy();
+    expect(useGitStore.getState().generatedBy).toBeNull();
+
+    useGitStore.setState(seeded);
+    useGitStore.getState().resetForWorkspace('/other');
+    expect(useGitStore.getState().generatedBy).toBeNull();
   });
 });

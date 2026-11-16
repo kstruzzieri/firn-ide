@@ -1,4 +1,4 @@
-import type { GolemStoreState, RunPhase } from '../types/golem';
+import type { GolemStoreState, ProviderDestination, RunPhase } from '../types/golem';
 import type { GolemView, ProjectedConversation, ProjectedRun } from '../types/golemWindow';
 
 /**
@@ -66,6 +66,7 @@ export function buildGolemView(state: GolemProjectionSource): GolemView {
             phase: run.phase,
             lastSeq: run.lastSeq,
             ...(run.error === undefined ? {} : { error: run.error }),
+            ...(run.destination === undefined ? {} : { destination: run.destination }),
           },
         ])
       ),
@@ -95,6 +96,35 @@ export function buildGolemView(state: GolemProjectionSource): GolemView {
 // by whichever chrome hosts it, docked or undocked. They live beside the builder rather
 // than in the component so both hosts read a projection the same way, and so a
 // component file keeps exporting only components.
+
+const sameDestination = (a: ProviderDestination, b: ProviderDestination): boolean =>
+  a.provider === b.provider && a.model === b.model && a.endpoint === b.endpoint;
+
+/**
+ * Each finished turn's receipt, "<model> via <provider>", keyed by run ID (#492).
+ *
+ * A turn gets one when it is the conversation's first finished turn, or when
+ * its provider, model or endpoint differs from the previous finished turn's.
+ * It names the target the turn was admitted for -- what Firn sent the request
+ * to, not proof of the model behind the endpoint -- and never the endpoint
+ * itself. Failed and canceled turns, and runs adopted from status with no
+ * admission, neither get one nor count as the previous turn.
+ *
+ * Runs are walked in insertion order, which is dispatch order: a turn's run is
+ * created when it is sent, and one conversation runs one turn at a time.
+ */
+export function turnReceipts(conversation: ProjectedConversation): Map<string, string> {
+  const receipts = new Map<string, string>();
+  let previous: ProviderDestination | null = null;
+  for (const run of Object.values(conversation.runs)) {
+    if (run.phase !== 'done' || !run.destination) continue;
+    if (!previous || !sameDestination(previous, run.destination)) {
+      receipts.set(run.identity.runId, `${run.destination.model} via ${run.destination.provider}`);
+    }
+    previous = run.destination;
+  }
+  return receipts;
+}
 
 /** Phases shown as live in the focused or background run surfaces. */
 export const isLivePhase = (phase: RunPhase): boolean =>

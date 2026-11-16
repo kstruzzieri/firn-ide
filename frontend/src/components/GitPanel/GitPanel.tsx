@@ -295,6 +295,7 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
   const commitMessage = useGitStore((s) => s.commitMessage);
   const aiAvailable = useGitStore((s) => s.aiAvailable);
   const withheldFromAI = useGitStore((s) => s.withheldFromAI);
+  const generatedBy = useGitStore((s) => s.generatedBy);
   const generating = useGitStore((s) => s.opInFlight === 'generate');
   const [amend, setAmend] = useState(false);
   const [suggestion, setSuggestion] = useState<string | null>(null);
@@ -349,11 +350,25 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
             >
               Use
             </button>
-            <button type="button" className={styles.smallBtn} onClick={() => setSuggestion(null)}>
+            <button
+              type="button"
+              className={styles.smallBtn}
+              onClick={() => {
+                useGitStore.getState().clearGeneratedBy();
+                setSuggestion(null);
+              }}
+            >
               Dismiss
             </button>
           </div>
         </div>
+      )}
+      {/* #492: plain text, outside the status region below: it names the
+          configured model, so it is read in place rather than announced. */}
+      {generatedBy && (
+        <p className={styles.writtenBy}>
+          {`Written by ${generatedBy.model} via ${generatedBy.provider}`}
+        </p>
       )}
       {/* Mounted empty so screen readers announce progress and withheld files. */}
       <div role="status" className={styles.statusRegion}>

@@ -16,6 +16,7 @@ import {
   isLivePhase,
   selectedConversation,
   STATUS_LABEL,
+  turnReceipts,
   workspaceName,
 } from '../../golem/projection';
 import type { RunPhase } from '../../types/golem';
@@ -360,16 +361,25 @@ function ToolCluster({
 /** Render-layer view of the flat transcript: tool runs folded into clusters. */
 type TranscriptItem =
   | { type: 'entry'; entry: ProjectedTranscript }
-  | { type: 'cluster'; id: string; entries: ProjectedTranscript[] };
+  | { type: 'cluster'; id: string; entries: ProjectedTranscript[] }
+  | { type: 'receipt'; id: string; text: string };
 
 /**
  * Folds each run of consecutive `kind: 'tool'` entries into one cluster; any
  * non-tool entry breaks the run. Pure over the entry list — the projection
  * keeps entries flat, so this is the only place the grouping exists.
+ *
+ * A turn's receipt (#492) follows that run's last entry, so it closes the turn
+ * even when a later turn's prompt is already on screen.
  */
-function groupTranscript(transcript: ProjectedTranscript[]): TranscriptItem[] {
+function groupTranscript(
+  transcript: ProjectedTranscript[],
+  receipts: ReadonlyMap<string, string>
+): TranscriptItem[] {
+  const lastIndex = new Map<string, number>();
+  transcript.forEach((entry, index) => lastIndex.set(entry.runId, index));
   const items: TranscriptItem[] = [];
-  for (const entry of transcript) {
+  transcript.forEach((entry, index) => {
     if (entry.kind === 'tool') {
       const last = items[items.length - 1];
       if (last && last.type === 'cluster') last.entries.push(entry);
@@ -377,7 +387,11 @@ function groupTranscript(transcript: ProjectedTranscript[]): TranscriptItem[] {
     } else {
       items.push({ type: 'entry', entry });
     }
-  }
+    const receipt = receipts.get(entry.runId);
+    if (receipt !== undefined && lastIndex.get(entry.runId) === index) {
+      items.push({ type: 'receipt', id: `receipt:${entry.runId}`, text: receipt });
+    }
+  });
   return items;
 }
 
@@ -630,11 +644,19 @@ export function GolemSurface({
     if (element && pinnedRef.current) element.scrollTop = element.scrollHeight;
   }, [transcript]);
 
-  // Grouping is a pure fold over the entry list, memoised on the array identity
-  // so it re-runs once per transcript change (a delta) and not on unrelated
-  // re-renders like composer typing. The heavy per-chip work stays in the
-  // memoized ToolChip, so a delta still updates one row.
-  const renderItems = useMemo(() => groupTranscript(transcript ?? []), [transcript]);
+  // Grouping is a pure fold over the entry list and the runs' receipts,
+  // memoised on the conversation so it re-runs once per conversation change (a
+  // delta, a phase) and not on unrelated re-renders like composer typing. The
+  // heavy per-chip work stays in the memoized ToolChip, so a delta still
+  // updates one row.
+  const renderItems = useMemo(
+    () =>
+      groupTranscript(
+        conversation?.transcript ?? [],
+        conversation ? turnReceipts(conversation) : new Map()
+      ),
+    [conversation]
+  );
   // Only the newest cluster defaults open, and only while it holds a live tool —
   // that is the one the user needs to watch; finished clusters stay tucked away.
   const lastClusterId = useMemo(() => {
@@ -748,6 +770,15 @@ export function GolemSurface({
         }}
       >
         {renderItems.map((item) => {
+          // Plain text in a region that is not live: the receipt is read in
+          // place and never announced (#492).
+          if (item.type === 'receipt') {
+            return (
+              <p key={item.id} className={styles.receipt}>
+                {item.text}
+              </p>
+            );
+          }
           if (item.type === 'entry') {
             const live =
               item.entry.runId === activeRun?.identity.runId && isLivePhase(activeRun.phase);

@@ -249,6 +249,14 @@
   font-size: 12px;
 }
 
+/* #492: which model wrote the generated message. */
+.writtenBy {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .aiWithheldLabel {
   margin-top: 4px;
 }

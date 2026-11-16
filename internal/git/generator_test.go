@@ -77,7 +77,7 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 	diff := "diff --git a/x b/x\n+added line\n"
 
 	root := t.TempDir()
-	msg, err := NewMessageGenerator().generate(context.Background(), root, diff, 0, stubModel(t, root), nil)
+	msg, _, err := NewMessageGenerator().generate(context.Background(), root, diff, 0, stubModel(t, root), nil)
 
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -116,7 +116,7 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 
 	provider = gittest.Start(t, "chore: trim diff", nil)
 	huge := strings.Repeat("x", maxPromptBytes*4) + "must not reach provider"
-	if _, err := NewMessageGenerator().generate(context.Background(), root, huge, 0, stubModel(t, root), nil); err != nil {
+	if _, _, err := NewMessageGenerator().generate(context.Background(), root, huge, 0, stubModel(t, root), nil); err != nil {
 		t.Fatalf("Generate(huge) error = %v", err)
 	}
 	if got := string(<-provider.Requests); !strings.Contains(got, "[diff truncated for prompt budget]") || strings.Contains(got, "must not reach provider") {
@@ -125,7 +125,7 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 
 	provider = gittest.Start(t, "chore: escape diff", nil)
 	escapeHeavy := strings.Repeat("<", maxPromptBytes) + "must not reach provider"
-	if _, err := NewMessageGenerator().generate(context.Background(), root, escapeHeavy, 0, stubModel(t, root), nil); err != nil {
+	if _, _, err := NewMessageGenerator().generate(context.Background(), root, escapeHeavy, 0, stubModel(t, root), nil); err != nil {
 		t.Fatalf("Generate(escape-heavy) error = %v", err)
 	}
 	var escapedRequest struct {
@@ -165,14 +165,14 @@ func TestMessageGenerator_Generate_UsesExplicitBoundedDiffContext(t *testing.T) 
 }
 
 func TestMessageGenerator_Generate_EmptyDiff(t *testing.T) {
-	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), " \n\t", 0, nil, nil)
+	_, _, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), " \n\t", 0, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "nothing staged") {
 		t.Fatalf("Generate() error = %v, want nothing-staged error", err)
 	}
 }
 
 func TestMessageGenerator_Generate_NoModelSendsNothing(t *testing.T) {
-	_, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, nil, nil)
+	_, _, err := NewMessageGenerator().generate(context.Background(), t.TempDir(), "+change\n", 0, nil, nil)
 
 	if !errors.Is(err, errNoGolemModel) {
 		t.Fatalf("Generate() error = %v, want errNoGolemModel", err)
@@ -185,7 +185,7 @@ func TestMessageGenerator_Generate_RuntimeFailure(t *testing.T) {
 	})
 	root := t.TempDir()
 
-	_, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, stubModel(t, root), nil)
+	_, _, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, stubModel(t, root), nil)
 
 	if err == nil || !strings.Contains(err.Error(), "golem runtime") {
 		t.Fatalf("Generate() error = %v, want golem runtime failure", err)
@@ -228,7 +228,7 @@ func TestMessageGenerator_Generate_ContextBudget(t *testing.T) {
 			}`, server.URL, window))
 			root := t.TempDir()
 
-			message, err := NewMessageGenerator().generate(context.Background(), root, tc.diff, 0, stubModel(t, root), nil)
+			message, _, err := NewMessageGenerator().generate(context.Background(), root, tc.diff, 0, stubModel(t, root), nil)
 
 			if !tc.refused {
 				if err != nil || message != "feat: budgeted" || calls.Load() != 1 {
@@ -301,7 +301,7 @@ func TestMessageGenerator_Generate_PrimaryFailureDoesNotFallBack(t *testing.T) {
 	}`, primary.URL, fast.URL, local.URL))
 	root := t.TempDir()
 
-	message, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil)
+	message, _, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil)
 
 	if message != "" || err == nil || !strings.Contains(err.Error(), "503") {
 		t.Fatalf("Generate() = %q, %v, want the primary's 503", message, err)
@@ -311,7 +311,7 @@ func TestMessageGenerator_Generate_PrimaryFailureDoesNotFallBack(t *testing.T) {
 	}
 
 	primary.Close()
-	message, err = NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil)
+	message, _, err = NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil)
 	var dialErr *net.OpError
 	if message != "" || !errors.As(err, &dialErr) || dialErr.Op != "dial" || dialErr.Timeout() {
 		t.Fatalf("Generate() with a closed primary = %q, %v, want a non-timeout dial error", message, err)
@@ -345,7 +345,7 @@ func TestMessageGenerator_Generate_UsesEphemeralSession(t *testing.T) {
 	model := stubModel(t, root)
 	gen := NewMessageGenerator()
 	for range 2 {
-		message, err := gen.generate(context.Background(), root, sampleDiff, 0, model, nil)
+		message, _, err := gen.generate(context.Background(), root, sampleDiff, 0, model, nil)
 		if err != nil || message != "chore: generated message" {
 			t.Fatalf("Generate() = %q, %v", message, err)
 		}
@@ -403,7 +403,7 @@ func TestMessageGenerator_Generate_SendsOpencodeAFreshSessionPerGeneration(t *te
 
 	var seen []string
 	for range 2 {
-		if message, err := gen.generate(context.Background(), root, sampleDiff, 0, model, nil); err != nil || message != "feat: opencode message" {
+		if message, _, err := gen.generate(context.Background(), root, sampleDiff, 0, model, nil); err != nil || message != "feat: opencode message" {
 			t.Fatalf("Generate() = %q, %v", message, err)
 		}
 		seen = append(seen, <-sessions)
@@ -439,7 +439,7 @@ func TestMessageGenerator_Generate_DoesNotSendToolReadResultsToProvider(t *testi
 		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	})
 
-	if _, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, stubModel(t, root), nil); err == nil || !strings.Contains(err.Error(), "unusable") {
+	if _, _, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, stubModel(t, root), nil); err == nil || !strings.Contains(err.Error(), "unusable") {
 		t.Errorf("Generate() error = %v, want tool-only turn rejected as unusable", err)
 	}
 
@@ -469,7 +469,7 @@ func TestMessageGenerator_Generate_PropagatesCancellation(t *testing.T) {
 	defer cancel()
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := NewMessageGenerator().generate(ctx, root, "+change\n", 0, model, nil)
+		_, _, err := NewMessageGenerator().generate(ctx, root, "+change\n", 0, model, nil)
 		errCh <- err
 	}()
 	<-started
@@ -484,7 +484,7 @@ func TestMessageGenerator_Generate_RejectsUnusableOutput(t *testing.T) {
 		t.Run(fmt.Sprintf("%q", answer), func(t *testing.T) {
 			gittest.Start(t, answer, nil)
 			root := t.TempDir()
-			_, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, stubModel(t, root), nil)
+			_, _, err := NewMessageGenerator().generate(context.Background(), root, "+change\n", 0, stubModel(t, root), nil)
 			if err == nil || !strings.Contains(err.Error(), "golem returned") {
 				t.Fatalf("Generate() error = %v, want unusable-output error", err)
 			}
@@ -558,7 +558,7 @@ func TestGenerateDeniesUngrantedRemoteDestination(t *testing.T) {
 	baseURL, requests := startRemoteStub(t, "feat: must not be asked")
 	root := t.TempDir()
 
-	_, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil)
+	_, _, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil)
 
 	if !errors.Is(err, provider.ErrDestinationDenied) {
 		t.Fatalf("want destination denial, got %v", err)
@@ -594,7 +594,7 @@ func TestGenerateSucceedsAgainstGrantedRemoteListener(t *testing.T) {
 		t.Fatalf("ConfirmDestinationGrants = %+v, %v", granted, err)
 	}
 
-	msg, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, golemModel(t, svc, root), nil)
+	msg, _, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, golemModel(t, svc, root), nil)
 
 	if err != nil || msg != "feat: remote message" || requests.Load() != 1 {
 		t.Fatalf("want a message from one request, got %q, %v, %d request(s)", msg, err, requests.Load())
@@ -610,7 +610,7 @@ func TestGenerateLeavesTheConfigurationUnchanged(t *testing.T) {
 	}
 	root := t.TempDir()
 
-	if _, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil); err != nil {
+	if _, _, err := NewMessageGenerator().generate(context.Background(), root, sampleDiff, 0, stubModel(t, root), nil); err != nil {
 		t.Fatal(err)
 	}
 

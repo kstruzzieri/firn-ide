@@ -296,6 +296,10 @@ interface GitState {
    * was withheld, so no request was made and no message came back. Cleared by
    * the next Generate, a commit, or a workspace reset. */
   withheldFromAI: { outside: string[]; denied: string[]; allWithheld: boolean } | null;
+  /** The configured model and provider that wrote the last generated message
+   * (#492), for the plain "Written by" line. Null when no message came back.
+   * Cleared like withheldFromAI, and when its suggestion is dismissed. */
+  generatedBy: { model: string; provider: string } | null;
   /** Monotonic guard: refreshes started before the last workspace switch
    * must not apply their result. */
   epoch: number;
@@ -345,6 +349,7 @@ interface GitActions {
   loadBranches: () => Promise<void>;
   checkout: (branch: string, create: boolean) => Promise<void>;
   generateMessage: () => Promise<string | null>;
+  clearGeneratedBy: () => void;
   probeAiAvailable: () => Promise<void>;
   requestBranchPopupFocus: () => void;
   openDiff: (
@@ -468,6 +473,7 @@ export const useGitStore = create<GitStore>()(
       lastCommitReceipt: null,
       aiAvailable: false,
       withheldFromAI: null,
+      generatedBy: null,
       epoch: 0,
       statusRevision: 0,
       focusBranchRevision: 0,
@@ -497,6 +503,7 @@ export const useGitStore = create<GitStore>()(
             lastError: null,
             lastCommitReceipt: null,
             withheldFromAI: null,
+            generatedBy: null,
             diffSession: null,
             diffSource: null,
             diffFocused: false,
@@ -612,6 +619,7 @@ export const useGitStore = create<GitStore>()(
             {
               commitMessage: '',
               withheldFromAI: null,
+              generatedBy: null,
               lastCommitReceipt: { ...parseCommitSummary(output), files: stagedFiles, output },
             },
             false,
@@ -650,16 +658,20 @@ export const useGitStore = create<GitStore>()(
       generateMessage: async () => {
         let message: string | null = null;
         let withheld: git.WithheldPath[] = [];
+        let generatedBy: GitStore['generatedBy'] = null;
         const ok = await runOp(
           'generate',
           get,
           set,
           async (root) => {
             // A new attempt replaces the last verdict, even if it fails.
-            set({ withheldFromAI: null }, false, 'git/generateWithheldReset');
+            set({ withheldFromAI: null, generatedBy: null }, false, 'git/generateWithheldReset');
             const result = await GitGenerateCommitMessage(root);
             withheld = result.withheld;
             message = result.message;
+            if (message && result.model && result.provider) {
+              generatedBy = { model: result.model, provider: result.provider };
+            }
             return message;
           },
           (message) => ({
@@ -671,11 +683,14 @@ export const useGitStore = create<GitStore>()(
                   allWithheld: !message,
                 }
               : null,
+            generatedBy,
             lastOpOutput: null,
           })
         );
         return ok ? message : null;
       },
+
+      clearGeneratedBy: () => set({ generatedBy: null }, false, 'git/clearGeneratedBy'),
 
       probeAiAvailable: async () => {
         try {

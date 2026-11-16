@@ -130,6 +130,10 @@ export interface RunView {
   request?: TurnDraft; // absent when reconstructed only from backend Status
   userEntryId?: string;
   error?: string;
+  /** The target the backend admitted this run for (#492): what its receipt names. */
+  destination?: ProviderDestination;
+  /** The model `run.finished` named, "provider/model"; owner-only, never projected. */
+  model?: string;
 }
 
 export interface QueuedTurn extends TurnDraft {

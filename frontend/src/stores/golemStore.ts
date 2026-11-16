@@ -336,7 +336,13 @@ type Projection =
   | { kind: 'delta'; messageId: string; text: string }
   | { kind: 'tool-start'; toolCallId: string; name: string; preview: string }
   | { kind: 'tool-finish'; toolCallId: string; name: string; preview: string; isError: boolean }
-  | { kind: 'terminal'; phase: TerminalPhase; message?: string; stopReason?: string };
+  | {
+      kind: 'terminal';
+      phase: TerminalPhase;
+      message?: string;
+      stopReason?: string;
+      model?: string;
+    };
 
 /**
  * Classifies one already-validated envelope. `null` means the payload does not
@@ -380,6 +386,7 @@ function classifyEvent(event: GolemEvent): Projection | null {
         phase: 'done',
       };
       if (isNonEmptyString(payload.stopReason)) terminal.stopReason = payload.stopReason;
+      if (isNonEmptyString(payload.model)) terminal.model = payload.model;
       return terminal;
     }
     case 'run.canceled':
@@ -607,14 +614,19 @@ function finishRun(
   context: DispatchContext,
   message?: string,
   raw?: GolemEvent,
-  stopReason?: string
+  stopReason?: string,
+  model?: string
 ): PendingDispatch | null {
   const conversation = draftConversation(mutation, conversationId);
   if (!conversation) return null;
   const existing = conversation.runs[runId];
   if (existing && isTerminalPhase(existing.phase)) return null;
 
-  const run = upsertRun(conversation, runId, message ? { phase, error: message } : { phase });
+  const run = upsertRun(conversation, runId, {
+    phase,
+    ...(message ? { error: message } : {}),
+    ...(model ? { model } : {}),
+  });
 
   conversation.transcript = conversation.transcript.map((entry) =>
     entry.kind === 'tool' && entry.runId === runId && entry.activity === 'running'
@@ -709,7 +721,8 @@ function reduceEvent(
           context,
           projection.message,
           event,
-          projection.stopReason
+          projection.stopReason,
+          projection.model
         ),
       };
     case 'none':
@@ -826,16 +839,42 @@ export const useGolemStore = create<GolemStoreState>()((set, get) => {
     return { conversationId, run };
   };
 
+  /**
+   * Keeps the target an accepted admission names on its run (#492). The backend
+   * launches the run before `RunGolemTurn` returns, so its events -- even its
+   * terminal -- can land first and move it past `admitting`; the target is
+   * recorded whatever phase the run reached, or that turn would lose its
+   * receipt. Only the first accepted admission for a run writes it.
+   */
+  const recordAdmittedDestination = (
+    state: GolemStoreState,
+    identity: RunIdentity,
+    admission: TurnAdmission
+  ): GolemStoreState | Partial<GolemStoreState> => {
+    if (admission.state !== 'accepted') return state;
+    const conversationId = state.runToConversation[identity.runId];
+    const run = conversationId ? state.conversations[conversationId]?.runs[identity.runId] : null;
+    if (!run || run.destination) return state;
+    const mutation = beginMutation(state);
+    const conversation = draftConversation(mutation, conversationId)!;
+    conversation.runs[identity.runId] = { ...run, destination: admission.destination };
+    return toState(mutation);
+  };
+
   const applyAdmission = (identity: RunIdentity, admission: TurnAdmission) => {
     set((state) => {
       const matched = admittingRun(state, identity);
-      if (!matched) return state;
+      if (!matched) return recordAdmittedDestination(state, identity, admission);
       const mutation = beginMutation(state);
       const conversation = draftConversation(mutation, matched.conversationId)!;
       const run = conversation.runs[identity.runId];
 
       if (admission.state === 'accepted') {
-        conversation.runs[identity.runId] = { ...run, phase: 'running' };
+        conversation.runs[identity.runId] = {
+          ...run,
+          phase: 'running',
+          destination: admission.destination,
+        };
         if (conversation.activeRunId === null) conversation.activeRunId = identity.runId;
         if (conversation.pendingConsentTurn?.identity.runId === identity.runId) {
           conversation.pendingConsentTurn = null;
