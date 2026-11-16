@@ -1662,82 +1662,87 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
        * [#550] Mounted while empty: a region inserted together with its text
        * reaches VoiceOver as created, not changed, and is not spoken. A
        * challenge keeps the draft's key refs, so the Golem card holding this
-       * for Use model is not remounted under it. Unstyled but for
-       * `.alertSlot`, which only cancels the flex gap an empty one would add.
+       * for Use model is not remounted under it.
+       *
+       * [#591] The frame holds the region and, outside it, the ticking
+       * countdown, laid over the prompt's head. WebKit reports any DOM change
+       * under a live region, aria-hidden or not, so a countdown inside handed
+       * VoiceOver the whole assertive prompt again every second. The frame is
+       * unstyled but for cancelling the flex gap while no prompt stands.
        */}
-      <div
-        ref={grantAlertRef}
-        role="alert"
-        className={styles.alertSlot}
-        data-testid="golem-grant-alert"
-      >
-        {outcome.challenge !== null && (
-          // [C27] No data-tone here: `.panel[data-tone='caution']` (0,2,0) would beat `.grant`
-          // (0,1,0) whatever the source order, and the approved prompt is accent-outlined.
-          <div className={`${styles.panel} ${styles.grant}`}>
-            <div className={styles.grantHead}>
-              <h3 ref={promptHeadingRef} tabIndex={-1} className={styles.grantTitle}>
+      <div className={styles.grantFrame} data-open={outcome.challenge !== null || undefined}>
+        <div ref={grantAlertRef} role="alert" data-testid="golem-grant-alert">
+          {outcome.challenge !== null && (
+            // [C27] No data-tone here: `.panel[data-tone='caution']` (0,2,0) would beat `.grant`
+            // (0,1,0) whatever the source order, and the approved prompt is accent-outlined.
+            <div className={`${styles.panel} ${styles.grant}`}>
+              <div className={styles.grantHead}>
+                <h3 ref={promptHeadingRef} tabIndex={-1} className={styles.grantTitle}>
+                  {outcome.intent === 'grant-only'
+                    ? 'Approve destinations'
+                    : 'Approve before writing'}
+                </h3>
+                <span
+                  className={styles.srOnly}
+                >{`Expires at ${new Date(outcome.challenge.expiresAt).toLocaleTimeString()}.`}</span>
+              </div>
+              <p className={styles.panelText}>
                 {outcome.intent === 'grant-only'
-                  ? 'Approve destinations'
-                  : 'Approve before writing'}
-              </h3>
-              <Countdown expiresAt={outcome.challenge.expiresAt} />
-            </div>
-            <p className={styles.panelText}>
-              {outcome.intent === 'grant-only'
-                ? GRANT_PROMPT_EXPLAINER
-                : `${promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a settings approval, separate from run approval.`}
-            </p>
-            {/* One row per destination in the digest order the backend sent:
+                  ? GRANT_PROMPT_EXPLAINER
+                  : `${promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a settings approval, separate from run approval.`}
+              </p>
+              {/* One row per destination in the digest order the backend sent:
             provider · model · endpoint · class, the class as the row's
             fourth cell rather than a repeated sentence. [C1] It reads the
             parsed `classification` rather than repeating the word: the
             parser refuses any other value (`readApplyDestination`), so the
             cell now says so by construction instead of by coincidence. */}
-            <ul className={styles.grantList}>
-              {outcome.challenge.destinations.map((destination) => (
-                // [C29] The shipped key, verbatim: NUL-separated, because spaces are legal in identifiers.
-                <li
-                  key={`${destination.endpoint}\u0000${destination.provider}\u0000${destination.model}`}
+              <ul className={styles.grantList}>
+                {outcome.challenge.destinations.map((destination) => (
+                  // [C29] The shipped key, verbatim: NUL-separated, because spaces are legal in identifiers.
+                  <li
+                    key={`${destination.endpoint}\u0000${destination.provider}\u0000${destination.model}`}
+                  >
+                    <span className={styles.grantProvider}>{destination.provider}</span>
+                    <span className={styles.identifier}>
+                      {destination.model !== '' ? (
+                        destination.model
+                      ) : (
+                        <span className={styles.absent}>—</span>
+                      )}
+                    </span>
+                    <span className={styles.grantEndpoint}>{destination.endpoint}</span>
+                    <span className={styles.grantClass}>{destination.classification}</span>
+                    <span
+                      className={styles.metaSub}
+                    >{`Reached by ${destination.provenance.join(', ')}`}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className={`${styles.panelActions} ${styles.grantActions}`}>
+                <button
+                  type="button"
+                  className={`${styles.button} ${styles.quiet}`}
+                  aria-disabled={busy}
+                  onClick={busy ? undefined : () => void cancelDestination()}
                 >
-                  <span className={styles.grantProvider}>{destination.provider}</span>
-                  <span className={styles.identifier}>
-                    {destination.model !== '' ? (
-                      destination.model
-                    ) : (
-                      <span className={styles.absent}>—</span>
-                    )}
-                  </span>
-                  <span className={styles.grantEndpoint}>{destination.endpoint}</span>
-                  <span className={styles.grantClass}>{destination.classification}</span>
-                  <span
-                    className={styles.metaSub}
-                  >{`Reached by ${destination.provenance.join(', ')}`}</span>
-                </li>
-              ))}
-            </ul>
-            <div className={`${styles.panelActions} ${styles.grantActions}`}>
-              <button
-                type="button"
-                className={`${styles.button} ${styles.quiet}`}
-                aria-disabled={busy}
-                onClick={busy ? undefined : () => void cancelDestination()}
-              >
-                {outcome.intent === 'grant-only' ? 'Cancel' : 'Cancel approval'}
-              </button>
-              <button
-                type="button"
-                className={`${styles.button} ${styles.primary}`}
-                aria-disabled={busy}
-                onClick={busy ? undefined : confirmDestination}
-              >
-                {outcome.intent === 'grant-only'
-                  ? `Approve ${outcome.challenge.destinations.length} destination${outcome.challenge.destinations.length === 1 ? '' : 's'}`
-                  : 'Confirm destination'}
-              </button>
+                  {outcome.intent === 'grant-only' ? 'Cancel' : 'Cancel approval'}
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.button} ${styles.primary}`}
+                  aria-disabled={busy}
+                  onClick={busy ? undefined : confirmDestination}
+                >
+                  {outcome.intent === 'grant-only'
+                    ? `Approve ${outcome.challenge.destinations.length} destination${outcome.challenge.destinations.length === 1 ? '' : 's'}`
+                    : 'Confirm destination'}
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
+        {outcome.challenge !== null && <Countdown expiresAt={outcome.challenge.expiresAt} />}
       </div>
 
       {outcome.drops !== null && (
@@ -2354,8 +2359,8 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
 
 /**
  * `expires in m:ss`, ticking once a second while the prompt stands; `lapsed()` still decides
- * behaviour. [C13] The prompt is role="alert" (assertive + atomic), so the ticking text is
- * aria-hidden and a static sr-only sentence announces the expiry once with the prompt.
+ * behaviour. [C13] aria-hidden: the prompt's own static sr-only sentence announces the expiry
+ * once. [#591] Rendered beside the prompt's alert region, never inside it.
  */
 function Countdown({ expiresAt }: { expiresAt: number }) {
   const [now, setNow] = useState(() => Date.now());
@@ -2364,19 +2369,12 @@ function Countdown({ expiresAt }: { expiresAt: number }) {
     return () => window.clearInterval(timer);
   }, []);
   const remaining = Math.max(0, Math.round((expiresAt - now) / 1000));
-  const text =
-    remaining === 0
-      ? 'expired'
-      : `expires in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
   return (
-    <>
-      <span className={styles.grantTtl} aria-hidden="true">
-        {text}
-      </span>
-      <span
-        className={styles.srOnly}
-      >{`Expires at ${new Date(expiresAt).toLocaleTimeString()}.`}</span>
-    </>
+    <span className={styles.grantTtl} aria-hidden="true">
+      {remaining === 0
+        ? 'expired'
+        : `expires in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`}
+    </span>
   );
 }
 

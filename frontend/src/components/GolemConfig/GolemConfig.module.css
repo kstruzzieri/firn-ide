@@ -510,8 +510,15 @@
    gap it would add in the body's flex column (the Golem picker has none); a
    filled one is a plain block. Margin only: WebKit rebuilds a live region
    whose display type changes, and VoiceOver then does not announce it. */
-.body > .alertSlot:empty {
+.body > .alertSlot:empty,
+.body > .grantFrame:not([data-open]) {
   margin-top: calc(-1 * var(--body-gap));
+}
+
+/* [#591] The approval prompt's alert region and its countdown, which sits
+   outside the region and is laid over the prompt's head (`.grantTtl`). */
+.grantFrame {
+  position: relative;
 }
 
 /* Source error and recovery can both show; keep the body's gap between them. */
@@ -2456,8 +2463,23 @@ select.input {
   outline-offset: 3px;
 }
 
-.grantTtl {
+/* Keeps the countdown's corner clear: 16 monospace characters fit the
+   widest it shows, `expires in 10:00` (the backend's 10-minute challenge). */
+.grantHead::after {
+  content: '';
+  flex: none;
+  width: 16ch;
   margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* [#591] Outside the alert region, so it is placed rather than laid out: the
+   panel's 1px border plus its 10px/14px padding puts it in the head's corner. */
+.grantTtl {
+  position: absolute;
+  top: 11px;
+  right: 15px;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);

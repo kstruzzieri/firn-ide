@@ -99,6 +99,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The destination approval prompt in Golem Configuration is announced once
+  when it opens. Its ticking "expires in" countdown sat inside the prompt's
+  alert region, so the app reported the whole prompt as changed every second
+  and VoiceOver could read it again and again while it stood. The countdown
+  still ticks in the same corner, and the prompt still says once when it
+  expires. (#591)
+
 - Firn no longer overwrites `.firn/run-profiles.json` when it changed on disk
   since Firn read it, such as after a branch checkout, or
   `.firn/run-recency.json` when it could not be read. It refuses the change,
