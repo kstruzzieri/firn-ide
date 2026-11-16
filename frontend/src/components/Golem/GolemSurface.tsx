@@ -26,6 +26,7 @@ import type {
   ProjectedRun,
   ProjectedTranscript,
 } from '../../types/golemWindow';
+import { endpointScope } from '../../utils/golemConsentScope';
 import styles from './GolemPanel.module.css';
 
 /**
@@ -866,6 +867,7 @@ export function GolemSurface({
               <dd>{pending.challenge.destination.endpoint}</dd>
             </div>
           </dl>
+          <p className={styles.consentCopy}>{endpointScope(pending.challenge.destination.model)}</p>
           <div className={styles.consentActions}>
             <button
               type="button"

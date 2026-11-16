@@ -150,7 +150,8 @@ export interface ConfirmSettingsApplyRequest {
  * path. `classification` is always `remote`: a local destination never
  * challenges. Since #491 the backend names only the Golem model's destination,
  * reached by "agent"; `model` and `provenance` stay open shapes so an older
- * backend's empty model or "agent (recommendation)" hop still renders.
+ * backend's empty model or "agent (recommendation)" hop still parses. The
+ * prompt shows the grant's endpoint scope in place of provenance (#355).
  */
 export interface ApplyDestination {
   provider: string;

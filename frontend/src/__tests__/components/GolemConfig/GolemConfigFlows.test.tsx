@@ -818,12 +818,19 @@ describe('nonterminal apply results', () => {
     const consent = screen.getByTestId('golem-grant-alert');
     await waitFor(() => expect(consent).not.toBeEmptyDOMElement());
     expect(within(consent).getByText(/hosted/)).toBeVisible();
-    expect(within(consent).getByText(/gpt-5-mini/)).toBeVisible();
+    expect(within(consent).getByText('gpt-5-mini')).toBeVisible();
     expect(within(consent).getByText(/https:\/\/api\.example\.com\/v1/)).toBeVisible();
-    // The routing hop that reaches it, and the singular lead: one destination,
-    // and the word "remote" — this is a consent to egress, not a local write.
-    expect(within(consent).getByText('Reached by agent')).toBeVisible();
-    expect(within(consent).getByText(/Approve this remote destination before/)).toBeVisible();
+    // [#355] The scope the grant really has: consent is keyed by provider and
+    // endpoint, so the row says it covers every model there, not the one it
+    // names, and the lead says only the Golem model was checked. The singular
+    // lead and the word "remote" stay: this is a consent to egress.
+    expect(
+      within(consent).getByText('Covers every model at this endpoint, not just gpt-5-mini.')
+    ).toBeVisible();
+    expect(within(consent).queryByText(/Reached by/)).not.toBeInTheDocument();
+    expect(within(consent).getByText(/Approve this remote destination before/)).toHaveTextContent(
+      'Only the Golem model is checked; models assigned to other use cases are not part of this approval.'
+    );
 
     await userEvent.click(screen.getByRole('button', { name: 'Confirm destination' }));
     await waitFor(() => expect(ConfirmGolemSettingsApply).toHaveBeenCalledTimes(1));
@@ -1206,8 +1213,18 @@ describe('grant-only destination approval', () => {
     expect(within(consent).getByText('gpt-5-mini')).toBeVisible();
     expect(within(consent).getByText('https://mirror.example.com/v1')).toBeVisible();
     expect(within(consent).getByText('hosted-mirror')).toBeVisible();
-    expect(within(consent).getByText('Reached by agent')).toBeVisible();
-    expect(within(consent).getByText('Reached by agent (recommendation)')).toBeVisible();
+    // [#355] Each row says the grant covers its whole endpoint; a row that
+    // names no model says so without a "not just".
+    expect(
+      within(consent).getByText('Covers every model at this endpoint, not just gpt-5-mini.')
+    ).toBeVisible();
+    expect(within(consent).getByText('Covers every model at this endpoint.')).toBeVisible();
+    expect(within(consent).queryByText(/Reached by/)).not.toBeInTheDocument();
+    expect(
+      within(consent).getByText(/Remote destinations your agent route can reach/)
+    ).toHaveTextContent(
+      'Only the Golem model is checked; models assigned to other use cases are not part of this approval.'
+    );
 
     await userEvent.click(screen.getByRole('button', { name: 'Approve 2 destinations' }));
     await waitFor(() =>

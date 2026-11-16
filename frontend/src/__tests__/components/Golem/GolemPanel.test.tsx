@@ -1121,6 +1121,10 @@ describe('GolemPanel consent', () => {
     expect(within(shelf).getByText('anthropic')).toBeInTheDocument();
     expect(within(shelf).getByText('claude-opus')).toBeInTheDocument();
     expect(within(shelf).getByText('https://api.example.test/v1')).toBeInTheDocument();
+    // [#355] Allowing grants the provider endpoint, not the one model named above.
+    expect(
+      within(shelf).getByText('Covers every model at this endpoint, not just claude-opus.')
+    ).toBeInTheDocument();
     expect(within(shelf).getByRole('button', { name: 'Allow & send' })).toBeInTheDocument();
     expect(within(shelf).getByRole('button', { name: 'Not now' })).toBeInTheDocument();
   });
