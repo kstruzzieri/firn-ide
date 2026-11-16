@@ -288,9 +288,9 @@ describe('gitStore operations', () => {
     } as git.CommitMessageResult);
 
     useGitStore.getState().setCommitMessage('my draft');
-    const message = await useGitStore.getState().generateMessage();
+    const generated = await useGitStore.getState().generateMessage();
 
-    expect(message).toBe('feat: generated subject');
+    expect(generated?.message).toBe('feat: generated subject');
     expect(useGitStore.getState().commitMessage).toBe('my draft');
     expect(useGitStore.getState().withheldFromAI).toEqual({
       outside: [],
@@ -324,6 +324,8 @@ describe('gitStore operations', () => {
     mockGenerate.mockResolvedValue({
       message: 'feat: generated subject',
       withheld: [],
+      model: 'qwen3-coder',
+      provider: 'ollama',
     } as git.CommitMessageResult);
 
     await useGitStore.getState().generateMessage();
@@ -969,5 +971,81 @@ describe('gitStore diff sessions', () => {
     useGitStore.getState().resetForWorkspace('/other');
 
     expect(useGitStore.getState().diffSession).toBeNull();
+  });
+});
+
+// #492: the model and provider that wrote a generated message.
+describe('gitStore generated-by', () => {
+  const result = (over: Partial<git.CommitMessageResult> = {}) =>
+    ({
+      message: 'feat: generated subject',
+      withheld: [],
+      model: 'qwen3-coder',
+      provider: 'ollama',
+      ...over,
+    }) as git.CommitMessageResult;
+
+  it('returns the generated message with who wrote it', async () => {
+    mockGenerate.mockResolvedValue(result());
+
+    const generated = await useGitStore.getState().generateMessage();
+
+    expect(generated).toEqual({
+      message: 'feat: generated subject',
+      by: { model: 'qwen3-coder', provider: 'ollama', message: 'feat: generated subject' },
+    });
+  });
+
+  it('names no writer when the backend named no model', async () => {
+    mockGenerate.mockResolvedValue(result({ model: '' }));
+
+    const generated = await useGitStore.getState().generateMessage();
+
+    expect(generated).toEqual({ message: 'feat: generated subject', by: null });
+  });
+
+  it.each([
+    ['every path was withheld', () => mockGenerate.mockResolvedValue(result({ message: '' }))],
+    ['generation failed', () => mockGenerate.mockRejectedValue(new Error('model unavailable'))],
+  ])('returns nothing when %s', async (_case, arrange) => {
+    arrange();
+
+    expect(await useGitStore.getState().generateMessage()).toBeNull();
+  });
+
+  // Codex r3: the box's writer describes the text in the box, which a new
+  // attempt does not change; only the panel moves a result into the box.
+  it.each([
+    ['succeeds', () => mockGenerate.mockResolvedValue(result({ message: 'feat: another' }))],
+    ['every path was withheld', () => mockGenerate.mockResolvedValue(result({ message: '' }))],
+    ['fails', () => mockGenerate.mockRejectedValue(new Error('model unavailable'))],
+  ])('leaves the box writer alone when a Generate %s', async (_case, arrange) => {
+    const box = { model: 'qwen3-coder', provider: 'ollama', message: 'feat: in the box' };
+    useGitStore.getState().setGeneratedBy(box);
+    arrange();
+
+    await useGitStore.getState().generateMessage();
+
+    expect(useGitStore.getState().generatedBy).toEqual(box);
+  });
+
+  it('is set by the panel, and cleared by a commit and a workspace reset', async () => {
+    const seeded = {
+      generatedBy: { model: 'qwen3-coder', provider: 'ollama', message: 'feat: x' },
+    };
+    useGitStore.getState().setGeneratedBy(seeded.generatedBy);
+    expect(useGitStore.getState().generatedBy).toEqual(seeded.generatedBy);
+    useGitStore.getState().setGeneratedBy(null);
+    expect(useGitStore.getState().generatedBy).toBeNull();
+
+    useGitStore.setState(seeded);
+    mockGitCommit.mockResolvedValue('[main abc1234] feat: x\n 1 file changed');
+    useGitStore.getState().setCommitMessage('feat: x');
+    await useGitStore.getState().commit(false);
+    expect(useGitStore.getState().generatedBy).toBeNull();
+
+    useGitStore.setState(seeded);
+    useGitStore.getState().resetForWorkspace('/other');
+    expect(useGitStore.getState().generatedBy).toBeNull();
   });
 });

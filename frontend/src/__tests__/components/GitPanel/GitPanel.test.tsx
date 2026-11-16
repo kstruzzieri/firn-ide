@@ -21,7 +21,7 @@ jest.mock('../../../utils/editorNavigation', () => ({
   ensureEditorFileOpen: (...args: unknown[]) => mockEnsureEditorFileOpen(...args),
 }));
 
-import { render, screen, fireEvent, act, within, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, within, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GitPanel } from '../../../components/GitPanel';
 import { useGitStore } from '../../../stores/gitStore';
@@ -757,7 +757,12 @@ describe('GitPanel AI generation preserves current drafts', () => {
       useGitStore.getState().setCommitMessage('new draft');
     });
     await act(async () => {
-      resolve({ message: 'feat: generated', withheld: [] } as git.CommitMessageResult);
+      resolve({
+        message: 'feat: generated',
+        withheld: [],
+        model: 'qwen3-coder',
+        provider: 'ollama',
+      } as git.CommitMessageResult);
     });
 
     expect(input).toHaveValue('new draft');
@@ -768,6 +773,8 @@ describe('GitPanel AI generation preserves current drafts', () => {
     mockGenerate.mockResolvedValueOnce({
       message: 'feat: earlier',
       withheld: [],
+      model: 'qwen3-coder',
+      provider: 'ollama',
     } as git.CommitMessageResult);
     seed([file('main.go', 'A', '.')]);
     act(() => {
@@ -802,6 +809,8 @@ describe('GitPanel AI generation preserves current drafts', () => {
     mockGenerate.mockResolvedValueOnce({
       message: 'feat: earlier',
       withheld: [],
+      model: 'qwen3-coder',
+      provider: 'ollama',
     } as git.CommitMessageResult);
     mockGitStatus.mockResolvedValue(repoStatus([file('main.go', 'A', '.')]));
     (GitCommit as jest.MockedFunction<typeof GitCommit>).mockResolvedValueOnce(
@@ -831,6 +840,8 @@ describe('GitPanel AI generation across a workspace switch', () => {
     mockGenerate.mockResolvedValueOnce({
       message: 'feat: old workspace',
       withheld: [],
+      model: 'qwen3-coder',
+      provider: 'ollama',
     } as git.CommitMessageResult);
     seed([file('main.go', 'A', '.')]);
     act(() => {
@@ -873,7 +884,12 @@ describe('GitPanel AI generation across a workspace switch', () => {
       useGitStore.getState().resetForWorkspace('/other');
     });
     await act(async () => {
-      resolve({ message: 'feat: late', withheld: [] } as git.CommitMessageResult);
+      resolve({
+        message: 'feat: late',
+        withheld: [],
+        model: 'qwen3-coder',
+        provider: 'ollama',
+      } as git.CommitMessageResult);
     });
 
     expect(useGitStore.getState().commitMessage).toBe('');
@@ -1316,5 +1332,139 @@ describe('GitPanel branch and sync controls', () => {
     });
 
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+});
+
+// #492: one plain line says which model wrote a generated message.
+describe('GitPanel generated-by line', () => {
+  const written = (message: string, over: Partial<git.CommitMessageResult> = {}) =>
+    ({
+      message,
+      withheld: [],
+      model: 'qwen3-coder',
+      provider: 'ollama',
+      ...over,
+    }) as git.CommitMessageResult;
+
+  const generateWith = async (result: git.CommitMessageResult, draft = '') => {
+    mockGenerate.mockResolvedValue(result);
+    seed([file('staged.ts', 'M', '.')]);
+    act(() => {
+      useGitStore.setState({ aiAvailable: true, commitMessage: draft });
+    });
+    render(<GitPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+  };
+
+  it('names the model under a message generated into the empty draft', async () => {
+    await generateWith(written('feat: generated'));
+
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('feat: generated');
+    const line = screen.getByText('Written by qwen3-coder via ollama');
+    expect(line.closest('[aria-live], [role="status"], [role="log"], [role="alert"]')).toBeNull();
+    // The status region announces nothing for it.
+    expect(screen.getByRole('status')).toHaveTextContent('');
+  });
+
+  it('keeps the withheld notice in the status region and the line out of it', async () => {
+    await generateWith(written('feat: generated', { withheld: deniedPaths(['.env']) }));
+
+    const status = screen.getByRole('status');
+    expect(within(status).getByTestId('ai-withheld')).toHaveTextContent('.env');
+    expect(status).not.toHaveTextContent(/Written by/);
+    expect(screen.getByText('Written by qwen3-coder via ollama')).toBeInTheDocument();
+  });
+
+  it('follows a suggestion: Use keeps the line, Dismiss removes it', async () => {
+    await generateWith(written('feat: generated'), 'my draft');
+    expect(screen.getByTestId('ai-suggestion')).toHaveTextContent('feat: generated');
+    expect(screen.getByText('Written by qwen3-coder via ollama')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('my draft');
+
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: 'Use' }));
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('feat: generated');
+    expect(screen.getByText('Written by qwen3-coder via ollama')).toBeInTheDocument();
+  });
+
+  // Codex r1: the suggestion is the panel's own state, so leaving the panel
+  // discards it; its line must go with it, not stay to name a model for the
+  // draft the user wrote.
+  it("drops a suggestion's line with the suggestion when the panel remounts", async () => {
+    await generateWith(written('feat: generated'), 'my draft');
+    expect(screen.getByText('Written by qwen3-coder via ollama')).toBeInTheDocument();
+
+    cleanup();
+    render(<GitPanel />);
+
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('my draft');
+    expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
+  });
+
+  // Codex r2: the line names who wrote the text in the box, so it shows only
+  // while the box holds exactly that text.
+  it('drops the line once the generated message is edited or cleared', async () => {
+    await generateWith(written('feat: generated'));
+    const box = screen.getByRole('textbox', { name: /commit message/i });
+    expect(screen.getByText('Written by qwen3-coder via ollama')).toBeInTheDocument();
+
+    fireEvent.change(box, { target: { value: 'feat: generated, then edited' } });
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
+
+    fireEvent.change(box, { target: { value: '' } });
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
+    cleanup();
+    render(<GitPanel />);
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
+  });
+
+  it('drops the line once a used suggestion is edited', async () => {
+    await generateWith(written('feat: generated'), 'my draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Use' }));
+    expect(screen.getByText('Written by qwen3-coder via ollama')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('textbox', { name: /commit message/i }), {
+      target: { value: 'my own words' },
+    });
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
+  });
+
+  // Codex r3: a later attempt does not change who wrote the box's text.
+  it('keeps the box line through a failed retry, a dismissed suggestion and a remount', async () => {
+    await generateWith(written('feat: generated'));
+    const line = () => screen.queryByText('Written by qwen3-coder via ollama');
+    expect(line()).toBeInTheDocument();
+
+    mockGenerate.mockRejectedValueOnce(new Error('model unavailable'));
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+    expect(line()).toBeInTheDocument();
+
+    mockGenerate.mockResolvedValueOnce(
+      written('feat: another', { model: 'llama3.3', provider: 'ollama' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+    expect(screen.getByText('Written by llama3.3 via ollama')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(line()).toBeInTheDocument();
+
+    cleanup();
+    render(<GitPanel />);
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('feat: generated');
+    expect(line()).toBeInTheDocument();
+  });
+
+  it('shows no line when nothing was sent', async () => {
+    await generateWith(written('', { withheld: deniedPaths(['.env']), model: '', provider: '' }));
+
+    expect(screen.getByTestId('ai-withheld')).toHaveTextContent(/no request was made/);
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
   });
 });

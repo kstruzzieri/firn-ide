@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Golem chat and generated commit messages now say which model they came from.
+  A chat answer ends with one quiet line naming the model and provider, such
+  as "qwen3-coder via ollama", on the conversation's first finished answer and
+  whenever the model, provider or endpoint differs from the previous finished
+  answer's; earlier lines keep naming their own model after a settings change,
+  and read the same in the undocked window. The line names the model Firn sent
+  the request to. A generated commit message shows a line such as "Written by
+  qwen3-coder via ollama" under it. Neither line shows the endpoint, and
+  screen readers read them in place without announcing them. (#492)
+
 - The Add provider form in Golem Configuration starts with a Preset field.
   Picking Command Code, OpenCode Go, OpenAI, Anthropic, llama.cpp, llama-swap,
   Ollama or LM Studio fills the provider name, API format and endpoint, marks

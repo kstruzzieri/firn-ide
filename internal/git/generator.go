@@ -81,9 +81,14 @@ func NewMessageGenerator() *MessageGenerator { return &MessageGenerator{} }
 // policy withheld from the model, each "path" or "old -> new". Withheld is for
 // local display only and never reaches the model. Message is empty when every
 // staged path was withheld: no request was made.
+//
+// Model and Provider name the configured model that wrote Message, from the
+// route outcome of golem's last step (#492); both are empty with no message.
 type CommitMessageResult struct {
 	Message  string         `json:"message"`
 	Withheld []WithheldPath `json:"withheld"`
+	Model    string         `json:"model"`
+	Provider string         `json:"provider"`
 }
 
 // WithheldPath is one staged change withheld from the model, "path" or
@@ -159,10 +164,12 @@ func (g *MessageGenerator) GenerateStaged(ctx context.Context, svc *Service, dir
 	if err := recheck(); err != nil {
 		return CommitMessageResult{}, err
 	}
-	result.Message, err = g.generate(ctx, dir, diff, len(withheld), scope.Model, recheck)
+	var writer provider.ModelKey
+	result.Message, writer, err = g.generate(ctx, dir, diff, len(withheld), scope.Model, recheck)
 	if err != nil {
 		return CommitMessageResult{}, err
 	}
+	result.Model, result.Provider = scrubField(writer.Model), scrubField(writer.Provider)
 	return result, nil
 }
 
@@ -284,17 +291,18 @@ func (*MessageGenerator) Available(context.Context) bool { return true }
 
 // generate runs one golem turn over diff, which the caller has already
 // filtered, sent only to model (#491). withheld is the number of staged paths
-// left out of diff; the prompt states the count and nothing else.
-func (g *MessageGenerator) generate(ctx context.Context, root, diff string, withheld int, model *ai.GolemModel, beforeSend func() error) (message string, err error) {
+// left out of diff; the prompt states the count and nothing else. writer is the
+// configured model the last step's route outcome says answered (#492).
+func (g *MessageGenerator) generate(ctx context.Context, root, diff string, withheld int, model *ai.GolemModel, beforeSend func() error) (message string, writer provider.ModelKey, err error) {
 	if strings.TrimSpace(diff) == "" {
-		return "", errNothingStaged
+		return "", writer, errNothingStaged
 	}
 	if model == nil {
-		return "", errNoGolemModel
+		return "", writer, errNoGolemModel
 	}
 	stagedDiff, err := stagedDiffContext(diff)
 	if err != nil {
-		return "", fmt.Errorf("golem runtime context: %w", err)
+		return "", writer, fmt.Errorf("golem runtime context: %w", err)
 	}
 
 	// The model's own orchestrator, budget and options: golem bootstraps no
@@ -304,12 +312,12 @@ func (g *MessageGenerator) generate(ctx context.Context, root, diff string, with
 		if msg, ok := destinationDeniedMessage(err); ok {
 			// Wraps the SENTINEL only: classification survives, the original
 			// chain does not travel (spec D3b).
-			return "", fmt.Errorf("commit message generation blocked: %s; use Approve missing destinations in the Golem configuration view: %w", msg, provider.ErrDestinationDenied)
+			return "", writer, fmt.Errorf("commit message generation blocked: %s; use Approve missing destinations in the Golem configuration view: %w", msg, provider.ErrDestinationDenied)
 		}
 		if errors.Is(err, ai.ErrContextWindowTooSmall) {
-			return "", contextWindowError(model.ContextWindow())
+			return "", writer, contextWindowError(model.ContextWindow())
 		}
-		return "", fmt.Errorf("golem runtime initialization: %w", err)
+		return "", writer, fmt.Errorf("golem runtime initialization: %w", err)
 	}
 	if opts.Budget.InputCeiling == 0 {
 		opts.Budget.InputCeiling = noWindowInputCeiling
@@ -326,11 +334,11 @@ func (g *MessageGenerator) generate(ctx context.Context, root, diff string, with
 	opts.OnWarning = func(warning error) { log.Printf("git: golem warning: %v", warning) }
 	runtime, err := golem.New(ctx, opts)
 	if err != nil {
-		return "", fmt.Errorf("golem runtime initialization: %w", err)
+		return "", writer, fmt.Errorf("golem runtime initialization: %w", err)
 	}
 	defer func() {
 		if closeErr := runtime.Close(); closeErr != nil {
-			message = ""
+			message, writer = "", provider.ModelKey{}
 			err = errors.Join(err, fmt.Errorf("golem runtime close: %w", closeErr))
 		}
 	}()
@@ -347,7 +355,7 @@ func (g *MessageGenerator) generate(ctx context.Context, root, diff string, with
 	// staged paths changed since the first recheck.
 	if beforeSend != nil {
 		if err := beforeSend(); err != nil {
-			return "", err
+			return "", writer, err
 		}
 	}
 	result, err := runtime.Run(ctx, golem.Turn{
@@ -362,14 +370,20 @@ func (g *MessageGenerator) generate(ctx context.Context, root, diff string, with
 		Context:  []golem.ContextItem{stagedDiff},
 	}, func(golem.Event) error { return nil })
 	if err != nil {
-		return "", runError(err, model.ContextWindow())
+		return "", writer, runError(err, model.ContextWindow())
 	}
 
 	message = strings.TrimSpace(result.Answer)
 	if message == "" || strings.ContainsRune(message, '\x00') {
-		return "", errors.New("golem returned an unusable message")
+		return "", writer, errors.New("golem returned an unusable message")
 	}
-	return message, nil
+	for i := len(result.Steps) - 1; i >= 0; i-- {
+		if outcome := result.Steps[i].RouteOutcome; outcome != nil {
+			writer = outcome.ActualModel
+			break
+		}
+	}
+	return message, writer, nil
 }
 
 func stagedDiffContext(diff string) (golem.ContextItem, error) {

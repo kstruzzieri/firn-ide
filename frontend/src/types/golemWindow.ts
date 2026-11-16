@@ -97,7 +97,10 @@ export interface GolemWindowBootstrap {
 }
 
 /** Explicit presentation types: no host drafts or owner-only run requests. */
-export type ProjectedRun = Pick<RunView, 'identity' | 'phase' | 'lastSeq' | 'error'>;
+export type ProjectedRun = Pick<
+  RunView,
+  'identity' | 'phase' | 'lastSeq' | 'error' | 'destination'
+>;
 export type ProjectedTranscript = Omit<TranscriptEntry, 'raw'>;
 export type ProjectedConversation = Pick<
   ConversationView,
@@ -313,6 +316,10 @@ function parseRun(runId: string, value: unknown): ProjectedRun {
   const run: ProjectedRun = { identity, phase: value.phase, lastSeq: value.lastSeq };
   const error = readOptionalString(value.error);
   if (error !== undefined) run.error = error;
+  // Absent until admission; never `null`, which `buildGolemView` cannot emit.
+  if (value.destination !== undefined) {
+    run.destination = readDestination(value.destination) ?? fail();
+  }
   return run;
 }
 

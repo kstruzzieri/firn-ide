@@ -120,6 +120,8 @@ function seedRichConversation(): ConversationView {
         lastSeq: 4,
         request: { message: 'owner-only prompt', contextRefs: ['a.ts'] },
         userEntryId: 'e1',
+        destination,
+        model: 'ollama/qwen3',
       },
       r2: {
         identity: { ...runIdentity, runId: 'r2' },
@@ -178,7 +180,14 @@ it('round-trips a rich projection through JSON and its own parser', () => {
   const projected = view.conversations.c1;
   expect(projected.lastFailedTurn).toBe(true);
   expect(projected.pendingConsentTurn).toEqual({ identity: runIdentity, challenge });
-  expect(projected.runs.r1).toEqual({ identity: runIdentity, phase: 'running', lastSeq: 4 });
+  // The admitted target travels for the turn's receipt (#492); the model
+  // run.finished named stays with the owner.
+  expect(projected.runs.r1).toEqual({
+    identity: runIdentity,
+    phase: 'running',
+    lastSeq: 4,
+    destination,
+  });
   expect(projected.runs.r2.error).toBe('model refused');
   expect(projected.runs.r3.lastSeq).toBe(-1);
   expect(projected.transcript[1]).toEqual({
@@ -307,6 +316,34 @@ const corruptions: ReadonlyArray<readonly [string, Mutate]> = [
       runs.r3 = runs.r1;
       delete runs.r1;
     },
+  ],
+  [
+    'run destination missing its classification',
+    (w) => {
+      delete (
+        w as never as {
+          conversations: {
+            c1: { runs: Record<string, { destination: { classification?: unknown } }> };
+          };
+        }
+      ).conversations.c1.runs.r1.destination.classification;
+    },
+  ],
+  [
+    'run destination model as a non-string',
+    (w) =>
+      ((
+        w as never as {
+          conversations: { c1: { runs: Record<string, { destination: { model: unknown } }> } };
+        }
+      ).conversations.c1.runs.r1.destination.model = 7),
+  ],
+  [
+    'run destination as null',
+    (w) =>
+      ((
+        w as never as { conversations: { c1: { runs: Record<string, { destination: unknown }> } } }
+      ).conversations.c1.runs.r1.destination = null),
   ],
   [
     'unknown queue state',

@@ -10,10 +10,15 @@ import { Create as $Create } from "@wailsio/runtime";
  * policy withheld from the model, each "path" or "old -> new". Withheld is for
  * local display only and never reaches the model. Message is empty when every
  * staged path was withheld: no request was made.
+ * 
+ * Model and Provider name the configured model that wrote Message, from the
+ * route outcome of golem's last step (#492); both are empty with no message.
  */
 export class CommitMessageResult {
     "message": string;
     "withheld": WithheldPath[];
+    "model": string;
+    "provider": string;
 
     /** Creates a new CommitMessageResult instance. */
     constructor($$source: Partial<CommitMessageResult> = {}) {
@@ -22,6 +27,12 @@ export class CommitMessageResult {
         }
         if (!("withheld" in $$source)) {
             this["withheld"] = [];
+        }
+        if (!("model" in $$source)) {
+            this["model"] = "";
+        }
+        if (!("provider" in $$source)) {
+            this["provider"] = "";
         }
 
         Object.assign(this, $$source);

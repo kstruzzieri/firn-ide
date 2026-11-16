@@ -1,7 +1,7 @@
 import { Fragment, useId, useMemo, useState } from 'react';
 import { Panel, PanelAction } from '../layout';
 import { RestartIcon, ChevronRightIcon, ChevronDownIcon } from '../icons';
-import { useGitStore, useGitStatusSnapshot } from '../../stores/gitStore';
+import { useGitStore, useGitStatusSnapshot, type MessageWriter } from '../../stores/gitStore';
 import {
   useIDEStore,
   useActiveWorkspace,
@@ -295,13 +295,28 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
   const commitMessage = useGitStore((s) => s.commitMessage);
   const aiAvailable = useGitStore((s) => s.aiAvailable);
   const withheldFromAI = useGitStore((s) => s.withheldFromAI);
+  const generatedBy = useGitStore((s) => s.generatedBy);
   const generating = useGitStore((s) => s.opInFlight === 'generate');
   const [amend, setAmend] = useState(false);
-  const [suggestion, setSuggestion] = useState<string | null>(null);
+  // #492: a suggestion carries its own writer, so leaving the panel (which
+  // discards this state) drops both; the store's writer describes only the
+  // message box.
+  const [suggestion, setSuggestion] = useState<{
+    text: string;
+    by: MessageWriter | null;
+  } | null>(null);
 
   // `disabled` (an operation in flight) is aria-disabled on Generate and
   // Commit, never native, for the focus reason SyncControls gives.
   const canCommit = commitMessage.trim() !== '' && (stagedCount > 0 || amend);
+  // The line names the message on show: the suggestion's, else the box's while
+  // the box still holds exactly what was generated (an edit makes it the
+  // user's).
+  const writtenBy = suggestion
+    ? suggestion.by
+    : generatedBy?.message === commitMessage
+      ? generatedBy
+      : null;
 
   const handleGenerate = async () => {
     if (disabled) return;
@@ -312,8 +327,14 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
     const after = useGitStore.getState();
     if (after.epoch !== epoch || !generated) return;
     // Other callers may have updated the current draft while waiting.
-    if (after.commitMessage.trim() === '') after.setCommitMessage(generated);
-    else setSuggestion(generated);
+    if (after.commitMessage.trim() === '') {
+      after.setCommitMessage(generated.message);
+      after.setGeneratedBy(generated.by);
+      return;
+    }
+    // The box keeps its text, so it keeps its writer; this one rides with the
+    // suggestion until Use puts its text in the box.
+    setSuggestion({ text: generated.message, by: generated.by });
   };
 
   const handleCommit = async () => {
@@ -337,13 +358,15 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
       />
       {suggestion && (
         <div className={styles.aiSuggestion} data-testid="ai-suggestion">
-          <div className={styles.aiSuggestionText}>{suggestion}</div>
+          <div className={styles.aiSuggestionText}>{suggestion.text}</div>
           <div className={styles.aiSuggestionActions}>
             <button
               type="button"
               className={styles.smallBtn}
               onClick={() => {
-                useGitStore.getState().setCommitMessage(suggestion);
+                const git = useGitStore.getState();
+                git.setCommitMessage(suggestion.text);
+                git.setGeneratedBy(suggestion.by);
                 setSuggestion(null);
               }}
             >
@@ -354,6 +377,13 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
             </button>
           </div>
         </div>
+      )}
+      {/* #492: plain text, outside the status region below: it names the
+          configured model, so it is read in place rather than announced. */}
+      {writtenBy && (
+        <p className={styles.writtenBy}>
+          {`Written by ${writtenBy.model} via ${writtenBy.provider}`}
+        </p>
       )}
       {/* Mounted empty so screen readers announce progress and withheld files. */}
       <div role="status" className={styles.statusRegion}>

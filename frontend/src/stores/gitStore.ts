@@ -273,6 +273,13 @@ export type GitOp =
   | 'checkout'
   | 'generate';
 
+/** The configured model and provider that wrote `message` (#492). */
+export interface MessageWriter {
+  model: string;
+  provider: string;
+  message: string;
+}
+
 interface GitState {
   /** Workspace root git commands run from; null = no workspace. */
   root: string | null;
@@ -296,6 +303,13 @@ interface GitState {
    * was withheld, so no request was made and no message came back. Cleared by
    * the next Generate, a commit, or a workspace reset. */
   withheldFromAI: { outside: string[]; denied: string[]; allWithheld: boolean } | null;
+  /** Who wrote the text in the message box (#492), for the plain "Written by"
+   * line under it: the configured model and provider, and the message they
+   * wrote. The line shows only while the box holds exactly `message`, so an
+   * edit drops it. Only the panel sets it, when it puts a generated message in
+   * the box; a later Generate attempt leaves it alone, since it does not change
+   * the box. Cleared by a commit and a workspace reset. */
+  generatedBy: MessageWriter | null;
   /** Monotonic guard: refreshes started before the last workspace switch
    * must not apply their result. */
   epoch: number;
@@ -344,7 +358,10 @@ interface GitActions {
   push: () => Promise<void>;
   loadBranches: () => Promise<void>;
   checkout: (branch: string, create: boolean) => Promise<void>;
-  generateMessage: () => Promise<string | null>;
+  /** Resolves the generated message and who wrote it (`by` is null when the
+   * backend named no model), or null when no message came back. */
+  generateMessage: () => Promise<{ message: string; by: MessageWriter | null } | null>;
+  setGeneratedBy: (generatedBy: GitState['generatedBy']) => void;
   probeAiAvailable: () => Promise<void>;
   requestBranchPopupFocus: () => void;
   openDiff: (
@@ -468,6 +485,7 @@ export const useGitStore = create<GitStore>()(
       lastCommitReceipt: null,
       aiAvailable: false,
       withheldFromAI: null,
+      generatedBy: null,
       epoch: 0,
       statusRevision: 0,
       focusBranchRevision: 0,
@@ -497,6 +515,7 @@ export const useGitStore = create<GitStore>()(
             lastError: null,
             lastCommitReceipt: null,
             withheldFromAI: null,
+            generatedBy: null,
             diffSession: null,
             diffSource: null,
             diffFocused: false,
@@ -612,6 +631,7 @@ export const useGitStore = create<GitStore>()(
             {
               commitMessage: '',
               withheldFromAI: null,
+              generatedBy: null,
               lastCommitReceipt: { ...parseCommitSummary(output), files: stagedFiles, output },
             },
             false,
@@ -650,6 +670,7 @@ export const useGitStore = create<GitStore>()(
       generateMessage: async () => {
         let message: string | null = null;
         let withheld: git.WithheldPath[] = [];
+        let by: MessageWriter | null = null;
         const ok = await runOp(
           'generate',
           get,
@@ -660,6 +681,9 @@ export const useGitStore = create<GitStore>()(
             const result = await GitGenerateCommitMessage(root);
             withheld = result.withheld;
             message = result.message;
+            if (result.model && result.provider) {
+              by = { model: result.model, provider: result.provider, message };
+            }
             return message;
           },
           (message) => ({
@@ -674,8 +698,10 @@ export const useGitStore = create<GitStore>()(
             lastOpOutput: null,
           })
         );
-        return ok ? message : null;
+        return ok && message ? { message, by } : null;
       },
+
+      setGeneratedBy: (generatedBy) => set({ generatedBy }, false, 'git/setGeneratedBy'),
 
       probeAiAvailable: async () => {
         try {

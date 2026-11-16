@@ -1198,3 +1198,53 @@ func TestGenerateStaged_OutsideEditWaitsForRefresh(t *testing.T) {
 	}
 	generate("feat: second model", second)
 }
+
+// #492: the result names the configured model and provider that wrote the
+// message, read from golem's route outcome, never the model name the provider
+// put on the wire.
+func TestGenerateStaged_NamesTheModelThatWroteTheMessage(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, "main.go", mainGo)
+	gitCmd(t, dir, "add", "main.go")
+	gittest.Start(t, "", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"model\":\"provider-reported-name\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"feat: add main\"},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"model\":\"provider-reported-name\",\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+	gen := NewMessageGenerator()
+	chatPolicy(t, gen, dir)
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil {
+		t.Fatalf("GenerateStaged() error = %v", err)
+	}
+	if result.Message != "feat: add main" {
+		t.Errorf("Message = %q", result.Message)
+	}
+	if result.Model != gittest.Model || result.Provider != "test" {
+		t.Errorf("written by %q via %q, want %q via %q", result.Model, result.Provider, gittest.Model, "test")
+	}
+}
+
+// #492: no request, so no model wrote anything.
+func TestGenerateStaged_AllWithheldNamesNoModel(t *testing.T) {
+	requireGit(t)
+	dir := initRepo(t)
+	writeFile(t, dir, ".env", "API_TOKEN=hunter2-must-not-leave\n")
+	gitCmd(t, dir, "add", ".env")
+	gittest.Start(t, "feat: never sent", nil)
+	gen := NewMessageGenerator()
+	chatPolicy(t, gen, dir)
+
+	result, err := gen.GenerateStaged(ctx(), NewService(), dir)
+
+	if err != nil {
+		t.Fatalf("GenerateStaged() error = %v", err)
+	}
+	if result.Message != "" || result.Model != "" || result.Provider != "" {
+		t.Errorf("result = %+v, want no message and no model", result)
+	}
+}
