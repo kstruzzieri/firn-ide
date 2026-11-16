@@ -1009,16 +1009,17 @@ describe('gitStore generated-by', () => {
     expect(useGitStore.getState().generatedBy).toBeNull();
   });
 
-  it('is cleared by a commit, a dismissal and a workspace reset', async () => {
+  it('is set by the panel, and cleared by a commit and a workspace reset', async () => {
     const seeded = { generatedBy: { model: 'qwen3-coder', provider: 'ollama' } };
+    useGitStore.getState().setGeneratedBy(seeded.generatedBy);
+    expect(useGitStore.getState().generatedBy).toEqual(seeded.generatedBy);
+    useGitStore.getState().setGeneratedBy(null);
+    expect(useGitStore.getState().generatedBy).toBeNull();
+
     useGitStore.setState(seeded);
     mockGitCommit.mockResolvedValue('[main abc1234] feat: x\n 1 file changed');
     useGitStore.getState().setCommitMessage('feat: x');
     await useGitStore.getState().commit(false);
-    expect(useGitStore.getState().generatedBy).toBeNull();
-
-    useGitStore.setState(seeded);
-    useGitStore.getState().clearGeneratedBy();
     expect(useGitStore.getState().generatedBy).toBeNull();
 
     useGitStore.setState(seeded);

@@ -21,7 +21,7 @@ jest.mock('../../../utils/editorNavigation', () => ({
   ensureEditorFileOpen: (...args: unknown[]) => mockEnsureEditorFileOpen(...args),
 }));
 
-import { render, screen, fireEvent, act, within, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, within, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GitPanel } from '../../../components/GitPanel';
 import { useGitStore } from '../../../stores/gitStore';
@@ -1390,6 +1390,21 @@ describe('GitPanel generated-by line', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use' }));
     expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('feat: generated');
     expect(screen.getByText('Written by qwen3-coder via ollama')).toBeInTheDocument();
+  });
+
+  // Codex r1: the suggestion is the panel's own state, so leaving the panel
+  // discards it; its line must go with it, not stay to name a model for the
+  // draft the user wrote.
+  it("drops a suggestion's line with the suggestion when the panel remounts", async () => {
+    await generateWith(written('feat: generated'), 'my draft');
+    expect(screen.getByText('Written by qwen3-coder via ollama')).toBeInTheDocument();
+
+    cleanup();
+    render(<GitPanel />);
+
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('my draft');
+    expect(screen.queryByTestId('ai-suggestion')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
   });
 
   it('shows no line when nothing was sent', async () => {

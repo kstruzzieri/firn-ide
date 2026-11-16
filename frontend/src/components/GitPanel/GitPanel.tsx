@@ -298,11 +298,19 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
   const generatedBy = useGitStore((s) => s.generatedBy);
   const generating = useGitStore((s) => s.opInFlight === 'generate');
   const [amend, setAmend] = useState(false);
-  const [suggestion, setSuggestion] = useState<string | null>(null);
+  // #492: a suggestion keeps the writer it came with. It is this component's
+  // own state, so leaving the panel discards it; a writer left in the store
+  // would then name a model under the draft the user wrote.
+  const [suggestion, setSuggestion] = useState<{
+    text: string;
+    by: ReturnType<typeof useGitStore.getState>['generatedBy'];
+  } | null>(null);
 
   // `disabled` (an operation in flight) is aria-disabled on Generate and
   // Commit, never native, for the focus reason SyncControls gives.
   const canCommit = commitMessage.trim() !== '' && (stagedCount > 0 || amend);
+  // The line names the message on show: the suggestion's, else the box's.
+  const writtenBy = suggestion ? suggestion.by : generatedBy;
 
   const handleGenerate = async () => {
     if (disabled) return;
@@ -313,8 +321,12 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
     const after = useGitStore.getState();
     if (after.epoch !== epoch || !generated) return;
     // Other callers may have updated the current draft while waiting.
-    if (after.commitMessage.trim() === '') after.setCommitMessage(generated);
-    else setSuggestion(generated);
+    if (after.commitMessage.trim() === '') {
+      after.setCommitMessage(generated);
+      return;
+    }
+    setSuggestion({ text: generated, by: after.generatedBy });
+    after.setGeneratedBy(null);
   };
 
   const handleCommit = async () => {
@@ -338,26 +350,21 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
       />
       {suggestion && (
         <div className={styles.aiSuggestion} data-testid="ai-suggestion">
-          <div className={styles.aiSuggestionText}>{suggestion}</div>
+          <div className={styles.aiSuggestionText}>{suggestion.text}</div>
           <div className={styles.aiSuggestionActions}>
             <button
               type="button"
               className={styles.smallBtn}
               onClick={() => {
-                useGitStore.getState().setCommitMessage(suggestion);
+                const git = useGitStore.getState();
+                git.setCommitMessage(suggestion.text);
+                git.setGeneratedBy(suggestion.by);
                 setSuggestion(null);
               }}
             >
               Use
             </button>
-            <button
-              type="button"
-              className={styles.smallBtn}
-              onClick={() => {
-                useGitStore.getState().clearGeneratedBy();
-                setSuggestion(null);
-              }}
-            >
+            <button type="button" className={styles.smallBtn} onClick={() => setSuggestion(null)}>
               Dismiss
             </button>
           </div>
@@ -365,9 +372,9 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
       )}
       {/* #492: plain text, outside the status region below: it names the
           configured model, so it is read in place rather than announced. */}
-      {generatedBy && (
+      {writtenBy && (
         <p className={styles.writtenBy}>
-          {`Written by ${generatedBy.model} via ${generatedBy.provider}`}
+          {`Written by ${writtenBy.model} via ${writtenBy.provider}`}
         </p>
       )}
       {/* Mounted empty so screen readers announce progress and withheld files. */}

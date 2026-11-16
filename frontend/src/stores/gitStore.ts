@@ -297,8 +297,9 @@ interface GitState {
    * the next Generate, a commit, or a workspace reset. */
   withheldFromAI: { outside: string[]; denied: string[]; allWithheld: boolean } | null;
   /** The configured model and provider that wrote the last generated message
-   * (#492), for the plain "Written by" line. Null when no message came back.
-   * Cleared like withheldFromAI, and when its suggestion is dismissed. */
+   * (#492), for the plain "Written by" line under the message box. Null when
+   * no message came back. Cleared like withheldFromAI; the panel moves it onto
+   * a suggestion when the message does not go into the box. */
   generatedBy: { model: string; provider: string } | null;
   /** Monotonic guard: refreshes started before the last workspace switch
    * must not apply their result. */
@@ -349,7 +350,7 @@ interface GitActions {
   loadBranches: () => Promise<void>;
   checkout: (branch: string, create: boolean) => Promise<void>;
   generateMessage: () => Promise<string | null>;
-  clearGeneratedBy: () => void;
+  setGeneratedBy: (generatedBy: GitState['generatedBy']) => void;
   probeAiAvailable: () => Promise<void>;
   requestBranchPopupFocus: () => void;
   openDiff: (
@@ -690,7 +691,7 @@ export const useGitStore = create<GitStore>()(
         return ok ? message : null;
       },
 
-      clearGeneratedBy: () => set({ generatedBy: null }, false, 'git/clearGeneratedBy'),
+      setGeneratedBy: (generatedBy) => set({ generatedBy }, false, 'git/setGeneratedBy'),
 
       probeAiAvailable: async () => {
         try {
