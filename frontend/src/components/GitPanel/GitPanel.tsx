@@ -1,7 +1,7 @@
 import { Fragment, useId, useMemo, useState } from 'react';
 import { Panel, PanelAction } from '../layout';
 import { RestartIcon, ChevronRightIcon, ChevronDownIcon } from '../icons';
-import { useGitStore, useGitStatusSnapshot } from '../../stores/gitStore';
+import { useGitStore, useGitStatusSnapshot, type MessageWriter } from '../../stores/gitStore';
 import {
   useIDEStore,
   useActiveWorkspace,
@@ -298,12 +298,12 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
   const generatedBy = useGitStore((s) => s.generatedBy);
   const generating = useGitStore((s) => s.opInFlight === 'generate');
   const [amend, setAmend] = useState(false);
-  // #492: a suggestion keeps the writer it came with. It is this component's
-  // own state, so leaving the panel discards it; a writer left in the store
-  // would then name a model under the draft the user wrote.
+  // #492: a suggestion carries its own writer, so leaving the panel (which
+  // discards this state) drops both; the store's writer describes only the
+  // message box.
   const [suggestion, setSuggestion] = useState<{
     text: string;
-    by: ReturnType<typeof useGitStore.getState>['generatedBy'];
+    by: MessageWriter | null;
   } | null>(null);
 
   // `disabled` (an operation in flight) is aria-disabled on Generate and
@@ -328,11 +328,13 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
     if (after.epoch !== epoch || !generated) return;
     // Other callers may have updated the current draft while waiting.
     if (after.commitMessage.trim() === '') {
-      after.setCommitMessage(generated);
+      after.setCommitMessage(generated.message);
+      after.setGeneratedBy(generated.by);
       return;
     }
-    setSuggestion({ text: generated, by: after.generatedBy });
-    after.setGeneratedBy(null);
+    // The box keeps its text, so it keeps its writer; this one rides with the
+    // suggestion until Use puts its text in the box.
+    setSuggestion({ text: generated.message, by: generated.by });
   };
 
   const handleCommit = async () => {

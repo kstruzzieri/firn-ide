@@ -288,9 +288,9 @@ describe('gitStore operations', () => {
     } as git.CommitMessageResult);
 
     useGitStore.getState().setCommitMessage('my draft');
-    const message = await useGitStore.getState().generateMessage();
+    const generated = await useGitStore.getState().generateMessage();
 
-    expect(message).toBe('feat: generated subject');
+    expect(generated?.message).toBe('feat: generated subject');
     expect(useGitStore.getState().commitMessage).toBe('my draft');
     expect(useGitStore.getState().withheldFromAI).toEqual({
       outside: [],
@@ -985,29 +985,48 @@ describe('gitStore generated-by', () => {
       ...over,
     }) as git.CommitMessageResult;
 
-  it('records who wrote a generated message', async () => {
+  it('returns the generated message with who wrote it', async () => {
     mockGenerate.mockResolvedValue(result());
 
-    await useGitStore.getState().generateMessage();
+    const generated = await useGitStore.getState().generateMessage();
 
-    expect(useGitStore.getState().generatedBy).toEqual({
-      model: 'qwen3-coder',
-      provider: 'ollama',
+    expect(generated).toEqual({
       message: 'feat: generated subject',
+      by: { model: 'qwen3-coder', provider: 'ollama', message: 'feat: generated subject' },
     });
+  });
+
+  it('names no writer when the backend named no model', async () => {
+    mockGenerate.mockResolvedValue(result({ model: '' }));
+
+    const generated = await useGitStore.getState().generateMessage();
+
+    expect(generated).toEqual({ message: 'feat: generated subject', by: null });
   });
 
   it.each([
     ['every path was withheld', () => mockGenerate.mockResolvedValue(result({ message: '' }))],
     ['generation failed', () => mockGenerate.mockRejectedValue(new Error('model unavailable'))],
-    ['the backend named no model', () => mockGenerate.mockResolvedValue(result({ model: '' }))],
-  ])('names no writer when %s', async (_case, arrange) => {
-    useGitStore.setState({ generatedBy: { model: 'old', provider: 'old', message: 'old' } });
+  ])('returns nothing when %s', async (_case, arrange) => {
+    arrange();
+
+    expect(await useGitStore.getState().generateMessage()).toBeNull();
+  });
+
+  // Codex r3: the box's writer describes the text in the box, which a new
+  // attempt does not change; only the panel moves a result into the box.
+  it.each([
+    ['succeeds', () => mockGenerate.mockResolvedValue(result({ message: 'feat: another' }))],
+    ['every path was withheld', () => mockGenerate.mockResolvedValue(result({ message: '' }))],
+    ['fails', () => mockGenerate.mockRejectedValue(new Error('model unavailable'))],
+  ])('leaves the box writer alone when a Generate %s', async (_case, arrange) => {
+    const box = { model: 'qwen3-coder', provider: 'ollama', message: 'feat: in the box' };
+    useGitStore.getState().setGeneratedBy(box);
     arrange();
 
     await useGitStore.getState().generateMessage();
 
-    expect(useGitStore.getState().generatedBy).toBeNull();
+    expect(useGitStore.getState().generatedBy).toEqual(box);
   });
 
   it('is set by the panel, and cleared by a commit and a workspace reset', async () => {

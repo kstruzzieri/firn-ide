@@ -1435,6 +1435,32 @@ describe('GitPanel generated-by line', () => {
     expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
   });
 
+  // Codex r3: a later attempt does not change who wrote the box's text.
+  it('keeps the box line through a failed retry, a dismissed suggestion and a remount', async () => {
+    await generateWith(written('feat: generated'));
+    const line = () => screen.queryByText('Written by qwen3-coder via ollama');
+    expect(line()).toBeInTheDocument();
+
+    mockGenerate.mockRejectedValueOnce(new Error('model unavailable'));
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+    expect(line()).toBeInTheDocument();
+
+    mockGenerate.mockResolvedValueOnce(
+      written('feat: another', { model: 'llama3.3', provider: 'ollama' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: /generate message/i }));
+    await act(async () => {});
+    expect(screen.getByText('Written by llama3.3 via ollama')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(line()).toBeInTheDocument();
+
+    cleanup();
+    render(<GitPanel />);
+    expect(screen.getByRole('textbox', { name: /commit message/i })).toHaveValue('feat: generated');
+    expect(line()).toBeInTheDocument();
+  });
+
   it('shows no line when nothing was sent', async () => {
     await generateWith(written('', { withheld: deniedPaths(['.env']), model: '', provider: '' }));
 
