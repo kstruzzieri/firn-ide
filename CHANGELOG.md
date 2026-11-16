@@ -104,9 +104,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   approves every model at that provider endpoint, but the row named one model
   as if it approved only that one. Each row now says it covers every model at
   the endpoint, not just the one it names; in Golem Configuration that line
-  replaces "Reached by agent", and the prompt says only the Golem model is
-  checked, so models assigned to other use cases are not part of the
-  approval. (#355)
+  replaces "Reached by agent", and the prompt says only the Golem model's
+  destination is checked, so a destination that only other use cases use is
+  not part of the approval. (#355)
 
 - Firn no longer overwrites `.firn/run-profiles.json` when it changed on disk
   since Firn read it, such as after a branch checkout, or

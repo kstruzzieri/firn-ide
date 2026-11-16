@@ -219,9 +219,12 @@ const APPROVE_ACTION = 'Check destinations…';
 /** Ruling 5: D13 forbids a mount-time probe, so the click is a QUERY — the verb and the tooltip say so. */
 const APPROVE_TITLE =
   'Lists remote destinations your agent route can reach that are not yet approved. Approving writes only the consent store; your configuration is unchanged.';
-/** [#355] Only the agent route is checked (#491), so an assignment elsewhere is not approved here. */
+/**
+ * [#355] Only the agent route's destination is checked (#491). A model on the
+ * same endpoint is covered by its grant; one on another endpoint is not.
+ */
 const GOLEM_ONLY_CHECKED =
-  'Only the Golem model is checked; models assigned to other use cases are not part of this approval.';
+  "Only the Golem model's destination is checked; a destination that only other use cases use is not part of this approval.";
 const GRANT_PROMPT_EXPLAINER = `Remote destinations your agent route can reach that have no approval yet. ${GOLEM_ONLY_CHECKED} Approving records consent only; your configuration is not changed.`;
 const GRANT_NONE =
   'Nothing to approve. Every remote destination the agent route reaches is already approved.';

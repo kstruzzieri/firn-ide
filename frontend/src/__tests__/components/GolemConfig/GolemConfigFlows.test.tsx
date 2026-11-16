@@ -829,7 +829,7 @@ describe('nonterminal apply results', () => {
     ).toBeVisible();
     expect(within(consent).queryByText(/Reached by/)).not.toBeInTheDocument();
     expect(within(consent).getByText(/Approve this remote destination before/)).toHaveTextContent(
-      'Only the Golem model is checked; models assigned to other use cases are not part of this approval.'
+      "Only the Golem model's destination is checked; a destination that only other use cases use is not part of this approval."
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'Confirm destination' }));
@@ -1223,7 +1223,7 @@ describe('grant-only destination approval', () => {
     expect(
       within(consent).getByText(/Remote destinations your agent route can reach/)
     ).toHaveTextContent(
-      'Only the Golem model is checked; models assigned to other use cases are not part of this approval.'
+      "Only the Golem model's destination is checked; a destination that only other use cases use is not part of this approval."
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'Approve 2 destinations' }));
