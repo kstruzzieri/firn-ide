@@ -297,10 +297,12 @@ interface GitState {
    * the next Generate, a commit, or a workspace reset. */
   withheldFromAI: { outside: string[]; denied: string[]; allWithheld: boolean } | null;
   /** The configured model and provider that wrote the last generated message
-   * (#492), for the plain "Written by" line under the message box. Null when
-   * no message came back. Cleared like withheldFromAI; the panel moves it onto
-   * a suggestion when the message does not go into the box. */
-  generatedBy: { model: string; provider: string } | null;
+   * (#492), and that message, for the plain "Written by" line under the
+   * message box: the line shows only while the box holds exactly `message`,
+   * so an edit drops it. Null when no message came back. Cleared like
+   * withheldFromAI; the panel moves it onto a suggestion when the message does
+   * not go into the box. */
+  generatedBy: { model: string; provider: string; message: string } | null;
   /** Monotonic guard: refreshes started before the last workspace switch
    * must not apply their result. */
   epoch: number;
@@ -671,7 +673,7 @@ export const useGitStore = create<GitStore>()(
             withheld = result.withheld;
             message = result.message;
             if (message && result.model && result.provider) {
-              generatedBy = { model: result.model, provider: result.provider };
+              generatedBy = { model: result.model, provider: result.provider, message };
             }
             return message;
           },

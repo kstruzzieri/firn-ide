@@ -993,6 +993,7 @@ describe('gitStore generated-by', () => {
     expect(useGitStore.getState().generatedBy).toEqual({
       model: 'qwen3-coder',
       provider: 'ollama',
+      message: 'feat: generated subject',
     });
   });
 
@@ -1001,7 +1002,7 @@ describe('gitStore generated-by', () => {
     ['generation failed', () => mockGenerate.mockRejectedValue(new Error('model unavailable'))],
     ['the backend named no model', () => mockGenerate.mockResolvedValue(result({ model: '' }))],
   ])('names no writer when %s', async (_case, arrange) => {
-    useGitStore.setState({ generatedBy: { model: 'old', provider: 'old' } });
+    useGitStore.setState({ generatedBy: { model: 'old', provider: 'old', message: 'old' } });
     arrange();
 
     await useGitStore.getState().generateMessage();
@@ -1010,7 +1011,9 @@ describe('gitStore generated-by', () => {
   });
 
   it('is set by the panel, and cleared by a commit and a workspace reset', async () => {
-    const seeded = { generatedBy: { model: 'qwen3-coder', provider: 'ollama' } };
+    const seeded = {
+      generatedBy: { model: 'qwen3-coder', provider: 'ollama', message: 'feat: x' },
+    };
     useGitStore.getState().setGeneratedBy(seeded.generatedBy);
     expect(useGitStore.getState().generatedBy).toEqual(seeded.generatedBy);
     useGitStore.getState().setGeneratedBy(null);

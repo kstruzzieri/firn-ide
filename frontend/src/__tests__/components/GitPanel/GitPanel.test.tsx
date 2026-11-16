@@ -1407,6 +1407,34 @@ describe('GitPanel generated-by line', () => {
     expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
   });
 
+  // Codex r2: the line names who wrote the text in the box, so it shows only
+  // while the box holds exactly that text.
+  it('drops the line once the generated message is edited or cleared', async () => {
+    await generateWith(written('feat: generated'));
+    const box = screen.getByRole('textbox', { name: /commit message/i });
+    expect(screen.getByText('Written by qwen3-coder via ollama')).toBeInTheDocument();
+
+    fireEvent.change(box, { target: { value: 'feat: generated, then edited' } });
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
+
+    fireEvent.change(box, { target: { value: '' } });
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
+    cleanup();
+    render(<GitPanel />);
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
+  });
+
+  it('drops the line once a used suggestion is edited', async () => {
+    await generateWith(written('feat: generated'), 'my draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Use' }));
+    expect(screen.getByText('Written by qwen3-coder via ollama')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('textbox', { name: /commit message/i }), {
+      target: { value: 'my own words' },
+    });
+    expect(screen.queryByText(/Written by/)).not.toBeInTheDocument();
+  });
+
   it('shows no line when nothing was sent', async () => {
     await generateWith(written('', { withheld: deniedPaths(['.env']), model: '', provider: '' }));
 

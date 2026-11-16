@@ -309,8 +309,14 @@ function CommitArea({ stagedCount, disabled }: { stagedCount: number; disabled: 
   // `disabled` (an operation in flight) is aria-disabled on Generate and
   // Commit, never native, for the focus reason SyncControls gives.
   const canCommit = commitMessage.trim() !== '' && (stagedCount > 0 || amend);
-  // The line names the message on show: the suggestion's, else the box's.
-  const writtenBy = suggestion ? suggestion.by : generatedBy;
+  // The line names the message on show: the suggestion's, else the box's while
+  // the box still holds exactly what was generated (an edit makes it the
+  // user's).
+  const writtenBy = suggestion
+    ? suggestion.by
+    : generatedBy?.message === commitMessage
+      ? generatedBy
+      : null;
 
   const handleGenerate = async () => {
     if (disabled) return;
