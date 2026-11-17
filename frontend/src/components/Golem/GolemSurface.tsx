@@ -559,25 +559,36 @@ export function GolemSurface({
         key: 'consent',
       };
     }
+    const runs = conversation.runs;
+    const terminal = (run: ProjectedRun | undefined): boolean =>
+      run?.phase === 'done' || run?.phase === 'failed' || run?.phase === 'canceled';
     let latest: ProjectedRun | null = null;
-    for (const run of Object.values(conversation.runs)) {
-      if (run.phase === 'done' || run.phase === 'failed' || run.phase === 'canceled') latest = run;
+    for (const run of Object.values(runs)) {
+      if (terminal(run)) latest = run;
     }
     // An error can arrive without moving any phase — a refused cancel restores
     // the run's previous phase and only appends a row — so the newest error row
     // is part of the derived string, not just the phases. Deltas never append
     // one, so a stream still leaves this silent. Error rows stay in the
-    // transcript (#303), so only rows from the latest terminal run onward
-    // count: an earlier run's error is not read after a later run's reply
-    // (#395).
+    // transcript (#303), so a row counts only by the run that owns it (#395):
+    // the latest terminal run's, or a run still live. A row with no run (a
+    // send that never got a run id) counts only after every terminal run's
+    // rows. Ownership, not position: a canceled consent turn's only row is
+    // retagged to the run that replaces it, so the latest terminal run can own
+    // no rows at all.
     const transcript = conversation.transcript;
     const latestRunId = latest?.identity.runId;
-    const firstRow = latestRunId
-      ? transcript.findIndex((entry) => entry.runId === latestRunId)
-      : -1;
+    let boundary = -1;
+    transcript.forEach((entry, index) => {
+      if (terminal(runs[entry.runId])) boundary = index;
+    });
     let lastError: (typeof transcript)[number] | null = null;
-    for (let index = Math.max(firstRow, 0); index < transcript.length; index += 1) {
-      if (transcript[index].kind === 'error') lastError = transcript[index];
+    for (let index = 0; index < transcript.length; index += 1) {
+      const entry = transcript[index];
+      if (entry.kind !== 'error') continue;
+      const owner = runs[entry.runId];
+      const counts = entry.runId === latestRunId || (owner ? !terminal(owner) : index > boundary);
+      if (counts) lastError = entry;
     }
     const phase = phaseAnnouncement(conversation, latest);
     // The key names the run and error row the words came from, so the same

@@ -518,6 +518,41 @@ describe('GolemPanel live indicator', () => {
     expect(liveRegion()).not.toHaveTextContent('Golem error');
   });
 
+  it('does not repeat an earlier run’s error when the latest terminal run has no rows', async () => {
+    // A canceled consent turn's only row is retagged to the run that replaces
+    // it, so the latest terminal run can own no transcript rows at all. The
+    // earlier run's error must still stay out of the announcement.
+    hydrate();
+    selectFocused();
+    render(<GolemPanel visible />);
+
+    type('first');
+    pressEnter();
+    await flush();
+    finishWithoutAnswer(RUN_A, 1);
+    await flush();
+    expect(liveRegion()).toHaveTextContent(noAnswer);
+
+    act(() => {
+      const conversation = store().conversations[CONV];
+      useGolemStore.setState({
+        conversations: {
+          ...store().conversations,
+          [CONV]: {
+            ...conversation,
+            runs: {
+              ...conversation.runs,
+              [RUN_B]: { identity: runIdentity(RUN_B), phase: 'canceled', lastSeq: -1 },
+            },
+          },
+        },
+      });
+    });
+
+    expect(liveRegion()).toHaveTextContent('Golem run canceled.');
+    expect(liveRegion()).not.toHaveTextContent('Golem error');
+  });
+
   it('announces a second run that ends without an answer again', async () => {
     hydrate();
     selectFocused();
