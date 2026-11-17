@@ -1372,6 +1372,102 @@ describe('Save as profile', () => {
     expect(endpoint).toHaveValue('http://127.0.0.1:9292/v1-draft');
   });
 
+  // #396: closing the popover cannot cancel a write already sent, so a result
+  // other than a plain success still reaches the user: the popover reopens on
+  // its notice, which the persistent region announces, and focus stays put.
+  it('reports a save that fails after an outside click closed the popover, without taking focus', async () => {
+    let fail: ((reason: unknown) => void) | undefined;
+    (SaveGolemProfileAs as jest.Mock).mockImplementation(
+      () => new Promise((_, reject) => (fail = reject))
+    );
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(screen.getByRole('button', { name: 'Edit provider llama-swap' }));
+    expect(screen.queryByRole('group', { name: 'Save as profile' })).not.toBeInTheDocument();
+    const endpoint = screen.getByLabelText('Endpoint');
+    await user.type(endpoint, '-draft');
+
+    await act(async () => {
+      fail?.(new Error('transport down'));
+    });
+
+    const group = await screen.findByRole('group', { name: 'Save as profile' });
+    expect(within(group).getByText(/save result is unknown/i)).toBeInTheDocument();
+    expect(screen.getByTestId('golem-profile-menu-announcement')).toHaveTextContent(
+      /save result is unknown/i
+    );
+    expect(endpoint).toHaveFocus();
+  });
+
+  it('reports a name collision found after Escape closed the popover, without starting an overwrite', async () => {
+    let settle: ((result: unknown) => void) | undefined;
+    (SaveGolemProfileAs as jest.Mock).mockImplementation(
+      () => new Promise((resolve) => (settle = resolve))
+    );
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.keyboard('{Escape}');
+
+    await act(async () => {
+      settle?.({ status: 'conflict', conflict: 'profile_target' });
+    });
+
+    const group = await screen.findByRole('group', { name: 'Save as profile' });
+    expect(
+      within(group).getByText(/user\/mine already exists, so nothing was saved/i)
+    ).toBeInTheDocument();
+    expect(within(group).queryByRole('button', { name: 'Overwrite' })).not.toBeInTheDocument();
+    expect(LoadGolemProfile).not.toHaveBeenCalledWith('user/mine');
+  });
+
+  it('offers no Back on the overwrite step while its save is in flight', async () => {
+    // #396: Back here only steps to naming, so it would drop the in-flight
+    // overwrite's result without the report that closing the popover gets.
+    (SaveGolemProfileAs as jest.Mock)
+      .mockResolvedValueOnce({ status: 'conflict', conflict: 'profile_target' })
+      .mockImplementationOnce(() => new Promise(() => undefined));
+    (LoadGolemProfile as jest.Mock).mockResolvedValue(profileLoadResult('user/mine'));
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    const back = await screen.findByRole('button', { name: 'Back' });
+    expect(back).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Overwrite' }));
+    expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
+  });
+
+  it('stays closed when a save dismissed mid-flight succeeds', async () => {
+    let settle: ((result: unknown) => void) | undefined;
+    (SaveGolemProfileAs as jest.Mock).mockImplementation(
+      () => new Promise((resolve) => (settle = resolve))
+    );
+    await mountReady();
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.type(screen.getByLabelText('Profile name'), 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.keyboard('{Escape}');
+
+    await act(async () => {
+      settle?.({ status: 'saved', profile: { id: 'user/mine', revision: REV('c') } });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save as profile…' })).toBeEnabled()
+    );
+    expect(screen.queryByRole('group', { name: 'Save as profile' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('golem-profile-menu-announcement')).toHaveTextContent('');
+  });
+
   // Fix for the review finding: a `role="status"` mounted together with its
   // text is generally never announced. The distinguishing proof against that
   // bug is exactly this ordering — the channel must exist, empty, BEFORE any

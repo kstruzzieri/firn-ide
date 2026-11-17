@@ -58,6 +58,23 @@ const SAVE_COLLIDER_UNREADABLE =
 const SAVE_IN_PROGRESS = 'A save is already in progress.';
 const SAVE_OUTCOME_UNKNOWN =
   'The save result is unknown — the profile may already exist. Refresh the profile list before saving again.';
+/** #396: a create collision that settles after the popover closed. The flow
+ *  that would offer Overwrite was abandoned, so this says nothing was written. */
+const saveNameTaken = (slug: string) =>
+  `A profile named user/${slug} already exists, so nothing was saved. Save as profile again to overwrite it.`;
+
+/** #396: what a save the user closed the popover on still has to say. A plain
+ *  success stays quiet: the user moved on, and nothing went wrong. */
+function dismissedNotice(result: GolemProfileSaveResult, targetConflict: string): string | null {
+  switch (result.status) {
+    case 'saved':
+      return result.warning === undefined ? null : PROFILE_SAVED_UNCERTAIN;
+    case 'conflict':
+      return result.conflict === 'active_revision' ? SAVE_ACTIVE_CONFLICT : targetConflict;
+    case 'diagnostics':
+      return formatProfileDiagnostic(result.diagnostics[0]);
+  }
+}
 
 // Focus targets for the step-transition effect below — named once so the
 // effect and the elements that carry the ids cannot drift apart.
@@ -139,12 +156,24 @@ export function SaveProfileButton({
   const ownedElsewhere = (): boolean =>
     document.activeElement !== null && document.activeElement !== document.body;
 
+  /**
+   * #396: the generation of the save RPC now awaiting, and the generation of
+   * one the user closed the popover on. Closing cannot cancel a write already
+   * sent, so a dismissed save's result is still reported (see `reportDismissed`)
+   * instead of dying with its generation.
+   */
+  const savingGeneration = useRef<number | null>(null);
+  const dismissedGeneration = useRef<number | null>(null);
+
   const invalidateFlow = () => {
     flowGeneration.current += 1;
     setPending(false);
   };
 
   const close = (restoreFocus: boolean) => {
+    if (savingGeneration.current === flowGeneration.current) {
+      dismissedGeneration.current = savingGeneration.current;
+    }
     invalidateFlow();
     setOpen(false);
     setSave({ step: 'idle' });
@@ -248,6 +277,21 @@ export function SaveProfileButton({
     setPendingFocus({ elementId: NOTICE_DONE_ID });
   };
 
+  /**
+   * #396: reports the result of a save the user closed the popover on. It
+   * reopens on the notice step, which the persistent region announces, but
+   * makes no focus request: the user has moved on, and taking focus back would
+   * pull them out of whatever they are doing. The trigger stays disabled while
+   * the workspace's save is in flight, so no newer flow can be open here.
+   */
+  const reportDismissed = (gen: number, text: string | null) => {
+    if (dismissedGeneration.current !== gen) return;
+    dismissedGeneration.current = null;
+    if (text === null) return;
+    setOpen(true);
+    setSave({ step: 'notice', text });
+  };
+
   const settleSaved = (result: Extract<GolemProfileSaveResult, { status: 'saved' }>) => {
     gotoNotice(result.warning === undefined ? PROFILE_SAVED : PROFILE_SAVED_UNCERTAIN);
   };
@@ -299,10 +343,15 @@ export function SaveProfileButton({
     const applied = appliedRevision;
     const gen = ++flowGeneration.current;
     setPending(true);
+    savingGeneration.current = gen;
     try {
       // Create-only: {id, appliedRevision}, no expectedRevision (§4.8).
       const result = await saveProfileAs(`user/${slug}`, { appliedRevision: applied });
-      if (gen !== flowGeneration.current) return;
+      savingGeneration.current = null;
+      if (gen !== flowGeneration.current) {
+        reportDismissed(gen, dismissedNotice(result, saveNameTaken(slug)));
+        return;
+      }
       switch (result.status) {
         case 'saved':
           settleSaved(result);
@@ -321,9 +370,13 @@ export function SaveProfileButton({
     } catch {
       // §4.8: a transport-rejected Save has an UNKNOWN outcome — its own
       // recovery notice, and never an automatic retry.
-      if (gen !== flowGeneration.current) return;
+      if (gen !== flowGeneration.current) {
+        reportDismissed(gen, SAVE_OUTCOME_UNKNOWN);
+        return;
+      }
       gotoNotice(SAVE_OUTCOME_UNKNOWN);
     } finally {
+      if (savingGeneration.current === gen) savingGeneration.current = null;
       if (gen === flowGeneration.current) setPending(false);
     }
   };
@@ -332,6 +385,7 @@ export function SaveProfileButton({
     if (overwriteBlocked) return;
     const gen = ++flowGeneration.current;
     setPending(true);
+    savingGeneration.current = gen;
     try {
       // The FROZEN tuple, verbatim (controller ruling): a Refresh that moved
       // the applied revision while this popover stood is answered by an honest
@@ -340,7 +394,11 @@ export function SaveProfileButton({
         appliedRevision: frozen.appliedRevision,
         expectedRevision: frozen.expectedRevision,
       });
-      if (gen !== flowGeneration.current) return;
+      savingGeneration.current = null;
+      if (gen !== flowGeneration.current) {
+        reportDismissed(gen, dismissedNotice(result, SAVE_TARGET_CONFLICT));
+        return;
+      }
       switch (result.status) {
         case 'saved':
           settleSaved(result);
@@ -362,9 +420,13 @@ export function SaveProfileButton({
           return;
       }
     } catch {
-      if (gen !== flowGeneration.current) return;
+      if (gen !== flowGeneration.current) {
+        reportDismissed(gen, SAVE_OUTCOME_UNKNOWN);
+        return;
+      }
       gotoNotice(SAVE_OUTCOME_UNKNOWN);
     } finally {
+      if (savingGeneration.current === gen) savingGeneration.current = null;
       if (gen === flowGeneration.current) setPending(false);
     }
   };
@@ -490,6 +552,9 @@ export function SaveProfileButton({
                 <button
                   type="button"
                   className={`${styles.button} ${styles.quiet}`}
+                  // #396: stepping back mid-save would drop the result
+                  // unreported; Escape still closes, and that is reported.
+                  disabled={pending}
                   onClick={() => {
                     invalidateFlow();
                     setSave({ step: 'naming', slug: save.slug, fieldError: '' });
