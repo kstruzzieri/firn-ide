@@ -473,6 +473,76 @@ describe('GolemPanel live indicator', () => {
     expect(store().conversations[CONV].activeRunId).toBeNull();
   });
 
+  // #395: an error row stays in the transcript, so the announcement must read
+  // only the latest run's errors. A retry that answers is not followed by the
+  // previous run's no-answer error, and a second no-answer run is spoken again.
+  const finishWithoutAnswer = (runId: string, seq: number) => {
+    act(() => {
+      store().ingestEvent(
+        eventPayload({ runId, seq, type: 'run.finished', payload: { stopReason: 'completed' } })
+      );
+    });
+  };
+  const noAnswer = 'Golem error. The Golem run ended without an answer.';
+
+  it('does not repeat an earlier run’s error after a later run answers', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel visible />);
+
+    type('first');
+    pressEnter();
+    await flush();
+    finishWithoutAnswer(RUN_A, 1);
+    await flush();
+    expect(liveRegion()).toHaveTextContent(noAnswer);
+
+    mockRunGolemTurn.mockResolvedValueOnce(acceptedAdmission(RUN_B));
+    type('again');
+    pressEnter();
+    await flush();
+    act(() => {
+      store().ingestEvent(
+        eventPayload({
+          runId: RUN_B,
+          seq: 1,
+          type: 'message.delta',
+          payload: { messageId: 'm2', text: 'the answer' },
+        })
+      );
+    });
+    finishWithoutAnswer(RUN_B, 2);
+    await flush();
+
+    expect(liveRegion()).toHaveTextContent('the answer');
+    expect(liveRegion()).not.toHaveTextContent('Golem error');
+  });
+
+  it('announces a second run that ends without an answer again', async () => {
+    hydrate();
+    selectFocused();
+    render(<GolemPanel visible />);
+
+    type('first');
+    pressEnter();
+    await flush();
+    finishWithoutAnswer(RUN_A, 1);
+    await flush();
+    const first = within(liveRegion()).getByText(noAnswer);
+
+    mockRunGolemTurn.mockResolvedValueOnce(acceptedAdmission(RUN_B));
+    type('again');
+    pressEnter();
+    await flush();
+    finishWithoutAnswer(RUN_B, 1);
+    await flush();
+
+    // Same words, but a new node: a polite region speaks an insertion, while
+    // an unchanged node would stay silent.
+    const second = within(liveRegion()).getByText(noAnswer);
+    expect(second).not.toBe(first);
+  });
+
   it('announces a terminal run before the queued run working state', async () => {
     hydrate();
     selectFocused();
