@@ -109,6 +109,7 @@ import {
 } from './SourcePicker';
 import { GOLEM_CHANGE_ID, GOLEM_ROW_KEY, GolemModelCard } from './GolemModelCard';
 import { GOLEM_USE_CASE } from './golemModel';
+import { endpointScope } from '../../utils/golemConsentScope';
 import { ProvidersCard } from './ProvidersCard';
 import { RoutingCard } from './RoutingCard';
 import { routeRowKey, routingOwnsDiagnostic } from './routingRows';
@@ -218,8 +219,13 @@ const APPROVE_ACTION = 'Check destinations…';
 /** Ruling 5: D13 forbids a mount-time probe, so the click is a QUERY — the verb and the tooltip say so. */
 const APPROVE_TITLE =
   'Lists remote destinations your agent route can reach that are not yet approved. Approving writes only the consent store; your configuration is unchanged.';
-const GRANT_PROMPT_EXPLAINER =
-  'Remote destinations your agent route can reach that have no approval yet. Approving records consent only; your configuration is not changed.';
+/**
+ * [#355] Only the agent route's destination is checked (#491). A model on the
+ * same endpoint is covered by its grant; one on another endpoint is not.
+ */
+const GOLEM_ONLY_CHECKED =
+  "Only the Golem model's destination is checked; a destination that only other use cases use is not part of this approval.";
+const GRANT_PROMPT_EXPLAINER = `Remote destinations your agent route can reach that have no approval yet. ${GOLEM_ONLY_CHECKED} Approving records consent only; your configuration is not changed.`;
 const GRANT_NONE =
   'Nothing to approve. Every remote destination the agent route reaches is already approved.';
 /** Never "nothing to approve": a configuration that would not load answered
@@ -1689,11 +1695,13 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
               <p className={styles.panelText}>
                 {outcome.intent === 'grant-only'
                   ? GRANT_PROMPT_EXPLAINER
-                  : `${promptLead(outcome.intent, outcome.challenge.destinations.length)} This is a settings approval, separate from run approval.`}
+                  : `${promptLead(outcome.intent, outcome.challenge.destinations.length)} ${GOLEM_ONLY_CHECKED} This is a settings approval, separate from run approval.`}
               </p>
               {/* One row per destination in the digest order the backend sent:
             provider · model · endpoint · class, the class as the row's
-            fourth cell rather than a repeated sentence. [C1] It reads the
+            fourth cell rather than a repeated sentence, then the grant's real
+            scope (#355): the whole endpoint, not the one model the row names.
+            Provenance is no longer shown: since #491 it is always "agent". [C1] It reads the
             parsed `classification` rather than repeating the word: the
             parser refuses any other value (`readApplyDestination`), so the
             cell now says so by construction instead of by coincidence. */}
@@ -1713,9 +1721,7 @@ export function GolemConfigWorkspace({ onClose }: { onClose: () => void }) {
                     </span>
                     <span className={styles.grantEndpoint}>{destination.endpoint}</span>
                     <span className={styles.grantClass}>{destination.classification}</span>
-                    <span
-                      className={styles.metaSub}
-                    >{`Reached by ${destination.provenance.join(', ')}`}</span>
+                    <span className={styles.metaSub}>{endpointScope(destination.model)}</span>
                   </li>
                 ))}
               </ul>
