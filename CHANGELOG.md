@@ -99,6 +99,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The destination approval prompt in Golem Configuration is announced once
+  when it opens. Its ticking "expires in" countdown sat inside the prompt's
+  alert region, so the app reported the whole prompt as changed every second
+  and VoiceOver could read it again and again while it stood. The countdown
+  still ticks in the same corner, and the prompt still says once when it
+  expires. (#591)
+
 - A remote destination approval now says what it covers. Approving a
   destination, in Golem Configuration or with Allow & send in the chat,
   approves every model at that provider endpoint, but the row named one model

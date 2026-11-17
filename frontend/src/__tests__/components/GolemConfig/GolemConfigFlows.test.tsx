@@ -1175,6 +1175,48 @@ describe('grant-only destination approval', () => {
     expect(action).toBeEnabled();
   });
 
+  it('ticks the countdown outside the alert, so the region never changes while it stands', async () => {
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    prepareReturns({
+      status: 'consent_required',
+      challenge: grantChallenge({ expiresAt: Date.now() + 125_000 }),
+    });
+    await mountWorkspace();
+    const consent = screen.getByTestId('golem-grant-alert');
+    await user.click(screen.getByRole('button', { name: 'Check destinations…' }));
+    await waitFor(() => expect(consent).not.toBeEmptyDOMElement());
+
+    // WebKit posts AXLiveRegionChanged on the region for any DOM change under it,
+    // aria-hidden or not, and VoiceOver is handed the whole assertive prompt again.
+    // The packaged app recorded that once a second (#591).
+    const countdown = screen.getByText(/^expires in \d+:\d{2}$/);
+    expect(consent).not.toContainElement(countdown);
+    expect(countdown).toHaveAttribute('aria-hidden', 'true');
+    expect(within(consent).getByText(/^Expires at /)).toBeInTheDocument();
+
+    const before = countdown.textContent;
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(consent, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+    });
+    try {
+      await act(async () => {
+        jest.advanceTimersByTime(3000);
+        await Promise.resolve();
+      });
+      // Still ticking for sighted readers, and nothing under the region moved.
+      expect(countdown.textContent).not.toBe(before);
+      expect([...mutations, ...observer.takeRecords()]).toEqual([]);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
   it('lists the whole batch and records it on Confirm', async () => {
     prepareReturns({ status: 'consent_required', challenge: grantChallenge() });
     (ConfirmGolemDestinationGrants as jest.Mock).mockResolvedValue({ status: 'granted' });
@@ -1200,11 +1242,8 @@ describe('grant-only destination approval', () => {
         /Remote destinations your agent route can reach that have no approval yet/
       )
     ).toBeVisible();
-    // [C13] The ticking countdown is aria-hidden; the alert announces the expiry once, statically.
-    expect(within(consent).getByText(/expires in \d+:\d{2}/)).toHaveAttribute(
-      'aria-hidden',
-      'true'
-    );
+    // [C13] The alert announces the expiry once, statically; the ticking countdown
+    // lives outside it (#591, pinned below).
     expect(within(consent).getByText(/^Expires at /)).toBeVisible();
     expect(within(consent).getAllByText('remote')).toHaveLength(2);
     // One line per destination: endpoint, provider, and the model only when the
