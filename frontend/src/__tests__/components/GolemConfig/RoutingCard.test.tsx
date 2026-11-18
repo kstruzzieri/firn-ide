@@ -16,7 +16,7 @@ import {
   type Change,
   type RouteChange,
 } from '../../../types/golemConfig';
-import { expectSpansMatchHeaders } from '../../helpers/tableSpans';
+import { expectSpansMatchHeaders, headerLabels } from '../../helpers/tableHeaders';
 
 const model: ModelProjection = {
   role: 'chat-role',
@@ -1337,6 +1337,12 @@ describe('Defined models — Assign (wave 4d)', () => {
     render(<RoutingCard {...props()} />);
     await userEvent.click(assign());
     expect(expectSpansMatchHeaders()).toBe(1);
+  });
+
+  it('names each table’s columns, Actions for assistive technology only (#318)', () => {
+    render(<RoutingCard {...props()} />);
+    const route = ['Use case', 'Provider', 'Model', 'Think', 'Status', '(Actions)'];
+    expect(headerLabels()).toEqual([route, route, ['Role', 'Provider', 'Model', '(Actions)']]);
   });
 });
 

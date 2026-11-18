@@ -8,6 +8,27 @@
 import type { ReactNode } from 'react';
 import styles from './GolemConfig.module.css';
 
+export function Cell({
+  label,
+  className,
+  children,
+}: {
+  label?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <span role="cell" className={`${styles.cell} ${className ?? ''}`}>
+      {label !== undefined && (
+        <b className={styles.recordLabel} aria-hidden="true">
+          {label}
+        </b>
+      )}
+      {children}
+    </span>
+  );
+}
+
 /** A table column: its header text, and whether only assistive technology reads it. */
 export interface Column {
   label: string;
@@ -29,27 +50,6 @@ export function HeadRow({ columns }: { columns: readonly Column[] }) {
         </span>
       ))}
     </div>
-  );
-}
-
-export function Cell({
-  label,
-  className,
-  children,
-}: {
-  label?: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <span role="cell" className={`${styles.cell} ${className ?? ''}`}>
-      {label !== undefined && (
-        <b className={styles.recordLabel} aria-hidden="true">
-          {label}
-        </b>
-      )}
-      {children}
-    </span>
   );
 }
 
