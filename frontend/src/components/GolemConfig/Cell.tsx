@@ -8,6 +8,30 @@
 import type { ReactNode } from 'react';
 import styles from './GolemConfig.module.css';
 
+/** A table column: its header text, and whether only assistive technology reads it. */
+export interface Column {
+  label: string;
+  srOnly?: boolean;
+}
+
+/**
+ * [#318] A table's header row, drawn from the same column list whose length
+ * every spanning cell in that table names as its `aria-colspan`: adding or
+ * removing a column moves the accessible span with it. The table's CSS grid
+ * template is still a separate count.
+ */
+export function HeadRow({ columns }: { columns: readonly Column[] }) {
+  return (
+    <div className={styles.headRow} role="row">
+      {columns.map(({ label, srOnly }) => (
+        <span key={label} role="columnheader">
+          {srOnly ? <span className={styles.srOnly}>{label}</span> : label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function Cell({
   label,
   className,
