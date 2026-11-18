@@ -550,28 +550,55 @@ export function GolemSurface({
    * Deltas move the transcript but not a run's phase and not the pending
    * challenge, so a token stream leaves this string untouched and silent.
    */
-  const announcement = useMemo(() => {
-    if (!conversation) return '';
+  const announcement = useMemo((): { text: string; key: string } => {
+    if (!conversation) return { text: '', key: '' };
     const challenge = conversation.pendingConsentTurn?.challenge;
     if (challenge) {
-      return `Golem needs your approval to send this message to ${challenge.destination.provider}.`;
+      return {
+        text: `Golem needs your approval to send this message to ${challenge.destination.provider}.`,
+        key: 'consent',
+      };
     }
+    const runs = conversation.runs;
+    const terminal = (run: ProjectedRun | undefined): boolean =>
+      run?.phase === 'done' || run?.phase === 'failed' || run?.phase === 'canceled';
     let latest: ProjectedRun | null = null;
-    for (const run of Object.values(conversation.runs)) {
-      if (run.phase === 'done' || run.phase === 'failed' || run.phase === 'canceled') latest = run;
+    for (const run of Object.values(runs)) {
+      if (terminal(run)) latest = run;
     }
     // An error can arrive without moving any phase — a refused cancel restores
     // the run's previous phase and only appends a row — so the newest error row
     // is part of the derived string, not just the phases. Deltas never append
-    // one, so a stream still leaves this silent.
-    let lastError = '';
-    for (const entry of conversation.transcript) {
-      if (entry.kind === 'error') lastError = entry.text;
+    // one, so a stream still leaves this silent. Error rows stay in the
+    // transcript (#303), so a row counts only by the run that owns it (#395):
+    // the latest terminal run's, or a run still live. A row with no run (a
+    // send that never got a run id) counts only after every terminal run's
+    // rows. Ownership, not position: a canceled consent turn's only row is
+    // retagged to the run that replaces it, so the latest terminal run can own
+    // no rows at all.
+    const transcript = conversation.transcript;
+    const latestRunId = latest?.identity.runId;
+    let boundary = -1;
+    transcript.forEach((entry, index) => {
+      if (terminal(runs[entry.runId])) boundary = index;
+    });
+    let lastError: (typeof transcript)[number] | null = null;
+    for (let index = 0; index < transcript.length; index += 1) {
+      const entry = transcript[index];
+      if (entry.kind !== 'error') continue;
+      const owner = runs[entry.runId];
+      const counts = entry.runId === latestRunId || (owner ? !terminal(owner) : index > boundary);
+      if (counts) lastError = entry;
     }
     const phase = phaseAnnouncement(conversation, latest);
+    // The key names the run and error row the words came from, so the same
+    // words from a later run remount the node and are spoken again (#395).
+    const key = `${latestRunId ?? ''}:${lastError?.id ?? ''}`;
     // A terminal that already speaks that text does not say it twice.
-    if (lastError && !phase.includes(lastError)) return `${phase} Golem error. ${lastError}`.trim();
-    return phase;
+    if (lastError && !phase.includes(lastError.text)) {
+      return { text: `${phase} Golem error. ${lastError.text}`.trim(), key };
+    }
+    return { text: phase, key };
   }, [conversation]);
 
   const activeAnnouncement =
@@ -985,10 +1012,10 @@ export function GolemSurface({
           parked here would make expanding or re-docking read it out again. */}
       {visible && (
         <div className={styles.srOnly} role="status" aria-live="polite" aria-atomic="false">
-          {announcement && <span>{announcement}</span>}
+          {announcement.text && <span key={announcement.key}>{announcement.text}</span>}
           {activeRun && activeAnnouncement && (
             <span key={activeRun.identity.runId}>
-              {announcement && ' '}
+              {announcement.text && ' '}
               {activeAnnouncement}
             </span>
           )}
