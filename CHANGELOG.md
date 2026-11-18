@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit messages come only from the Golem model, the model Golem chat
   answers with, read from the configuration Golem chat has loaded. When that
   model fails, generation fails with its error instead of trying the model's
-  fallbacks, and Approve missing destinations and Apply ask about that one
+  fallbacks, and Check destinations… and Apply ask about that one
   destination, never one only a fallback reaches. An edit made to the
   configuration file outside Firn reaches commit messages when it reaches
   chat: on Refresh, or when Golem Configuration opens while Golem is idle.
@@ -98,6 +98,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   git repository is unchanged. (#536)
 
 ### Fixed
+
+- When a commit message cannot be generated because the Golem model's remote
+  destination is not approved, the Git panel now says to choose Check
+  destinations… in Golem: Configuration, which opens from the command palette.
+  It named an Approve missing destinations control, which v0.13.0 renamed.
+  When a staged diff is too large for the model's context window, the message
+  now says to set a larger context_window in the configuration file, as Golem
+  Configuration does, and then choose Refresh there, instead of sending you to
+  that page to change it, which it cannot do. Neither message ends with
+  internal error text such as "provider: destination denied" any more. (#598)
 
 - In the Golem configuration view, closing the Save as profile popover while a
   save is in flight no longer drops the result. A save that fails, finds the

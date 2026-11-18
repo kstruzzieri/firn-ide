@@ -255,14 +255,31 @@ func runError(err error, window int) error {
 	return fmt.Errorf("golem runtime run: %w", err)
 }
 
+// blockedError is a refusal worded for the Git panel. It classifies as its
+// sentinel for errors.Is but prints only msg: a %w suffix would append the
+// sentinel's own text to what the user reads (#598).
+type blockedError struct {
+	msg      string
+	sentinel error
+}
+
+func (e *blockedError) Error() string { return e.msg }
+func (e *blockedError) Unwrap() error { return e.sentinel }
+
 // contextWindowError refuses a prompt the Golem model's context window cannot
-// hold. No request was sent.
+// hold. No request was sent. The advice names the configuration file because
+// Golem: Configuration cannot change the window of a model already in it
+// (WINDOW_IN_FILE in the frontend says the same), then Refresh, because
+// generation keeps the loaded settings until Golem reloads them.
 func contextWindowError(window int) error {
 	size := "no context_window"
 	if window != 0 {
 		size = fmt.Sprintf("context_window %d", window)
 	}
-	return fmt.Errorf("commit message generation blocked: the Golem model's context window (%s) is too small for this staged diff; raise context_window for the Golem model in the Golem configuration view, or stage less: %w", size, ai.ErrContextWindowTooSmall)
+	return &blockedError{
+		msg:      "commit message generation blocked: the Golem model's context window (" + size + ") is too small for this staged diff; set a larger context_window for the Golem model in the configuration file, then choose Refresh in Golem: Configuration, or stage less",
+		sentinel: ai.ErrContextWindowTooSmall,
+	}
 }
 
 // destinationDeniedMessage renders a boundary-safe description from the
@@ -312,7 +329,10 @@ func (g *MessageGenerator) generate(ctx context.Context, root, diff string, with
 		if msg, ok := destinationDeniedMessage(err); ok {
 			// Wraps the SENTINEL only: classification survives, the original
 			// chain does not travel (spec D3b).
-			return "", writer, fmt.Errorf("commit message generation blocked: %s; use Approve missing destinations in the Golem configuration view: %w", msg, provider.ErrDestinationDenied)
+			return "", writer, &blockedError{
+				msg:      "commit message generation blocked: " + msg + "; open Golem: Configuration from the command palette and choose Check destinations…",
+				sentinel: provider.ErrDestinationDenied,
+			}
 		}
 		if errors.Is(err, ai.ErrContextWindowTooSmall) {
 			return "", writer, contextWindowError(model.ContextWindow())
