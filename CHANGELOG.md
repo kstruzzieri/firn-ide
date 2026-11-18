@@ -99,6 +99,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- In the Golem configuration view, closing the Save as profile popover while a
+  save is in flight no longer drops the result. A save that fails, finds the
+  name already taken, or cannot be confirmed brings the popover back with its
+  message, without moving keyboard focus, and posts it to screen readers. A
+  save that plainly succeeds stays closed. The overwrite step's Back is
+  unavailable while its save is in flight; Escape still closes it. (#396)
+
+- The Golem chat's spoken summary reads only the latest run's error. It used to
+  read an earlier run's error again after a later run answered, and stayed
+  silent when a second run failed with the same words. (#395)
+
 - The destination approval prompt in Golem Configuration is announced once
   when it opens. Its ticking "expires in" countdown sat inside the prompt's
   alert region, so the app reported the whole prompt as changed every second
