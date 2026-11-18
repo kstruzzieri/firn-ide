@@ -103,9 +103,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   destination is not approved, the Git panel now says to choose Check
   destinations… in Golem: Configuration, which opens from the command palette.
   It named an Approve missing destinations control, which v0.13.0 renamed.
-  That message, and the one for a staged diff too large for the model's
-  context window, no longer end with internal error text such as "provider:
-  destination denied". (#598)
+  When a staged diff is too large for the model's context window, the message
+  now says to set a larger context_window in the configuration file, as Golem
+  Configuration does, instead of sending you to that page, which cannot change
+  it. Neither message ends with internal error text such as "provider:
+  destination denied" any more. (#598)
 
 - In the Golem configuration view, closing the Save as profile popover while a
   save is in flight no longer drops the result. A save that fails, finds the

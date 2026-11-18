@@ -269,9 +269,11 @@ func TestRunError_CancellationOutranksContextWindow(t *testing.T) {
 	}
 }
 
-// The context-window refusal names the palette entry and ends with its advice,
-// not the sentinel's text, while still classifying as the sentinel (#598).
-func TestContextWindowError_NamesPaletteEntryWithoutSentinelText(t *testing.T) {
+// The context-window refusal sends the user to the configuration file, where a
+// configured model's window is set (Golem: Configuration has no control for
+// it), and ends with its advice, not the sentinel's text, while still
+// classifying as the sentinel (#598).
+func TestContextWindowError_NamesConfigFileWithoutSentinelText(t *testing.T) {
 	for _, tc := range []struct {
 		window int
 		size   string
@@ -281,7 +283,7 @@ func TestContextWindowError_NamesPaletteEntryWithoutSentinelText(t *testing.T) {
 	} {
 		err := contextWindowError(tc.window)
 		want := "commit message generation blocked: the Golem model's context window (" + tc.size +
-			") is too small for this staged diff; raise context_window for the Golem model in Golem: Configuration, or stage less"
+			") is too small for this staged diff; set a larger context_window for the Golem model in the configuration file, or stage less"
 		if err.Error() != want {
 			t.Errorf("contextWindowError(%d) = %q, want %q", tc.window, err, want)
 		}

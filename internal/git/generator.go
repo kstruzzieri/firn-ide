@@ -267,14 +267,16 @@ func (e *blockedError) Error() string { return e.msg }
 func (e *blockedError) Unwrap() error { return e.sentinel }
 
 // contextWindowError refuses a prompt the Golem model's context window cannot
-// hold. No request was sent.
+// hold. No request was sent. The advice names the configuration file because
+// Golem: Configuration cannot change the window of a model already in it
+// (WINDOW_IN_FILE in the frontend says the same).
 func contextWindowError(window int) error {
 	size := "no context_window"
 	if window != 0 {
 		size = fmt.Sprintf("context_window %d", window)
 	}
 	return &blockedError{
-		msg:      "commit message generation blocked: the Golem model's context window (" + size + ") is too small for this staged diff; raise context_window for the Golem model in Golem: Configuration, or stage less",
+		msg:      "commit message generation blocked: the Golem model's context window (" + size + ") is too small for this staged diff; set a larger context_window for the Golem model in the configuration file, or stage less",
 		sentinel: ai.ErrContextWindowTooSmall,
 	}
 }
