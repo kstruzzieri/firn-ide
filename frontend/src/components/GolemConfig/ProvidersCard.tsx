@@ -25,10 +25,19 @@ import {
 } from '../../types/golemConfig';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import type { EditorFocusRequest } from './ApplyBar';
-import { Cell, Was } from './Cell';
+import { Cell, HeadRow, Was, type Column } from './Cell';
 import styles from './GolemConfig.module.css';
 import { ProviderEditor } from './ProviderEditor';
 import { StatusText, type StatusTone } from './StatusText';
+
+/** [#318] The header row and every spanning cell's `aria-colspan` read this one list. */
+const COLUMNS: readonly Column[] = [
+  { label: 'Provider' },
+  { label: 'Endpoint' },
+  { label: 'Type' },
+  { label: 'API key' },
+  { label: 'Actions', srOnly: true },
+];
 
 const CLASSIFICATION_LABEL: Record<ProviderProjection['classification'], string> = {
   local: 'Local',
@@ -268,15 +277,7 @@ export function ProvidersCard({
             role="table"
             aria-label="Providers"
           >
-            <div className={styles.headRow} role="row">
-              <span role="columnheader">Provider</span>
-              <span role="columnheader">Endpoint</span>
-              <span role="columnheader">Type</span>
-              <span role="columnheader">API key</span>
-              <span role="columnheader">
-                <span className={styles.srOnly}>Actions</span>
-              </span>
-            </div>
+            <HeadRow columns={COLUMNS} />
             {strips.map(({ provider, applied, editorId }) => {
               // [N2] React identity is the LIST + NAME, never the positional
               // `editorId`: unstaging one staged add shifts every later index, and an
@@ -397,7 +398,7 @@ export function ProvidersCard({
                     >
                       <p
                         role="cell"
-                        aria-colspan={5}
+                        aria-colspan={COLUMNS.length}
                         className={styles.rowDiagnostic}
                         data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
                       >
@@ -414,7 +415,7 @@ export function ProvidersCard({
                   {expanded && (
                     <div role="row" className={styles.detailRow}>
                       {/* [C21] Visual spanning is not accessible spanning: name the span. */}
-                      <div role="cell" aria-colspan={5} className={styles.editorCell}>
+                      <div role="cell" aria-colspan={COLUMNS.length} className={styles.editorCell}>
                         <ProviderEditor
                           id={editorId}
                           provider={applied}

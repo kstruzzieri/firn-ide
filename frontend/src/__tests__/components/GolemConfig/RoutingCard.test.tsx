@@ -16,6 +16,7 @@ import {
   type Change,
   type RouteChange,
 } from '../../../types/golemConfig';
+import { expectSpansMatchHeaders, headerLabels } from '../../helpers/tableHeaders';
 
 const model: ModelProjection = {
   role: 'chat-role',
@@ -1331,6 +1332,18 @@ describe('Defined models — Assign (wave 4d)', () => {
     expect(p.onStage).not.toHaveBeenCalled();
     expect(within(screen.getByTestId('route-row-chat')).getByText('gpt-5')).toBeInTheDocument();
   });
+
+  it('spans the open Assign list across every header column (#318)', async () => {
+    render(<RoutingCard {...props()} />);
+    await userEvent.click(assign());
+    expect(expectSpansMatchHeaders()).toBe(1);
+  });
+
+  it('names each table’s columns, Actions for assistive technology only (#318)', () => {
+    render(<RoutingCard {...props()} />);
+    const route = ['Use case', 'Provider', 'Model', 'Think', 'Status', '(Actions)'];
+    expect(headerLabels()).toEqual([route, route, ['Role', 'Provider', 'Model', '(Actions)']]);
+  });
 });
 
 // #344: a routing row names the role it runs through, so a profile whose role
@@ -1515,4 +1528,29 @@ describe('the role a routing row runs through (#344)', () => {
     });
     expect(roleLine(screen.getByTestId('route-row-chat'))).toBeNull();
   });
+});
+
+it('spans a route diagnostic and an open route editor across every header column (#318)', async () => {
+  render(
+    <RoutingCard
+      routes={[{ useCase: 'chat', role: 'chat-role' }]}
+      models={[model]}
+      providers={[provider]}
+      draft={cleanDraft('0'.repeat(64))}
+      changes={[]}
+      rows={new Map()}
+      roleRows={new Map()}
+      selectorUseCases={new Map()}
+      routeReach={new Map()}
+      reachGroups={[]}
+      diagnostics={[
+        { code: 'duplicate_keys', subjectKind: 'use_case', subjectName: 'chat', blocking: false },
+      ]}
+      editable
+      onStage={() => {}}
+      onUnstagedChange={() => {}}
+    />
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Edit route chat' }));
+  expect(expectSpansMatchHeaders()).toBe(2);
 });

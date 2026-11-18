@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { ProvidersCard } from '../../../components/GolemConfig/ProvidersCard';
 import type { ProviderProjection } from '../../../types/golem';
 import { KeyVault, type Change } from '../../../types/golemConfig';
+import { expectSpansMatchHeaders, headerLabels } from '../../helpers/tableHeaders';
 
 const provider: ProviderProjection = {
   name: 'llama-swap',
@@ -292,4 +293,28 @@ it('keeps a later staged strip mounted when an earlier one is unstaged', async (
   expect(screen.getByRole('group', { name: 'Staged provider beta' })).toBeInTheDocument();
   expect(screen.getByLabelText('Endpoint')).toBe(endpoint);
   expect(endpoint).toHaveValue('http://beta.local/v1-draft');
+});
+
+it('spans a diagnostic and an open editor across every header column (#318)', async () => {
+  render(
+    <ProvidersCard
+      {...cardProps({
+        diagnostics: [
+          {
+            code: 'duplicate_keys',
+            subjectKind: 'provider',
+            subjectName: 'llama-swap',
+            blocking: false,
+          },
+        ],
+      })}
+    />
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Edit provider llama-swap' }));
+  expect(expectSpansMatchHeaders()).toBe(2);
+});
+
+it('names its columns, Actions for assistive technology only (#318)', () => {
+  render(<ProvidersCard {...cardProps()} />);
+  expect(headerLabels()).toEqual([['Provider', 'Endpoint', 'Type', 'API key', '(Actions)']]);
 });

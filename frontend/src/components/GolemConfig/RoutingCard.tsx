@@ -56,12 +56,28 @@ import { listUseCases } from '../../utils/listUseCases';
 import { formatSettingsDiagnostic } from '../../utils/settingsDiagnostics';
 import type { EditorFocusRequest } from './ApplyBar';
 import { AssignList, type AssignOption } from './AssignList';
-import { Cell, Staged, Was } from './Cell';
+import { Cell, HeadRow, Staged, Was, type Column } from './Cell';
 import styles from './GolemConfig.module.css';
 import { RouteEditor } from './RouteEditor';
 import { GOLEM_USE_CASE } from './golemModel';
 import { roleChain, routeRowKey, routeUseCases } from './routingRows';
 import { StatusText, type StatusTone } from './StatusText';
+
+/** [#318] Each table's header row and its spanning cells' `aria-colspan` read one list. */
+const ROUTE_COLUMNS: readonly Column[] = [
+  { label: 'Use case' },
+  { label: 'Provider' },
+  { label: 'Model' },
+  { label: 'Think' },
+  { label: 'Status' },
+  { label: 'Actions', srOnly: true },
+];
+const DEFINED_COLUMNS: readonly Column[] = [
+  { label: 'Role' },
+  { label: 'Provider' },
+  { label: 'Model' },
+  { label: 'Actions', srOnly: true },
+];
 
 /** What a row paints: the staged intent when there is one, else the applied truth. */
 interface RouteView {
@@ -842,7 +858,7 @@ export function RoutingCard({
           <div key={`${diagnostic.code}-${position}`} role="row" className={styles.detailRow}>
             <p
               role="cell"
-              aria-colspan={6}
+              aria-colspan={ROUTE_COLUMNS.length}
               className={styles.rowDiagnostic}
               data-tone={diagnostic.blocking ? 'blocking' : 'caution'}
             >
@@ -853,7 +869,7 @@ export function RoutingCard({
         {expanded && (
           <div role="row" className={styles.detailRow}>
             {/* [C21] Visual spanning is not accessible spanning: name the span. */}
-            <div role="cell" aria-colspan={6} className={styles.editorCell}>
+            <div role="cell" aria-colspan={ROUTE_COLUMNS.length} className={styles.editorCell}>
               <RouteEditor
                 // [#490] Two surfaces edit the agent route: re-seed its editor
                 // when the route's raw staged change moves under it, so it never
@@ -911,16 +927,7 @@ export function RoutingCard({
   /** [#490] One table per group; each row keeps its index among every use case. */
   const table = (labelId: string, useCases: readonly string[]) => (
     <div className={`${styles.table} ${styles.routeTable}`} role="table" aria-labelledby={labelId}>
-      <div className={styles.headRow} role="row">
-        <span role="columnheader">Use case</span>
-        <span role="columnheader">Provider</span>
-        <span role="columnheader">Model</span>
-        <span role="columnheader">Think</span>
-        <span role="columnheader">Status</span>
-        <span role="columnheader">
-          <span className={styles.srOnly}>Actions</span>
-        </span>
-      </div>
+      <HeadRow columns={ROUTE_COLUMNS} />
       {useCases.map((useCase) => renderRoute(useCase, allUseCases.indexOf(useCase)))}
     </div>
   );
@@ -997,14 +1004,7 @@ export function RoutingCard({
               role="table"
               aria-labelledby="golem-config-defined-models"
             >
-              <div className={styles.headRow} role="row">
-                <span role="columnheader">Role</span>
-                <span role="columnheader">Provider</span>
-                <span role="columnheader">Model</span>
-                <span role="columnheader">
-                  <span className={styles.srOnly}>Actions</span>
-                </span>
-              </div>
+              <HeadRow columns={DEFINED_COLUMNS} />
               {unrouted.map((model, index) => {
                 const markers = roleRows.get(model.role);
                 const listId = assignId(index);
@@ -1124,8 +1124,12 @@ export function RoutingCard({
                   <div key={`group:${model.role}`} role="rowgroup" className={styles.editGroup}>
                     {row}
                     <div role="row" className={styles.detailRow}>
-                      {/* [C21] Name the span: four columns in this table. */}
-                      <div role="cell" aria-colspan={4} className={styles.editorCell}>
+                      {/* [C21] Name the span: every column in this table. */}
+                      <div
+                        role="cell"
+                        aria-colspan={DEFINED_COLUMNS.length}
+                        className={styles.editorCell}
+                      >
                         <AssignList
                           id={listId}
                           modelName={model.modelName}
