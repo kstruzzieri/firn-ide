@@ -269,6 +269,28 @@ func TestRunError_CancellationOutranksContextWindow(t *testing.T) {
 	}
 }
 
+// The context-window refusal names the palette entry and ends with its advice,
+// not the sentinel's text, while still classifying as the sentinel (#598).
+func TestContextWindowError_NamesPaletteEntryWithoutSentinelText(t *testing.T) {
+	for _, tc := range []struct {
+		window int
+		size   string
+	}{
+		{0, "no context_window"},
+		{1024, "context_window 1024"},
+	} {
+		err := contextWindowError(tc.window)
+		want := "commit message generation blocked: the Golem model's context window (" + tc.size +
+			") is too small for this staged diff; raise context_window for the Golem model in Golem: Configuration, or stage less"
+		if err.Error() != want {
+			t.Errorf("contextWindowError(%d) = %q, want %q", tc.window, err, want)
+		}
+		if !errors.Is(err, ai.ErrContextWindowTooSmall) {
+			t.Errorf("contextWindowError(%d) = %v, want it to classify as ErrContextWindowTooSmall", tc.window, err)
+		}
+	}
+}
+
 // A failing Golem model fails the generation: nothing falls back to another
 // model, however the configuration chains them for the golem CLI.
 func TestMessageGenerator_Generate_PrimaryFailureDoesNotFallBack(t *testing.T) {
@@ -567,10 +589,12 @@ func TestGenerateDeniesUngrantedRemoteDestination(t *testing.T) {
 	if nerr != nil {
 		t.Fatal(nerr)
 	}
+	// The whole message, so it names the control that exists and carries no
+	// trailing sentinel text (#598).
 	want := "commit message generation blocked: destination remote/" + canonical +
-		" is not consented for agent; use Approve missing destinations in the Golem configuration view"
-	if !strings.HasPrefix(err.Error(), want) {
-		t.Fatalf("error = %q, want it to start %q", err, want)
+		" is not consented for agent; open Golem: Configuration from the command palette and choose Check destinations…"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
 	}
 	if strings.Contains(err.Error(), "sk-test-secret") {
 		t.Fatal("denial message leaked config material")
@@ -640,8 +664,8 @@ func TestDestinationDeniedMessageIsScrubbedAndBounded(t *testing.T) {
 		t.Fatalf("truncation not rune-safe/bounded: got %d runes (want %d), valid=%v", utf8.RuneCountInString(msg), want, utf8.ValidString(msg))
 	}
 
-	wrapped := fmt.Errorf("commit message generation blocked: %s: %w", msg, provider.ErrDestinationDenied)
-	if !errors.Is(wrapped, provider.ErrDestinationDenied) {
-		t.Fatal("sentinel must survive composition")
+	wrapped := &blockedError{msg: "commit message generation blocked: " + msg, sentinel: provider.ErrDestinationDenied}
+	if !errors.Is(wrapped, provider.ErrDestinationDenied) || wrapped.Error() != "commit message generation blocked: "+msg {
+		t.Fatalf("composition = %q, want the sentinel kept and only the message printed", wrapped)
 	}
 }
