@@ -709,6 +709,34 @@ describe('App — surgical watcher reconcile', () => {
     expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/src', '/r');
   });
 
+  // #602: an expanded folder moved away and back while the root is collapsed
+  // returns in the root listing with no listing of its own. Reopening the
+  // root must read it, or it shows open and empty until toggled.
+  it('reads an expanded folder that came back under a collapsed root once the root expands', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+    act(() => {
+      useIDEStore.setState({
+        directoryTree: [],
+        expandedPaths: new Set(['/r/build']),
+        isRootExpanded: false,
+      });
+    });
+    (ReadDirectoryShallow as jest.Mock).mockImplementation(async (path: string) =>
+      path === '/r' ? [unloadedDir('/r/build')] : []
+    );
+    fileChanged('/r/build');
+    await settle();
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r', '/r');
+    expect(ReadDirectoryShallow).not.toHaveBeenCalledWith('/r/build', '/r');
+
+    act(() => useIDEStore.getState().toggleRootExpanded());
+    await settle();
+
+    expect(ReadDirectoryShallow).toHaveBeenCalledWith('/r/build', '/r');
+  });
+
   it('re-reads a hidden folder shown again under a collapsed root once the root expands', async () => {
     await act(async () => {
       render(<App />);

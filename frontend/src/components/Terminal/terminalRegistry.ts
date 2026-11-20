@@ -5,6 +5,7 @@
 
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { useGitStore } from '../../stores/gitStore';
 import { useIDEStore } from '../../stores/ideStore';
 import { WriteTerminal, ResizeTerminal } from '../../wails/bindings';
 import { EventsOn } from '../../wails/runtime';
@@ -120,7 +121,11 @@ export function acquireTerminal(sessionId: string, container: HTMLElement) {
   term.open(container);
   // Register the OSC 133 handler before replaying buffered output, so early
   // shell-integration sequences (prompt/exit markers) are parsed, not printed.
-  const shellIntegration = createShellIntegration(term, SHELL_INTEGRATION_COLORS);
+  // A finished command may have changed only the index or HEAD (git rm
+  // --cached, commit, checkout), which no watched file reports (#602).
+  const shellIntegration = createShellIntegration(term, SHELL_INTEGRATION_COLORS, () =>
+    useGitStore.getState().scheduleRefresh()
+  );
   retainedTerminals.set(sessionId, { term, fitAddon, shellIntegration });
   ensureRetainedTerminalPruning();
   // Size before the replay below, so early output lays out at the real width.

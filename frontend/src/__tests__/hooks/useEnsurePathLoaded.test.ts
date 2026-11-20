@@ -482,3 +482,51 @@ describe('root read ordering (#256)', () => {
     expect(useIDEStore.getState().directoryTree.map((e) => e.path)).toEqual(['/r/a', '/r/b']);
   });
 });
+
+// #602: a folder that leaves the tree keeps its expanded mark. When a fresh
+// listing brings it back, its row shows open, so its listing is read too;
+// before, it stayed empty until collapsed and expanded again.
+describe('expanded folders a listing brings back', () => {
+  const file = (path: string): FileEntry =>
+    ({ name: path.split('/').pop()!, path, isDir: false, size: 0, modTime: '' }) as FileEntry;
+
+  beforeEach(() => {
+    useIDEStore.setState({
+      directoryTree: [],
+      workspaces: [],
+      activeWorkspaceId: 'project',
+      isRootExpanded: true,
+      showHiddenFolders: true,
+    });
+  });
+
+  it('reads an expanded folder that a parent listing returns unloaded', async () => {
+    useIDEStore.setState({ expandedPaths: new Set(['/r/build']) });
+    mockRead.mockImplementation(async (path: string) =>
+      path === '/r' ? [dir('/r/build')] : [file('/r/build/keep.txt')]
+    );
+    await ensurePathLoaded('/r', { force: true });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockRead).toHaveBeenCalledWith('/r/build', '/r');
+    const build = useIDEStore.getState().directoryTree.find((e) => e.path === '/r/build');
+    expect(build?.children?.map((c) => c.path)).toEqual(['/r/build/keep.txt']);
+  });
+
+  it('leaves a collapsed folder unread', async () => {
+    useIDEStore.setState({ expandedPaths: new Set() });
+    mockRead.mockResolvedValue([dir('/r/build')]);
+    await ensurePathLoaded('/r', { force: true });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockRead).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves an expanded folder under a collapsed one unread', async () => {
+    useIDEStore.setState({ expandedPaths: new Set(['/r/a/b']) });
+    mockRead.mockImplementation(async (path: string) =>
+      path === '/r' ? [dir('/r/a')] : [dir('/r/a/b')]
+    );
+    await ensurePathLoaded('/r', { force: true });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockRead).toHaveBeenCalledTimes(1);
+  });
+});

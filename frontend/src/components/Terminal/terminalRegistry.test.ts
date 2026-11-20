@@ -104,3 +104,38 @@ it('focuses a shell whether focus is requested before or after its xterm opens (
   focusTerminal('focus-requested-later');
   expect(input).toHaveFocus();
 });
+
+it('refreshes git status when a command finishes in a terminal (#602)', async () => {
+  jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  const { useGitStore } = await import('../../stores/gitStore');
+  const original = useGitStore.getState().scheduleRefresh;
+  const scheduleRefresh = jest.fn();
+  useGitStore.setState({ scheduleRefresh });
+  try {
+    const { Terminal } = await import('@xterm/xterm');
+    const { acquireTerminal, ensureGlobalOutputListener } = await import('./terminalRegistry');
+    const open = jest.spyOn(Terminal.prototype, 'open');
+    const sessionId = 'git-refresh-on-command';
+    useIDEStore.getState().addTerminalSession({ id: sessionId, title: 'Terminal 1' });
+    ensureGlobalOutputListener();
+    const registration = jest
+      .mocked(EventsOn)
+      .mock.calls.find(([event]) => event === 'terminal:output');
+    if (!registration) throw new Error('terminal:output listener not registered');
+    const output = registration[1] as (evt: { termId: string; data: string }) => void;
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    acquireTerminal(sessionId, container);
+    const term = open.mock.contexts.at(-1) as XTerm;
+    const flush = () => new Promise<void>((resolve) => term.write('', resolve));
+
+    output({ termId: sessionId, data: '\x1b]133;A\x07% \x1b]133;C\x07' });
+    await flush();
+    expect(scheduleRefresh).not.toHaveBeenCalled();
+    output({ termId: sessionId, data: '\x1b]133;D;0\x07\r\n' });
+    await flush();
+    expect(scheduleRefresh).toHaveBeenCalledTimes(1);
+  } finally {
+    useGitStore.setState({ scheduleRefresh: original });
+  }
+});
