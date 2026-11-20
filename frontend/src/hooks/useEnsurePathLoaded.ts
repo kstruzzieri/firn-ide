@@ -141,7 +141,7 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
       if (rootRead && !commitRootRead(rootRead)) return; // a newer root listing already merged
       after.mergeChildren(path, children);
       after.clearDirty(path);
-      loadShownUnloadedChildren(path, isRoot);
+      loadReturningExpandedChildren(path, isRoot);
     })
     .catch(() => {
       const after = useIDEStore.getState();
@@ -217,19 +217,23 @@ export async function reconcileTreeWithDisk(
 }
 
 // A folder that left the tree keeps its expanded mark, so a listing that
-// brings it back shows its row open over no listing (#602): read every such
-// child the explorer shows. Each read does the same for its own children.
+// brings it back shows its row open over no listing (#602). Read each such
+// child the explorer shows now; mark the rest dirty, and App reads them when
+// they come into view (a collapsed root or ancestor reopening). Each read does
+// the same for its own children.
 // ponytail: on a cold restore with no snapshot, reconcileTreeWithDisk's forced
 // read of the same folder then reads it once more; dedupe there if it shows.
-function loadShownUnloadedChildren(path: string, isRoot: boolean): void {
+function loadReturningExpandedChildren(path: string, isRoot: boolean): void {
   const state = useIDEStore.getState();
   const listing = isRoot
     ? state.directoryTree
     : findEntryByPath(state.directoryTree, path)?.children;
   for (const child of listing ?? []) {
-    if (child.isDir && child.children === undefined && isDirListingShown(child.path, state)) {
-      void ensurePathLoaded(child.path);
+    if (!child.isDir || child.children !== undefined || !state.expandedPaths.has(child.path)) {
+      continue;
     }
+    if (isDirListingShown(child.path, state)) void ensurePathLoaded(child.path);
+    else state.markDirty(child.path);
   }
 }
 
