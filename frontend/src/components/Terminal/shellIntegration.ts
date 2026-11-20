@@ -45,11 +45,16 @@ interface PromptBlock {
   decorations: Decoration[];
 }
 
+// onCommandFinished runs once per command that finished (C, then D), whether
+// or not its block could be decorated (#602).
 export function createShellIntegration(
   term: IntegrationTerminal,
-  colors: ShellIntegrationColors
+  colors: ShellIntegrationColors,
+  onCommandFinished?: () => void
 ): ShellIntegration {
   let current: PromptBlock | null = null;
+  // Tracked apart from the blocks, so a failed marker cannot hide a command.
+  let commandRunning = false;
   let decoratedCount = 0;
   // Live command blocks. Pruned as xterm disposes their markers (lines scrolling
   // out of scrollback), so this stays bounded over a long-lived terminal.
@@ -69,12 +74,22 @@ export function createShellIntegration(
     // An exception escaping an OSC handler kills xterm's write loop: the
     // terminal permanently stops rendering output (it looks wedged, while the
     // shell stays alive). Decorations are cosmetic — contain any failure here.
+    const kind = data.split(';', 1)[0];
+    if (kind === 'C') commandRunning = true;
     try {
       handle(data);
     } catch (err) {
       if (!warned) {
         warned = true;
         console.warn('Shell integration marker failed; continuing without decorations.', err);
+      }
+    }
+    if (kind === 'D' && commandRunning) {
+      commandRunning = false;
+      try {
+        onCommandFinished?.();
+      } catch (err) {
+        console.warn('Shell integration command-finished callback failed.', err);
       }
     }
     return true; // handled — xterm will not print the sequence

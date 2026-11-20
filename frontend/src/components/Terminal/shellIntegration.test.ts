@@ -259,6 +259,69 @@ describe('createShellIntegration', () => {
     }
   });
 
+  // #602: a command that changes only the index or HEAD (git rm --cached,
+  // git commit) touches no watched file, so the command-finished mark is the
+  // only signal that git status may have moved.
+  it('reports each finished command, after its decoration', () => {
+    const f = makeFakeTerm();
+    const finished = jest.fn();
+    createShellIntegration(f.term, COLORS, finished);
+    f.fire('A');
+    f.fire('C');
+    expect(finished).not.toHaveBeenCalled();
+    f.fire('D;0');
+    expect(finished).toHaveBeenCalledTimes(1);
+    expect(f.decorations).toHaveLength(1);
+    f.fire('A');
+    f.fire('C');
+    f.fire('D;1');
+    expect(finished).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not report a prompt that ran no command', () => {
+    const f = makeFakeTerm();
+    const finished = jest.fn();
+    createShellIntegration(f.term, COLORS, finished);
+    f.fire('D;0');
+    f.fire('A');
+    f.fire('D;0');
+    expect(finished).not.toHaveBeenCalled();
+  });
+
+  it('reports a finished command even when its decoration fails', () => {
+    const f = makeFakeTerm();
+    f.term.registerDecoration = () => {
+      throw new Error('You must set the allowProposedApi option to true to use proposed API');
+    };
+    const finished = jest.fn();
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      createShellIntegration(f.term, COLORS, finished);
+      f.fire('A');
+      f.fire('C');
+      f.fire('D;0');
+      expect(finished).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('never propagates a failing command-finished callback into the OSC parser', () => {
+    const f = makeFakeTerm();
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      createShellIntegration(f.term, COLORS, () => {
+        throw new Error('refresh failed');
+      });
+      f.fire('A');
+      f.fire('C');
+      expect(f.fire('D;0')).toBe(true);
+      expect(f.decorations).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('dispose() tears down handler, markers and decorations', () => {
     const f = makeFakeTerm();
     const integ = createShellIntegration(f.term, COLORS);
