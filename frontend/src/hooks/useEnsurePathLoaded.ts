@@ -3,6 +3,7 @@ import { ReadDirectoryShallow } from '../wails/bindings';
 import { useIDEStore } from '../stores/ideStore';
 import type { WorkspaceInfo, FileEntry } from '../stores/ideStore';
 import { getFileNameFromPath } from '../utils/lspUri';
+import { isDirListingShown } from '../utils/treeVisibility';
 import { findEntryByPath } from '../utils/findEntryByPath';
 import { isWindowsPathSyntax, treeLoadLevels, treePathKey } from '../utils/workspaceRegions';
 
@@ -140,6 +141,7 @@ export function ensurePathLoaded(path: string, opts: EnsureOpts = {}): Promise<v
       if (rootRead && !commitRootRead(rootRead)) return; // a newer root listing already merged
       after.mergeChildren(path, children);
       after.clearDirty(path);
+      loadShownUnloadedChildren(path, isRoot);
     })
     .catch(() => {
       const after = useIDEStore.getState();
@@ -211,6 +213,23 @@ export async function reconcileTreeWithDisk(
     // collapsed root arrived mid-walk): nothing beneath it can be checked
     // against a fresh parent, so stop rather than read against stale ones.
     if (useIDEStore.getState().dirtyPaths.has(root)) return;
+  }
+}
+
+// A folder that left the tree keeps its expanded mark, so a listing that
+// brings it back shows its row open over no listing (#602): read every such
+// child the explorer shows. Each read does the same for its own children.
+// ponytail: on a cold restore with no snapshot, reconcileTreeWithDisk's forced
+// read of the same folder then reads it once more; dedupe there if it shows.
+function loadShownUnloadedChildren(path: string, isRoot: boolean): void {
+  const state = useIDEStore.getState();
+  const listing = isRoot
+    ? state.directoryTree
+    : findEntryByPath(state.directoryTree, path)?.children;
+  for (const child of listing ?? []) {
+    if (child.isDir && child.children === undefined && isDirListingShown(child.path, state)) {
+      void ensurePathLoaded(child.path);
+    }
   }
 }
 
