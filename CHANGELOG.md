@@ -94,10 +94,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The file tree and search show files git tracks even when a `.gitignore`
   pattern matches them, as git does: a committed file stays visible, and an
   ignored folder that holds committed files shows just those files. The tree
-  catches up when a file is committed or removed from git. A folder outside a
-  git repository is unchanged. (#536)
+  catches up when a file is committed or removed from git, including by a
+  command run in Firn's terminal. A folder outside a git repository is
+  unchanged. (#536, #602)
 
 ### Fixed
+
+- The file tree and the Git panel now catch up when a command run in Firn's
+  terminal changes only what git tracks, such as `git rm --cached`, a commit or
+  a branch switch, in zsh and bash. Before, they waited until a file changed
+  or the Firn window lost and regained focus. (#602)
+
+- A folder that disappeared from the file tree while expanded, and then came
+  back, showed as expanded but empty until it was collapsed and expanded again.
+  It now shows its contents. (#602)
 
 - When a commit message cannot be generated because the Golem model's remote
   destination is not approved, the Git panel now says to choose Check
