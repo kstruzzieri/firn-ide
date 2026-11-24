@@ -935,6 +935,8 @@ func (a *App) OpenFolderDialog() (string, error) {
 		return "", errors.New("folder dialog unavailable: application host not initialised")
 	}
 	return a.v3app.Dialog.OpenFile().
+		// Keep the picker with the project window when Firn regains focus.
+		AttachToWindow(a.mainWindow).
 		// macOS ignores open-panel titles; the call still applies elsewhere.
 		SetTitle("Open Folder").
 		CanChooseDirectories(true).
