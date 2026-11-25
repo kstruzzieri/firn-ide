@@ -61,13 +61,51 @@ func stagedModel(t *testing.T, svc *Service, repo string) *GolemModel {
 	if err != nil {
 		t.Fatalf("StagedScope: %v", err)
 	}
+	// Released at once: an unreleased scope is a generation in flight, which
+	// holds the idle barrier (#610). The model's target stays readable.
 	if scope.Release != nil {
-		t.Cleanup(scope.Release)
+		scope.Release()
 	}
 	if scope.Model == nil {
 		t.Fatal("StagedScope returned no model")
 	}
 	return scope.Model
+}
+
+// #610: a commit generation holds the idle barrier from StagedScope until its
+// Release, as a chat run does, so Refresh shows the busy notice meanwhile and
+// the snapshot it sends to is not swapped under it. Release is idempotent.
+func TestStagedScopeHoldsTheIdleBarrierUntilRelease(t *testing.T) {
+	svc, _, repo := newGolemModelService(t, writeAgentConfigBody(t, golemModelConfig("http://127.0.0.1:1", "m", 32768)))
+	scope, err := svc.StagedScope(repo)
+	if err != nil {
+		t.Fatalf("StagedScope: %v", err)
+	}
+
+	if res, err := svc.ReloadSettings(); err != nil || !res.Busy {
+		t.Fatalf("ReloadSettings during generation = %+v, %v, want busy", res, err)
+	}
+
+	scope.Release()
+	scope.Release()
+	if res, err := svc.ReloadSettings(); err != nil || res.Busy {
+		t.Fatalf("ReloadSettings after Release = %+v, %v, want idle", res, err)
+	}
+}
+
+// #610: a StagedScope that fails holds nothing.
+func TestStagedScopeFailureHoldsNoBarrier(t *testing.T) {
+	svc, _, repo := newGolemModelService(t, writeAgentConfigBody(t, `{
+  "providers": {"hosted": {"base_url": "http://127.0.0.1:1", "api_format": "openai-compat"}},
+  "models": {"m": {"name": "m", "provider": "hosted", "type": "dense", "capabilities": ["chat", "stream"]}},
+  "defaults": {"agent": "m"}
+}`))
+	if _, err := svc.StagedScope(repo); err == nil {
+		t.Fatal("StagedScope succeeded, want chat's refusal")
+	}
+	if res, err := svc.ReloadSettings(); err != nil || res.Busy {
+		t.Fatalf("ReloadSettings after a failed StagedScope = %+v, %v, want idle", res, err)
+	}
 }
 
 // An edit made outside Firn reaches neither chat nor commit messages until
