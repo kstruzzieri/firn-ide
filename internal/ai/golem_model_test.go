@@ -35,10 +35,16 @@ func golemModelConfig(endpoint, modelName string, window int) string {
 // bound to a fresh repository, with its repository identity.
 func newGolemModelService(t *testing.T, path string) (*Service, RepositoryIdentity, string) {
 	t.Helper()
+	return newGolemModelServiceEmitting(t, path, (&emitRecorder{}).emit)
+}
+
+// newGolemModelServiceEmitting is newGolemModelService with its own emitter.
+func newGolemModelServiceEmitting(t *testing.T, path string, emit func(string, any)) (*Service, RepositoryIdentity, string) {
+	t.Helper()
 	sandboxAgentConfigEnv(t)
 	t.Setenv("GO_LLM_CONFIG", path)
 	svc := NewService(context.Background(), filesystem.NewOS(),
-		filepath.Join(t.TempDir(), "consent", "grants.json"), (&emitRecorder{}).emit, "")
+		filepath.Join(t.TempDir(), "consent", "grants.json"), emit, "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -61,13 +67,106 @@ func stagedModel(t *testing.T, svc *Service, repo string) *GolemModel {
 	if err != nil {
 		t.Fatalf("StagedScope: %v", err)
 	}
+	// Released at once: an unreleased scope is a generation in flight, which
+	// holds the idle barrier (#610). The model's target stays readable.
 	if scope.Release != nil {
-		t.Cleanup(scope.Release)
+		scope.Release()
 	}
 	if scope.Model == nil {
 		t.Fatal("StagedScope returned no model")
 	}
 	return scope.Model
+}
+
+// #610: a commit generation holds the idle barrier from StagedScope until its
+// Release, as a chat run does, so Refresh shows the busy notice meanwhile and
+// the snapshot it sends to is not swapped under it. Release is idempotent.
+func TestStagedScopeHoldsTheIdleBarrierUntilRelease(t *testing.T) {
+	svc, _, repo := newGolemModelService(t, writeAgentConfigBody(t, golemModelConfig("http://127.0.0.1:1", "m", 32768)))
+	scope, err := svc.StagedScope(repo)
+	if err != nil {
+		t.Fatalf("StagedScope: %v", err)
+	}
+
+	if res, err := svc.ReloadSettings(); err != nil || !res.Busy {
+		t.Fatalf("ReloadSettings during generation = %+v, %v, want busy", res, err)
+	}
+
+	// A second generation keeps it busy after the first releases, even
+	// twice: a repeated Release must not give back the other's count.
+	second, err := svc.StagedScope(repo)
+	if err != nil {
+		t.Fatalf("second StagedScope: %v", err)
+	}
+	scope.Release()
+	scope.Release()
+	if res, err := svc.ReloadSettings(); err != nil || !res.Busy {
+		t.Fatalf("ReloadSettings with one generation left = %+v, %v, want busy", res, err)
+	}
+
+	second.Release()
+	if res, err := svc.ReloadSettings(); err != nil || res.Busy {
+		t.Fatalf("ReloadSettings after both Release = %+v, %v, want idle", res, err)
+	}
+}
+
+// #610: a panic in the status emit StagedScope makes after a policy warning
+// changes still gives back the generation's count.
+func TestStagedScopeEmitPanicHoldsNoBarrier(t *testing.T) {
+	const injected = "injected emit panic"
+	var svc *Service
+	armed := false
+	countAtEmit := int64(-1)
+	emit := func(name string, _ any) {
+		if armed && name == EventGolemStatusChanged {
+			countAtEmit = svc.generations.Load()
+			panic(injected)
+		}
+	}
+	svc, _, repo := newGolemModelServiceEmitting(t, writeAgentConfigBody(t, golemModelConfig("http://127.0.0.1:1", "m", 32768)), emit)
+	writeFile(t, filepath.Join(repo, "ai-kit.yaml"), "sensitive_paths: [\n")
+	armed = true
+	func() {
+		defer func() {
+			if got := recover(); got != injected {
+				t.Fatalf("recover() = %v, want the injected emit panic", got)
+			}
+		}()
+		_, _ = svc.StagedScope(repo)
+	}()
+	armed = false
+
+	// The emit ran after the generation was counted, so the panic had a
+	// count to give back.
+	if countAtEmit != 1 {
+		t.Fatalf("generations at the emit = %d, want 1", countAtEmit)
+	}
+	if got := svc.generations.Load(); got != 0 {
+		t.Fatalf("generations after the panic = %d, want 0", got)
+	}
+	if res, err := svc.ReloadSettings(); err != nil || res.Busy {
+		t.Fatalf("ReloadSettings after the panic = %+v, %v, want idle", res, err)
+	}
+}
+
+// #610: a StagedScope that fails holds nothing.
+func TestStagedScopeFailureHoldsNoBarrier(t *testing.T) {
+	svc, _, repo := newGolemModelService(t, writeAgentConfigBody(t, `{
+  "providers": {"hosted": {"base_url": "http://127.0.0.1:1", "api_format": "openai-compat"}},
+  "models": {"m": {"name": "m", "provider": "hosted", "type": "dense", "capabilities": ["chat", "stream"]}},
+  "defaults": {"agent": "m"}
+}`))
+	if _, err := svc.StagedScope(repo); err == nil {
+		t.Fatal("StagedScope succeeded, want chat's refusal")
+	}
+	// Exactly zero: a refusal before the count must not give one back either,
+	// or the next generation would read as idle.
+	if got := svc.generations.Load(); got != 0 {
+		t.Fatalf("generations after a refused StagedScope = %d, want 0", got)
+	}
+	if res, err := svc.ReloadSettings(); err != nil || res.Busy {
+		t.Fatalf("ReloadSettings after a failed StagedScope = %+v, %v, want idle", res, err)
+	}
 }
 
 // An edit made outside Firn reaches neither chat nor commit messages until

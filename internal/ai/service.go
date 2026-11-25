@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"firn/internal/filesystem"
@@ -160,6 +161,10 @@ type Service struct {
 	degraded      error                          // consent degradation cause
 
 	bindingGate sync.RWMutex
+	// generations counts commit generations holding a StagedScope (#610). It
+	// rises under bindingGate's read side, so a writer that reads zero knows
+	// none can start until it releases; it falls in the scope's Release.
+	generations atomic.Int64
 	// challengeMu guards pendingApplies exclusively. It is a LEAF: Call 1
 	// installs while holding bindingGate, so the only nesting is
 	// bindingGate -> challengeMu, and CancelSettingsApply takes it ALONE
@@ -355,7 +360,9 @@ type StagedScope struct {
 	Protected func(path string) bool
 	// Model is the Golem model generation sends to (#491).
 	Model *GolemModel
-	// Release drops the model's idle connections once generation is done.
+	// Release drops the model's idle connections once generation is done and
+	// gives back the idle barrier the generation holds until then (#610).
+	// Calling it again does nothing.
 	Release func()
 }
 
@@ -381,6 +388,19 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 		return StagedScope{}, err
 	}
 	guard, boundRoot, target, loadedSource, warningsChanged, err := s.stagedPolicy(configPath)
+	// A successful stagedPolicy counted this generation. Every exit before the
+	// scope is issued, a panic in the status emit included, gives the count
+	// back, so nothing can leave Refresh and Apply refused as busy (#610).
+	var released sync.Once
+	leave := func() { released.Do(func() { s.generations.Add(-1) }) }
+	issued := false
+	if err == nil {
+		defer func() {
+			if !issued {
+				leave()
+			}
+		}()
+	}
 	if warningsChanged {
 		s.emit(EventGolemStatusChanged, nil)
 	}
@@ -434,6 +454,7 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 	protectedOutside := func(rel string) bool {
 		return floorDenies(rel) || isConfigSource(filepath.Join(top, filepath.FromSlash(rel)))
 	}
+	issued = true // the scope's Release gives the count back from here
 	return StagedScope{
 		// Outside the bound root every path is denied; one the rules protect
 		// there is denied as theirs, the rest only for lying outside.
@@ -453,8 +474,11 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 			}
 			return protectedOutside(rel)
 		},
-		Model:   &GolemModel{target: *target, orchestrator: orchestrator, consent: s.consent},
-		Release: transport.CloseIdleConnections,
+		Model: &GolemModel{target: *target, orchestrator: orchestrator, consent: s.consent},
+		Release: func() {
+			transport.CloseIdleConnections()
+			leave()
+		},
 	}, nil
 }
 
@@ -538,6 +562,9 @@ func (s *Service) stagedPolicy(configPath string) (guard agenttools.ScopeGuard, 
 	if target, _, err = s.resolveTargetLocked(b.policy); err != nil {
 		return nil, "", nil, "", warningsChanged, err
 	}
+	// The generation holds the idle barrier from here; StagedScope's Release,
+	// or its own failure, gives it back (#610).
+	s.generations.Add(1)
 	return b.policy.Guard(""), b.repoRoot, target, loadedSource, warningsChanged, nil
 }
 
@@ -1527,9 +1554,13 @@ func (s *Service) ReloadSettings() (SettingsReloadResult, error) {
 // conversationsBusy reports whether the idle barrier must refuse: after
 // expiring stale challenges, every conversation has to be exactly idle —
 // running AND canceling both count as busy, and so does an unexpired pending
-// consent challenge. Caller holds the bindingGate WRITER, which is what makes
+// consent challenge. So does a commit generation still holding its
+// StagedScope (#610). Caller holds the bindingGate WRITER, which is what makes
 // the answer stable for the operation that acts on it.
 func (s *Service) conversationsBusy() bool {
+	if s.generations.Load() > 0 {
+		return true
+	}
 	for _, conv := range s.conversationsSnapshot() {
 		conv.mu.Lock()
 		s.dropExpiredChallengeLocked(conv)
