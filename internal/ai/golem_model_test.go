@@ -35,10 +35,16 @@ func golemModelConfig(endpoint, modelName string, window int) string {
 // bound to a fresh repository, with its repository identity.
 func newGolemModelService(t *testing.T, path string) (*Service, RepositoryIdentity, string) {
 	t.Helper()
+	return newGolemModelServiceEmitting(t, path, (&emitRecorder{}).emit)
+}
+
+// newGolemModelServiceEmitting is newGolemModelService with its own emitter.
+func newGolemModelServiceEmitting(t *testing.T, path string, emit func(string, any)) (*Service, RepositoryIdentity, string) {
+	t.Helper()
 	sandboxAgentConfigEnv(t)
 	t.Setenv("GO_LLM_CONFIG", path)
 	svc := NewService(context.Background(), filesystem.NewOS(),
-		filepath.Join(t.TempDir(), "consent", "grants.json"), (&emitRecorder{}).emit, "")
+		filepath.Join(t.TempDir(), "consent", "grants.json"), emit, "")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -86,10 +92,48 @@ func TestStagedScopeHoldsTheIdleBarrierUntilRelease(t *testing.T) {
 		t.Fatalf("ReloadSettings during generation = %+v, %v, want busy", res, err)
 	}
 
+	// A second generation keeps it busy after the first releases, even
+	// twice: a repeated Release must not give back the other's count.
+	second, err := svc.StagedScope(repo)
+	if err != nil {
+		t.Fatalf("second StagedScope: %v", err)
+	}
 	scope.Release()
 	scope.Release()
+	if res, err := svc.ReloadSettings(); err != nil || !res.Busy {
+		t.Fatalf("ReloadSettings with one generation left = %+v, %v, want busy", res, err)
+	}
+
+	second.Release()
 	if res, err := svc.ReloadSettings(); err != nil || res.Busy {
-		t.Fatalf("ReloadSettings after Release = %+v, %v, want idle", res, err)
+		t.Fatalf("ReloadSettings after both Release = %+v, %v, want idle", res, err)
+	}
+}
+
+// #610: a panic in the status emit StagedScope makes after a policy warning
+// changes still gives back the generation's count.
+func TestStagedScopeEmitPanicHoldsNoBarrier(t *testing.T) {
+	armed := false
+	emit := func(name string, _ any) {
+		if armed && name == EventGolemStatusChanged {
+			panic("emit")
+		}
+	}
+	svc, _, repo := newGolemModelServiceEmitting(t, writeAgentConfigBody(t, golemModelConfig("http://127.0.0.1:1", "m", 32768)), emit)
+	writeFile(t, filepath.Join(repo, "ai-kit.yaml"), "sensitive_paths: [\n")
+	armed = true
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("StagedScope did not reach the panicking emit")
+			}
+		}()
+		_, _ = svc.StagedScope(repo)
+	}()
+	armed = false
+
+	if res, err := svc.ReloadSettings(); err != nil || res.Busy {
+		t.Fatalf("ReloadSettings after the panic = %+v, %v, want idle", res, err)
 	}
 }
 

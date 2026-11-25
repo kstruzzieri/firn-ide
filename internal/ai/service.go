@@ -388,23 +388,25 @@ func (s *Service) StagedScope(gitRoot string) (StagedScope, error) {
 		return StagedScope{}, err
 	}
 	guard, boundRoot, target, loadedSource, warningsChanged, err := s.stagedPolicy(configPath)
+	// A successful stagedPolicy counted this generation. Every exit before the
+	// scope is issued, a panic in the status emit included, gives the count
+	// back, so nothing can leave Refresh and Apply refused as busy (#610).
+	var released sync.Once
+	leave := func() { released.Do(func() { s.generations.Add(-1) }) }
+	issued := false
+	if err == nil {
+		defer func() {
+			if !issued {
+				leave()
+			}
+		}()
+	}
 	if warningsChanged {
 		s.emit(EventGolemStatusChanged, nil)
 	}
 	if err != nil {
 		return StagedScope{}, err
 	}
-	// stagedPolicy counted this generation. Every return before the scope is
-	// issued gives the count back, so no error path can leave Refresh and
-	// Apply refused as busy (#610).
-	var released sync.Once
-	leave := func() { released.Do(func() { s.generations.Add(-1) }) }
-	issued := false
-	defer func() {
-		if !issued {
-			leave()
-		}
-	}()
 	backend, transport, err := buildProvider(*target, s.userAgent)
 	if err != nil {
 		return StagedScope{}, err
