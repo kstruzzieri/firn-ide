@@ -113,10 +113,14 @@ func TestStagedScopeHoldsTheIdleBarrierUntilRelease(t *testing.T) {
 // #610: a panic in the status emit StagedScope makes after a policy warning
 // changes still gives back the generation's count.
 func TestStagedScopeEmitPanicHoldsNoBarrier(t *testing.T) {
+	const injected = "injected emit panic"
+	var svc *Service
 	armed := false
+	countAtEmit := int64(-1)
 	emit := func(name string, _ any) {
 		if armed && name == EventGolemStatusChanged {
-			panic("emit")
+			countAtEmit = svc.generations.Load()
+			panic(injected)
 		}
 	}
 	svc, _, repo := newGolemModelServiceEmitting(t, writeAgentConfigBody(t, golemModelConfig("http://127.0.0.1:1", "m", 32768)), emit)
@@ -124,14 +128,22 @@ func TestStagedScopeEmitPanicHoldsNoBarrier(t *testing.T) {
 	armed = true
 	func() {
 		defer func() {
-			if recover() == nil {
-				t.Fatal("StagedScope did not reach the panicking emit")
+			if got := recover(); got != injected {
+				t.Fatalf("recover() = %v, want the injected emit panic", got)
 			}
 		}()
 		_, _ = svc.StagedScope(repo)
 	}()
 	armed = false
 
+	// The emit ran after the generation was counted, so the panic had a
+	// count to give back.
+	if countAtEmit != 1 {
+		t.Fatalf("generations at the emit = %d, want 1", countAtEmit)
+	}
+	if got := svc.generations.Load(); got != 0 {
+		t.Fatalf("generations after the panic = %d, want 0", got)
+	}
 	if res, err := svc.ReloadSettings(); err != nil || res.Busy {
 		t.Fatalf("ReloadSettings after the panic = %+v, %v, want idle", res, err)
 	}
@@ -146,6 +158,11 @@ func TestStagedScopeFailureHoldsNoBarrier(t *testing.T) {
 }`))
 	if _, err := svc.StagedScope(repo); err == nil {
 		t.Fatal("StagedScope succeeded, want chat's refusal")
+	}
+	// Exactly zero: a refusal before the count must not give one back either,
+	// or the next generation would read as idle.
+	if got := svc.generations.Load(); got != 0 {
+		t.Fatalf("generations after a refused StagedScope = %d, want 0", got)
 	}
 	if res, err := svc.ReloadSettings(); err != nil || res.Busy {
 		t.Fatalf("ReloadSettings after a failed StagedScope = %+v, %v, want idle", res, err)
