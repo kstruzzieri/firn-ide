@@ -320,7 +320,8 @@ to skip and keeps focus on buttons while they work.
   until the change is staged again through a temporary edit and a second Done,
   unstaged, or the draft is discarded. A staged route unassignment marked
   Needs review after its route was removed outside Firn has neither Done nor
-  Unassign, so only discarding the draft lets Apply through (#398).
+  Unassign; to leave the route unassigned, discard the draft and re-stage any
+  other changes you still want to apply (#398).
 - Firn's own git commands let git discover a bare repository on its own, so git
   run in a folder that is, or sits inside, a crafted bare repository can start a
   program that repository's configuration names (#605).
