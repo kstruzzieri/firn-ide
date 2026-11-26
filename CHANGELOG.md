@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [0.16.0] - Pending
+
+Golem Configuration opens on a Golem model card that changes the model running
+Golem chat and commit messages in one step, and the Add provider form can fill
+in a provider from a preset. Commit messages now go only to that model, and
+chat answers and commit messages say which model wrote them. Apply checks only
+Golem's model and the routes a change touches, asks Apply anyway less often,
+and the Declare form can set a model's context window. The file tree and search
+show dot-folders such as `.github`, with a button to hide them, and files git
+tracks even when a `.gitignore` pattern matches them. Firn no longer overwrites
+a run-profiles file that changed on disk, a `models.json` in the folder Firn
+was started from can no longer read environment variables, and on macOS and
+Linux a backslash in a file name is no longer read as a folder separator.
+Terminal shells get `TERM=xterm-256color` and save their history when closed,
+open files reload when git replaces them, and VoiceOver speaks messages it used
+to skip and keeps focus on buttons while they work.
+
+### Golem
 
 - Golem chat and generated commit messages now say which model they came from.
   A chat answer ends with one quiet line naming the model and provider, such
@@ -18,38 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the request to. A generated commit message shows a line such as "Written by
   qwen3-coder via ollama" under it. Neither line shows the endpoint, and
   screen readers read them in place without announcing them. (#492)
-
-- The Add provider form in Golem Configuration starts with a Preset field.
-  Picking Command Code, OpenCode Go, OpenAI, Anthropic, llama.cpp, llama-swap,
-  Ollama or LM Studio fills the provider name, API format and endpoint, marks
-  each filled field "from preset" until you edit it, and says whether the
-  provider needs a key, where it issues one, and what its model list shows.
-  Picking a preset sends no request, and the name and key stay yours to edit.
-  The Anthropic preset uses Anthropic's OpenAI compatibility layer: it needs a
-  key scoped to a workspace, and has no prompt caching or thinking output.
-  Gemini is listed but cannot be picked until Golem accepts its endpoint, and
-  OpenRouter is listed but cannot be picked until it passes a live check with
-  Golem; each says why in the list. (#322)
-
-- Golem Configuration opens on a Golem model card, which names the model that
-  runs Golem chat and commit messages and where it runs. Its Change button
-  lists the models already in the configuration file, says which can run Golem
-  and why the others cannot, and applies a pick in one step. Every other route
-  moves into a folded Shared configuration section that keeps the routing table
-  and route editor. A typed model name the list does not offer points to
-  Shared configuration, whose button opens the agent route editor with that
-  name in its filter. (#490)
-
-- The Declare form in Golem Configuration has an optional Context window field;
-  left blank, the model has no window. Wherever a model has none, the page says
-  "Context window not set. Golem chat on this model uses an 8,192-token input
-  budget." A window that differs from one the same model already has is refused
-  in the form, which names the setting that holds the other size. A model
-  already in the configuration file still needs a hand edit to set its window,
-  and the page says so. (#506)
-
-### Changed
-
 - Commit messages come only from the Golem model, the model Golem chat
   answers with, read from the configuration Golem chat has loaded. When that
   model fails, generation fails with its error instead of trying the model's
@@ -68,10 +53,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session header only to opencode, as chat does. The golem command-line tool
   keeps its fallbacks. (#491, #610)
 
+### Golem Configuration
+
+- The Add provider form in Golem Configuration starts with a Preset field.
+  Picking Command Code, OpenCode Go, OpenAI, Anthropic, llama.cpp, llama-swap,
+  Ollama or LM Studio fills the provider name, API format and endpoint, marks
+  each filled field "from preset" until you edit it, and says whether the
+  provider needs a key, where it issues one, and what its model list shows.
+  Picking a preset sends no request, and the name and key stay yours to edit.
+  The Anthropic preset uses Anthropic's OpenAI compatibility layer: it needs a
+  key scoped to a workspace, and has no prompt caching or thinking output.
+  Gemini is listed but cannot be picked until Golem accepts its endpoint, and
+  OpenRouter is listed but cannot be picked until it passes a live check with
+  Golem; each says why in the list. (#322)
+- Golem Configuration opens on a Golem model card, which names the model that
+  runs Golem chat and commit messages and where it runs. Its Change button
+  lists the models already in the configuration file, says which can run Golem
+  and why the others cannot, and applies a pick in one step. Every other route
+  moves into a folded Shared configuration section that keeps the routing table
+  and route editor. A typed model name the list does not offer points to
+  Shared configuration, whose button opens the agent route editor with that
+  name in its filter. (#490)
+- The Declare form in Golem Configuration has an optional Context window field;
+  left blank, the model has no window. Wherever a model has none, the page says
+  "Context window not set. Golem chat on this model uses an 8,192-token input
+  budget." A window that differs from one the same model already has is refused
+  in the form, which names the setting that holds the other size. A model
+  already in the configuration file still needs a hand edit to set its window,
+  and the page says so. (#506)
 - The API key field in Golem Configuration says a key is saved as plain text in
   the configuration file. When that file is a `models.json` in the working
   directory, it also warns that a commit can include the key. (#322)
-
 - Apply in Golem Configuration checks Golem's own model and only the routes a
   change alters. A route the change leaves alone no longer blocks it, even when
   that route already falls short of its use case's requirements; the route says
@@ -79,13 +91,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Apply would accept. The `analysis` use case now has the same requirements as
   `chat`, so Firn checks a model for it instead of asking you to accept it.
   (#493)
-
 - Golem Configuration asks you to mark Apply anyway only when a change can
   narrow a use case Firn has no requirements on record for: by binding it to a
   model, moving it to another model, or taking a capability or Think setting
   from it. A change that can only add, such as an extra capability, no longer
   asks. The notice says what the change takes from each route before it says
   why it asks. (#350, #337)
+- In the Golem configuration view, closing the Save as profile popover while a
+  save is in flight no longer drops the result. A save that fails, finds the
+  name already taken, or cannot be confirmed brings the popover back with its
+  message, without moving keyboard focus, and posts it to screen readers. A
+  save that plainly succeeds stays closed. The overwrite step's Back is
+  unavailable while its save is in flight; Escape still closes it. (#396)
+- A remote destination approval now says what it covers. Approving a
+  destination, in Golem Configuration or with Allow & send in the chat,
+  approves every model at that provider endpoint, but the row named one model
+  as if it approved only that one. Each row now says it covers every model at
+  the endpoint, not just the one it names; in Golem Configuration that line
+  replaces "Reached by agent", and the prompt says only the Golem model's
+  destination is checked, so a destination that only other use cases use is
+  not part of the approval. (#355)
+- Golem Configuration's EDITING tag no longer splits across two lines in a
+  narrow column; it moves to the next line whole. (#545)
+
+### Workspace
 
 - The file tree and search show folders whose names start with a dot, such as
   `.github`, except `.git`, `.hg` and `.svn`. The Show hidden folders button at
@@ -93,24 +122,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   search follows it, and Firn remembers the choice. A folder that changed while
   it was out of view, under a collapsed folder or in a Workspace View, no
   longer shows its old contents when it comes back into view. (#450)
-
 - The file tree and search show files git tracks even when a `.gitignore`
   pattern matches them, as git does: a committed file stays visible, and an
   ignored folder that holds committed files shows just those files. The tree
   catches up when a file is committed or removed from git, including by a
   command run in Firn's terminal. A folder outside a git repository is
   unchanged. (#536, #602)
-
-### Fixed
-
 - The file tree and the Git panel now catch up when a command run in Firn's
   terminal changes only what git tracks, such as `git rm --cached`, a commit or
   a branch switch, in zsh and bash. Before, they waited until a file changed
   or the Firn window lost and regained focus. (#602)
-
 - A folder that disappeared from the file tree while expanded, and then came
   back, showed as expanded but empty until it was collapsed and expanded again.
   It now shows its contents. (#602)
+- On macOS and Linux, Firn keeps a backslash in a file or folder name as part
+  of the name. It used to read it as a folder separator, so `a\b/x.ts` and
+  `a/b/x.ts` were one file to open tabs, saving, merge sessions and language
+  servers, and Resolve on a conflict in one could save the other's unsaved
+  edits over it and mark them saved, so closing the tab lost them. A backslash
+  still separates folders on Windows and in a Windows-style path on any system.
+  (#510)
+- An open file with no unsaved edits reloads when git (restore, checkout,
+  stash, a branch switch) or an editor's atomic save replaces it on disk. It
+  used to keep showing the old contents. A tab with unsaved edits is still
+  never overwritten. (#563)
+- Firn watches a workspace whose root is a symlink to a directory, and reports
+  changes under the path it was opened with. It used to watch nothing there, so
+  the file tree and open tabs missed changes made outside Firn. Symlinks to
+  folders inside the workspace are still not followed. Windows junctions have
+  not been tested. (#564)
+- Open Folder's folder picker, and the run-profile form's Browse button, open
+  attached to the Firn window, as a sheet on macOS, so the picker stays with
+  the window when you switch to another app and back. It used to open on its
+  own, apart from any window. (#608)
+
+### Terminal
+
+- In a Firn opened from Finder, the Dock or `open`, Backspace in the integrated
+  terminal erases a character instead of printing a space. Firn now starts
+  every shell with `TERM=xterm-256color`, so `clear`, colors and arrow-key
+  history also work however Firn was opened. Earlier releases passed on only
+  the `TERM` Firn itself was started with, and an app opened from Finder has
+  none. (#556)
+- Closing an integrated terminal hangs up its shell at once, so the shell runs
+  its exit steps and saves its history. Firn used to wait 3 seconds and
+  force-kill it. A shell that does not exit, or a terminal Firn could not set
+  up to hang up this way, is still force-killed after 3 seconds. (#558)
+- When zsh's startup files put its history file in zsh's settings folder, as
+  stock macOS does, a Firn terminal now keeps history where other terminals do,
+  `~/.zsh_history` or the same name under your own `ZDOTDIR`, instead of in
+  Firn's cache folder. A `HISTFILE` set in your `.zshrc` still wins. History
+  already in the cache folder stays there. (#560)
+- The integrated terminal's command markers sit in the margin left of the text
+  instead of covering a line's first character. The selection highlight no
+  longer sits a character left of the selected text, and the bottom row is no
+  longer cut off, so some panel heights show one row fewer. In the normal
+  screen, the mouse wheel no longer scrolls the terminal over the empty part of
+  that margin or the strip above the first line; over the text or a marker it
+  scrolls as before, and full-screen programs still receive it. (#572)
+
+### Git
 
 - When a commit message cannot be generated because the Golem model's remote
   destination is not approved, the Git panel now says to choose Check
@@ -121,33 +192,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Configuration does, and then choose Refresh there, instead of sending you to
   that page to change it, which it cannot do. Neither message ends with
   internal error text such as "provider: destination denied" any more. (#598)
+- On macOS and Linux, commit message generation and the Git panel work in a
+  repository whose folder name ends in a space, such as `project `. Firn used
+  to drop the space from the repository's path and look in a folder that does
+  not exist, so Generate failed, and so did staging, unstaging and tracking
+  files, staging a hunk, diffs and the merge view. Generation broke in 0.15.0;
+  the rest was broken before. (#511)
+- With a subfolder of a repository open, the Git panel lists a staged file
+  outside that folder under "Outside the open folder" when Generate withholds
+  it from the AI, apart from the files under "Denied by Golem's file access
+  rules". It used to say Golem's file access rules withheld it, as though an
+  ordinary source file were protected. Such a file is still withheld, and when
+  it is the only one staged no request is sent. A `.env`, key or credentials
+  file outside the folder stays under the rules. (#513)
 
-- In the Golem configuration view, closing the Save as profile popover while a
-  save is in flight no longer drops the result. A save that fails, finds the
-  name already taken, or cannot be confirmed brings the popover back with its
-  message, without moving keyboard focus, and posts it to screen readers. A
-  save that plainly succeeds stays closed. The overwrite step's Back is
-  unavailable while its save is in flight; Escape still closes it. (#396)
-
-- The Golem chat's spoken summary reads only the latest run's error. It used to
-  read an earlier run's error again after a later run answered, and stayed
-  silent when a second run failed with the same words. (#395)
-
-- The destination approval prompt in Golem Configuration is announced once
-  when it opens. Its ticking "expires in" countdown sat inside the prompt's
-  alert region, so the app reported the whole prompt as changed every second
-  and VoiceOver could read it again and again while it stood. The countdown
-  still ticks in the same corner, and the prompt still says once when it
-  expires. (#591)
-
-- A remote destination approval now says what it covers. Approving a
-  destination, in Golem Configuration or with Allow & send in the chat,
-  approves every model at that provider endpoint, but the row named one model
-  as if it approved only that one. Each row now says it covers every model at
-  the endpoint, not just the one it names; in Golem Configuration that line
-  replaces "Reached by agent", and the prompt says only the Golem model's
-  destination is checked, so a destination that only other use cases use is
-  not part of the approval. (#355)
+### Run Profiles
 
 - Firn no longer overwrites `.firn/run-profiles.json` when it changed on disk
   since Firn read it, such as after a branch checkout, or
@@ -157,14 +216,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that only changes line endings also asks for a Reload. Save keeps keyboard
   focus while it saves. (#397, #442)
 
+### Accessibility
+
+- The Golem chat's spoken summary reads only the latest run's error. It used to
+  read an earlier run's error again after a later run answered, and stayed
+  silent when a second run failed with the same words. (#395)
+- The destination approval prompt in Golem Configuration is announced once
+  when it opens. Its ticking "expires in" countdown sat inside the prompt's
+  alert region, so the app reported the whole prompt as changed every second
+  and VoiceOver could read it again and again while it stood. The countdown
+  still ticks in the same corner, and the prompt still says once when it
+  expires. (#591)
 - Keyboard focus stays in the run-profile form's delete row: Delete profile
   moves it to Confirm delete, and Cancel or a refused delete moves it back to
   Delete profile. It used to drop to the page body. (#547)
-
 - When the run-profile form closes, by Save, a delete, Cancel or Back, keyboard
   focus that would have dropped to the page body moves to the Run Profiles
   panel's New profile button. (#552)
-
 - VoiceOver speaks status and error messages it used to skip because they
   appeared with their text already in place, among them a failed push, the Git
   panel's error strip and conflict banner, the merge view's notices and its
@@ -174,7 +242,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warnings, run output's partial-log and load errors, the undocked Golem
   window's connection errors, and Golem Configuration's approval prompt and its
   conflict, profile and provider errors. (#550)
-
 - Buttons that stay busy while they work keep keyboard focus, or move it to the
   next place to work, instead of dropping it to the page, among them Push,
   Pull, Commit and Generate, also once the commit message arrives (#515); the
@@ -183,82 +250,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Configuration's Refresh, Check destinations… and an approval prompt's Cancel
   and Approve; Send in the Golem panel and the undocked Golem window; and Retry
   on a saved run whose output could not be loaded. (#550)
-
-- On macOS and Linux, Firn keeps a backslash in a file or folder name as part
-  of the name. It used to read it as a folder separator, so `a\b/x.ts` and
-  `a/b/x.ts` were one file to open tabs, saving, merge sessions and language
-  servers, and Resolve on a conflict in one could save the other's unsaved
-  edits over it and mark them saved, so closing the tab lost them. A backslash
-  still separates folders on Windows and in a Windows-style path on any system.
-  (#510)
-
-- In a Firn opened from Finder, the Dock or `open`, Backspace in the integrated
-  terminal erases a character instead of printing a space. Firn now starts
-  every shell with `TERM=xterm-256color`, so `clear`, colors and arrow-key
-  history also work however Firn was opened. Earlier releases passed on only
-  the `TERM` Firn itself was started with, and an app opened from Finder has
-  none. (#556)
-
-- Closing an integrated terminal hangs up its shell at once, so the shell runs
-  its exit steps and saves its history. Firn used to wait 3 seconds and
-  force-kill it. A shell that does not exit, or a terminal Firn could not set
-  up to hang up this way, is still force-killed after 3 seconds. (#558)
-
-- When zsh's startup files put its history file in zsh's settings folder, as
-  stock macOS does, a Firn terminal now keeps history where other terminals do,
-  `~/.zsh_history` or the same name under your own `ZDOTDIR`, instead of in
-  Firn's cache folder. A `HISTFILE` set in your `.zshrc` still wins. History
-  already in the cache folder stays there. (#560)
-
-- The integrated terminal's command markers sit in the margin left of the text
-  instead of covering a line's first character. The selection highlight no
-  longer sits a character left of the selected text, and the bottom row is no
-  longer cut off, so some panel heights show one row fewer. In the normal
-  screen, the mouse wheel no longer scrolls the terminal over the empty part of
-  that margin or the strip above the first line; over the text or a marker it
-  scrolls as before, and full-screen programs still receive it. (#572)
-
-- An open file with no unsaved edits reloads when git (restore, checkout,
-  stash, a branch switch) or an editor's atomic save replaces it on disk. It
-  used to keep showing the old contents. A tab with unsaved edits is still
-  never overwritten. (#563)
-
-- Firn watches a workspace whose root is a symlink to a directory, and reports
-  changes under the path it was opened with. It used to watch nothing there, so
-  the file tree and open tabs missed changes made outside Firn. Symlinks to
-  folders inside the workspace are still not followed. Windows junctions have
-  not been tested. (#564)
-
-- Golem Configuration's EDITING tag no longer splits across two lines in a
-  narrow column; it moves to the next line whole. (#545)
-
 - When the file at the file tree's active row is deleted or renamed outside the
   tree while the tree has keyboard focus, the tree keeps its scroll position
   and focus moves to the nearest row: the one that took the removed row's
   place, or the one above it at the end of the list. The next arrow key scrolls
   the focused row into view. The tree used to jump to its top with focus on the
   root row. (#521)
-
 - When a failed folder read replaced the file tree with its error, a refresh
   that brings the tree back unchanged returns keyboard focus to the tree's
   active row. Focus used to stay on the page, so arrow keys did nothing until a
   click or Tab, and a later refresh that added a file above that row could pull
   focus back into the tree. (#522)
-
-- On macOS and Linux, commit message generation and the Git panel work in a
-  repository whose folder name ends in a space, such as `project `. Firn used
-  to drop the space from the repository's path and look in a folder that does
-  not exist, so Generate failed, and so did staging, unstaging and tracking
-  files, staging a hunk, diffs and the merge view. Generation broke in 0.15.0;
-  the rest was broken before. (#511)
-
-- With a subfolder of a repository open, the Git panel lists a staged file
-  outside that folder under "Outside the open folder" when Generate withholds
-  it from the AI, apart from the files under "Denied by Golem's file access
-  rules". It used to say Golem's file access rules withheld it, as though an
-  ordinary source file were protected. Such a file is still withheld, and when
-  it is the only one staged no request is sent. A `.env`, key or credentials
-  file outside the folder stays under the rules. (#513)
 
 ### Security
 
@@ -273,7 +275,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saved as a profile. Literal keys in that file keep working, as do `${NAME}` keys in your user
   configuration. To use the file as it is, set `GO_LLM_CONFIG` to its path. A
   Firn opened from Finder or the Dock starts in `/` and was not exposed. (#524)
-
 - In Golem Configuration, moving a route onto a model another route already
   uses, with the capabilities that model's type gives it, no longer marks the
   other route Incompatible. Apply leaves that route's capabilities as they are,
@@ -281,6 +282,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A route whose capabilities Apply does change, such as one left without the
   capability list it ran on when another route moves away, is marked
   Incompatible before Apply instead of only being refused by it. (#512)
+
+### Known limitations
+
+- In a terminal session, Tab and Shift+Tab go to the shell, so only Cmd
+  shortcuts such as Cmd+Shift+P move focus out; the terminal input does not
+  name its session, and tabbing out of the session menu can drop focus to the
+  page (#429).
+- Golem's deny floor matches paths by name, so on Windows a trailing dot or
+  space, an alternate data stream suffix or a short (8.3) name, and on any
+  platform a hard link, can reach a denied file (#431).
+- When one of the file tree's root reads fails after a newer one has
+  succeeded, the tree reports "Failed to refresh file tree" and a restore
+  stops refreshing deeper expanded folders, which can keep stale contents
+  until a file changes or the folder is collapsed and expanded again (#443).
+- A run ended by quitting Firn or switching workspaces leaves its profile
+  showing the "just ran" chip while the expanded panel says "Never run"
+  (#283).
+- In Golem Configuration, while one route editor is open, a second editor on a
+  route sharing its model can stage a change that undoes a Think mode or
+  exposure the first just staged, without the first editor's Pending line
+  naming it (#342).
 
 ## [0.15.0] - 2026-11-14
 
@@ -1246,7 +1268,8 @@ or Windows 10/11 (WebView2).
   pre-push hooks; golangci-lint v2.11.4; frontend and backend coverage.
 - macOS dev-build fix for the UniformTypeIdentifiers framework (#145).
 
-[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/kstruzzieri/firn-ide/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/kstruzzieri/firn-ide/compare/v0.12.0...v0.13.0
