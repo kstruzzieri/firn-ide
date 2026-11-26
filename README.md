@@ -33,17 +33,17 @@ Each workspace has independent layout state, scoped language servers (only the a
 **Quick install** (macOS and Linux) — downloads the latest release and installs it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.15.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.16.0/install.sh | sh
 ```
 
 Put the assignment on the `sh` side of the pipe so the script actually receives it — pin a version with `FIRN_VERSION`, or preview without installing with `FIRN_DRY_RUN`:
 
 ```bash
 # preview the resolved download URL and target dir without installing
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.15.0/install.sh | FIRN_DRY_RUN=1 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.16.0/install.sh | FIRN_DRY_RUN=1 sh
 
 # pin a specific release instead of the latest
-curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.15.0/install.sh | FIRN_VERSION=v0.15.0 sh
+curl -fsSL https://raw.githubusercontent.com/kstruzzieri/firn-ide/v0.16.0/install.sh | FIRN_VERSION=v0.16.0 sh
 ```
 
 Windows users: use the manual zip below.
@@ -400,11 +400,11 @@ See the [Roadmap](docs/roadmap.md) for implementation progress and all tracked i
 
 ## Current Priorities
 
-`v0.15.0` is live. A route editor that no longer refuses the model a route already uses, with refusals that name the failing use case instead of a role (#311, #338, #335), an override and a move off a shared model in one Apply (#474), route editor notices that name only what an edit changes and every defined role it rewrites (#307, #349), commit message generation that withholds the staged files Golem's file access rules deny (#384), works with OpenCode Go and shows its progress (#505), Golem on go-llm v0.5.0 with its default tool guards (#418), a local chat endpoint dialed on loopback only (#427), file-tree paths read in the project folder's own syntax (#447), tree rows that no longer select their text on double-click (#462), VoiceOver speech for a successful Apply and for each tree row, and a file tab click that focuses the editor (#505), diff-pane scrollbars kept in sight (#448), and welcome-screen shortcut hints that match the keys (#454) have all shipped since v0.14.0.
+`v0.16.0` is live. A Golem model card that changes the model behind Golem chat and commit messages in one step (#490), provider presets in the Add provider form (#322), commit messages sent only to that model (#491), a line naming the model Firn sent a chat or commit-message request to (#492), Apply that checks only Golem's model and the routes a change touches and asks Apply anyway less often (#493, #350, #337), a Declare form that sets a model's context window (#506), dot-folders and tracked files a `.gitignore` pattern matches in the file tree and search, with a Show hidden folders button (#450, #536), a `models.json` Firn finds in its starting folder that can no longer read environment variables (#524), a run-profiles file Firn refuses to save over when it finds it changed on disk, and a last-run file that is no longer rewritten when it could not be read (#397, #442), file names that keep a backslash on macOS and Linux (#510), terminals that set `TERM`, hang up their shell on close so it can save its history, and keep zsh history in its usual file (#556, #558, #560), open files without unsaved edits that reload when git replaces them (#563), and VoiceOver announcements it used to skip or repeat, with keyboard focus kept on busy buttons and in the run-profile form (#550, #547, #552, #591) have all shipped since v0.15.0.
 
 Active tracks:
 
-1. **Golem:** v0.16.0's In list has merged to `develop`: the model Golem answers with is picked in one step (#490), every commit message goes to that model and no other (#491), and Apply checks only agent and the routes a change touches, asking only when a change can narrow a use case (#350, #493). The configuration UI epic (#263) stays open for the add-use-case control, the role picker (#353), profile Export and Delete (gated on upstream `go-llm`) and the Slice D inventory-backed picker. After those come durable multi-conversation history (#264), whose design comes first, and token/context usage (#265), which waits on `go-llm` emitting usage; guarded preview mode (#261) follows. Model card contrast (#293) is on v0.16.0's Stretch list; readability follow-ups (#291) and the panel/undock follow-ups (#289) are queued behind the rest.
+1. **Golem:** v0.17.0 moves Firn to go-llm v0.8.0 with runtime profiles (#480, #494), lists a provider's models for the current key (#495) and lets the picker and route editor offer and check every listed model (#496), says where each capability answer comes from (#459), and names the provider behind a refused run for most refusals (#497). The configuration UI epic (#263) stays open for the add-use-case control, the role picker (#353), profile Export and Delete (gated on upstream `go-llm`) and the Slice D inventory-backed picker. After those come durable multi-conversation history (#264), whose design comes first, and token/context usage (#265), which waits on `go-llm` emitting usage; guarded preview mode (#261) follows. Model card contrast (#293) rolls to v0.17.0's Stretch list, Golem chat readability (#291, #381) is on the v0.17.0 milestone, and the panel/undock follow-ups (#289) are queued behind the rest.
 2. **Platform:** Linux must move to GTK4 and WebKitGTK 6.0 (#281) before Wails v3.1 can be adopted, since v3.1 drops the GTK3 path this release still targets. Migration hygiene follow-ups are tracked in #282.
 3. **Git merge:** #164 is closed; the remaining backlog is auto-merged region hints (#220), key-hold preview (#219), the multi-file conflict rail (#221), bulk take-Current/Incoming (#223), and the phase 3 diagnostics follow-ups (#240, #241). Destructive VCS operations (#166) come after.
 4. **Command UX:** context menus (#45) and breadcrumbs (#46), both reusing the #44 command registry.
