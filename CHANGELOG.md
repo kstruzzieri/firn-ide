@@ -12,16 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Golem Configuration opens on a Golem model card that changes the model running
 Golem chat and commit messages in one step, and the Add provider form can fill
 in a provider from a preset. Commit messages now go only to that model, and
-chat answers and commit messages say which model wrote them. Apply checks only
+chat answers and commit messages name the model Firn sent them to. Apply checks only
 Golem's model and the routes a change touches, asks Apply anyway less often,
 and the Declare form can set a model's context window. The file tree and search
 show dot-folders such as `.github`, with a button to hide them, and files git
 tracks even when a `.gitignore` pattern matches them. Firn no longer overwrites
-a run-profiles file that changed on disk, a `models.json` in the folder Firn
+a run-profiles file that changed on disk, a `models.json` Firn finds in the folder it
 was started from can no longer read environment variables, and on macOS and
 Linux a backslash in a file name is no longer read as a folder separator.
-Terminal shells get `TERM=xterm-256color` and save their history when closed,
-open files reload when git replaces them, and VoiceOver speaks messages it used
+Terminal shells get `TERM=xterm-256color` and are hung up when closed, so they
+save their history,
+open files without unsaved edits reload when git replaces them, and VoiceOver speaks messages it used
 to skip and keeps focus on buttons while they work.
 
 ### Golem
@@ -113,6 +114,13 @@ to skip and keeps focus on buttons while they work.
   not part of the approval. (#355)
 - Golem Configuration's EDITING tag no longer splits across two lines in a
   narrow column; it moves to the next line whole. (#545)
+- In Golem Configuration, moving a route onto a model another route already
+  uses, with the capabilities that model's type gives it, no longer marks the
+  other route Incompatible. Apply leaves that route's capabilities as they are,
+  and now its row, its route editor and the editor's model list show them too.
+  A route whose capabilities Apply does change, such as one left without the
+  capability list it ran on when another route moves away, is marked
+  Incompatible before Apply instead of only being refused by it. (#512)
 
 ### Workspace
 
@@ -275,13 +283,6 @@ to skip and keeps focus on buttons while they work.
   saved as a profile. Literal keys in that file keep working, as do `${NAME}` keys in your user
   configuration. To use the file as it is, set `GO_LLM_CONFIG` to its path. A
   Firn opened from Finder or the Dock starts in `/` and was not exposed. (#524)
-- In Golem Configuration, moving a route onto a model another route already
-  uses, with the capabilities that model's type gives it, no longer marks the
-  other route Incompatible. Apply leaves that route's capabilities as they are,
-  and now its row, its route editor and the editor's model list show them too.
-  A route whose capabilities Apply does change, such as one left without the
-  capability list it ran on when another route moves away, is marked
-  Incompatible before Apply instead of only being refused by it. (#512)
 
 ### Known limitations
 
@@ -303,6 +304,21 @@ to skip and keeps focus on buttons while they work.
   route sharing its model can stage a change that undoes a Think mode or
   exposure the first just staged, without the first editor's Pending line
   naming it (#342).
+- Opened from Finder or the Dock, Firn and everything it starts get the
+  system's minimal `PATH` and no locale, so a run profile that calls a tool on
+  your login shell's `PATH`, such as `npm` or `go`, fails, and the terminal
+  garbles non-ASCII typing; starting Firn from a terminal avoids both. Long
+  non-ASCII terminal output can also show replacement characters where a read
+  splits a character (#562).
+- When restoring a workspace stalls, such as on a saved tab whose file sits on
+  a stalled network or cloud mount, Firn saves nothing from that session,
+  without saying so (#393).
+- In Golem Configuration, a staged provider change marked Needs review cannot be
+  re-staged as it is: reopening it leaves Done disabled, so Apply stays refused
+  until the change is edited and reverted or the draft is discarded (#398).
+- Firn's own git commands let git discover a bare repository on its own, so git
+  run in a folder that is, or sits inside, a crafted bare repository can start a
+  program that repository's configuration names (#605).
 
 ## [0.15.0] - 2026-11-14
 
