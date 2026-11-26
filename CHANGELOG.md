@@ -318,7 +318,9 @@ to skip and keeps focus on buttons while they work.
 - In Golem Configuration, a staged provider addition or update marked Needs review
   cannot be re-staged as it is: reopening it leaves Done disabled, so Apply stays refused
   until the change is staged again through a temporary edit and a second Done,
-  unstaged, or the draft is discarded (#398).
+  unstaged, or the draft is discarded. A staged route unassignment marked
+  Needs review after its route was removed outside Firn has neither Done nor
+  Unassign, so only discarding the draft lets Apply through (#398).
 - Firn's own git commands let git discover a bare repository on its own, so git
   run in a folder that is, or sits inside, a crafted bare repository can start a
   program that repository's configuration names (#605).
