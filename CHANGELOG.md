@@ -12,16 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Golem Configuration opens on a Golem model card that changes the model running
 Golem chat and commit messages in one step, and the Add provider form can fill
 in a provider from a preset. Commit messages now go only to that model, and
-chat answers and commit messages name the model Firn sent them to. Apply checks only
+chat answers and commit messages name the model Firn sent the request to. Apply checks only
 Golem's model and the routes a change touches, asks Apply anyway less often,
 and the Declare form can set a model's context window. The file tree and search
 show dot-folders such as `.github`, with a button to hide them, and files git
-tracks even when a `.gitignore` pattern matches them. Firn no longer overwrites
-a run-profiles file that changed on disk, a `models.json` Firn finds in the folder it
+tracks even when a `.gitignore` pattern matches them. Firn refuses to save over
+a run-profiles file it finds changed on disk, a `models.json` Firn finds in the folder it
 was started from can no longer read environment variables, and on macOS and
 Linux a backslash in a file name is no longer read as a folder separator.
 Terminal shells get `TERM=xterm-256color` and are hung up when closed, so they
-save their history,
+can save their history,
 open files without unsaved edits reload when git replaces them, and VoiceOver speaks messages it used
 to skip and keeps focus on buttons while they work.
 
@@ -305,17 +305,19 @@ to skip and keeps focus on buttons while they work.
   exposure the first just staged, without the first editor's Pending line
   naming it (#342).
 - Opened from Finder or the Dock, Firn and everything it starts get the
-  system's minimal `PATH` and no locale, so a run profile that calls a tool on
-  your login shell's `PATH`, such as `npm` or `go`, fails, and the terminal
+  system's minimal `PATH` and no locale, so a run profile that calls a tool found
+  only through your login shell's `PATH`, such as `npm` or `go`, fails, and the terminal
   garbles non-ASCII typing; starting Firn from a terminal avoids both. Long
   non-ASCII terminal output can also show replacement characters where a read
   splits a character (#562).
 - When restoring a workspace stalls, such as on a saved tab whose file sits on
-  a stalled network or cloud mount, Firn saves nothing from that session,
-  without saying so (#393).
+  a stalled network or cloud mount, Firn stops saving the session's open
+  tabs, cursor positions and layout, without saying so; saving a file still
+  works (#393).
 - In Golem Configuration, a staged provider change marked Needs review cannot be
   re-staged as it is: reopening it leaves Done disabled, so Apply stays refused
-  until the change is edited and reverted or the draft is discarded (#398).
+  until the change is staged again through a temporary edit and a second Done,
+  unstaged, or the draft is discarded (#398).
 - Firn's own git commands let git discover a bare repository on its own, so git
   run in a folder that is, or sits inside, a crafted bare repository can start a
   program that repository's configuration names (#605).
