@@ -286,8 +286,8 @@ to skip and keeps focus on buttons while they work.
 
 ### Known limitations
 
-- In a terminal session, Tab and Shift+Tab go to the shell, so only Cmd
-  shortcuts such as Cmd+Shift+P move focus out; the terminal input does not
+- In a terminal session, Tab and Shift+Tab go to the shell, so only shortcuts
+  such as Cmd+Shift+P on macOS or Ctrl+Shift+P on Linux move focus out; the terminal input does not
   name its session, and tabbing out of the session menu can drop focus to the
   page (#429).
 - Golem's deny floor matches paths by name, so on Windows a trailing dot or
@@ -297,9 +297,10 @@ to skip and keeps focus on buttons while they work.
   succeeded, the tree reports "Failed to refresh file tree" and a restore
   stops refreshing deeper expanded folders, which can keep stale contents
   until a file changes or the folder is collapsed and expanded again (#443).
-- A run ended by quitting Firn or switching workspaces leaves its profile
-  showing the "just ran" chip while the expanded panel says "Never run"
-  (#283).
+- A run ended by quitting Firn or switching workspaces can leave its profile
+  showing the "just ran" chip while the expanded panel says "Never run", when
+  the profile has no saved run history and was the last one started within
+  five minutes (#283).
 - In Golem Configuration, while one route editor is open, a second editor on a
   route sharing its model can stage a change that undoes a Think mode or
   exposure the first just staged, without the first editor's Pending line
@@ -314,8 +315,8 @@ to skip and keeps focus on buttons while they work.
   a stalled network or cloud mount, Firn stops saving the session's open
   tabs, cursor positions and layout, without saying so; saving a file still
   works (#393).
-- In Golem Configuration, a staged provider change marked Needs review cannot be
-  re-staged as it is: reopening it leaves Done disabled, so Apply stays refused
+- In Golem Configuration, a staged provider addition or update marked Needs review
+  cannot be re-staged as it is: reopening it leaves Done disabled, so Apply stays refused
   until the change is staged again through a temporary edit and a second Done,
   unstaged, or the draft is discarded (#398).
 - Firn's own git commands let git discover a bare repository on its own, so git
