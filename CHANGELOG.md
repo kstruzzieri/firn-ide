@@ -103,6 +103,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Long output with box-drawing characters, accented letters, CJK text or
+  emoji no longer shows stray `�` marks in the integrated terminal or in a run
+  profile's output. Full-screen programs such as Claude Code no longer leave
+  rules drawn through the terminal's text or repeated lines when they redraw.
+  Firn split a character in two when it fell across two reads of the output,
+  and the two halves were drawn as `�`, which took up the wrong number of
+  columns. (#562)
+
 - The file tree and the Git panel now catch up when a command run in Firn's
   terminal changes only what git tracks, such as `git rm --cached`, a commit or
   a branch switch, in zsh and bash. Before, they waited until a file changed
