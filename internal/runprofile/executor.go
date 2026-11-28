@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"firn/internal/textstream"
 )
 
 // ErrRunInstanceNotRunning reports that an exact-target control referenced a run
@@ -942,19 +944,13 @@ func (e *Executor) emit(status RunStatus) {
 	}
 }
 
-// drainPipe reads from a pipe and forwards chunks to the output batcher.
+// drainPipe reads from a pipe and forwards chunks to the output batcher,
+// never splitting a UTF-8 character between two chunks.
 func (e *Executor) drainPipe(wg *sync.WaitGroup, id RunIdentity, stream string, pipe io.ReadCloser, batcher *outputBatcher) {
 	defer wg.Done()
-	buf := make([]byte, 4096)
-	for {
-		n, err := pipe.Read(buf)
-		if n > 0 {
-			batcher.Write(id, stream, string(buf[:n]), time.Now().UnixMilli())
-		}
-		if err != nil {
-			return
-		}
-	}
+	textstream.ReadLoop(pipe, func(data string) {
+		batcher.Write(id, stream, data, time.Now().UnixMilli())
+	})
 }
 
 // resolveWorkingDir converts a profile workingDir into an absolute path.

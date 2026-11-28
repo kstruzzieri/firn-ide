@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"firn/internal/textstream"
 	"github.com/creack/pty"
 )
 
@@ -106,15 +107,8 @@ func (s *Session) Resize(rows uint16, cols uint16) error {
 	return pty.Setsize(s.pty, &pty.Winsize{Rows: rows, Cols: cols})
 }
 
-// ReadLoop reads input from the PTY
+// ReadLoop streams the shell's output from the PTY to callback until the PTY
+// closes.
 func (s *Session) ReadLoop(callback func(data string)) {
-	// One buffer for the loop's lifetime: string(buf[:n]) copies before reuse.
-	buf := make([]byte, 4096)
-	for {
-		n, err := s.pty.Read(buf)
-		if err != nil {
-			return
-		}
-		callback(string(buf[:n]))
-	}
+	textstream.ReadLoop(s.pty, callback)
 }
